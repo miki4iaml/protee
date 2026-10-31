@@ -1,0 +1,168 @@
+# Release: build once, attest, publish exactly what was built and
+# attested.
+#
+# - A published GitHub release publishes to PyPI, after approval of the
+#   protected "pypi" environment (SPEC 8: intentional trigger).
+# - A manual run rehearses the whole chain on TestPyPI with a unique
+#   X.Y.Z.devN version, without creating any release (a published
+#   release also archives a permanent Zenodo DOI).
+#
+# Trusted Publishing (OIDC): no stored token. Actions pinned by commit
+# SHA (enforced by the repository); updated by Dependabot.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions: {}
+
+# One release run at a time per ref; never cancel a publication midway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read  # check out the repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No cache in a release workflow: nothing restored from a cache
+      # can influence the published artifacts.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: "0.12.18"
+          python-version: "3.14"
+          enable-cache: false
+
+      - name: Check that the tag matches the project version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(uv version --short)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match project version $version"
+            exit 1
+          fi
+
+      # TestPyPI needs a unique version per upload; this change stays in
+      # the runner and is never committed.
+      - name: Set a unique development version for the rehearsal
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: uv version --frozen "$(uv version --short).dev${RUN_NUMBER}"
+
+      # PyPI shows the README outside the repository, where its relative
+      # links lead nowhere: they point at the files of the release's tag,
+      # or of the rehearsed commit. This change stays in the runner too.
+      - name: Make the links of the README absolute
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.event.release.tag_name || github.sha }}
+        run: uv run --no-project scripts/absolute_links.py rewrite --repo "$REPOSITORY" --ref "$REF" README.md
+
+      - name: Build the wheel and the sdist
+        run: uv build
+
+      - name: Check the distribution metadata
+        run: uvx --from "twine==7.0.0" twine check --strict dist/*
+
+      - name: Check that the description has no relative link
+        run: uv run --no-project scripts/absolute_links.py check dist/*
+
+      # Outside dist/: the SBOM is attested, not uploaded to PyPI.
+      - name: SBOM (CycloneDX)
+        run: uv export --format cyclonedx1.5 --no-dev --frozen --output-file sbom/protee.cdx.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+
+  attest:
+    name: attest
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write  # sign the attestations through Sigstore
+      attestations: write  # store the attestations on GitHub
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: sbom
+          path: sbom/
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: SBOM attestation
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        with:
+          subject-path: dist/*
+          sbom-path: sbom/protee.cdx.json
+
+  publish-testpypi:
+    name: publish (TestPyPI)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/protee
+    permissions:
+      id-token: write  # Trusted Publishing to TestPyPI, no stored token
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: publish (PyPI)
+    if: github.event_name == 'release'
+    needs: [build, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/protee
+    permissions:
+      id-token: write  # Trusted Publishing to PyPI, no stored token
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2

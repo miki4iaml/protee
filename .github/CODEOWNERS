@@ -1,0 +1,23 @@
+# Paths whose changes need the maintainer's review: the instructions
+# coding agents read on their own, and what workstations and CI execute.
+# A pattern without a leading slash matches at any depth.
+
+AGENTS.md @miki4iaml
+AGENTS.override.md @miki4iaml
+CLAUDE.md @miki4iaml
+CLAUDE.local.md @miki4iaml
+GEMINI.md @miki4iaml
+.cursorrules @miki4iaml
+.windsurfrules @miki4iaml
+.clinerules @miki4iaml
+.mcp.json @miki4iaml
+.claude/ @miki4iaml
+.cursor/ @miki4iaml
+.windsurf/ @miki4iaml
+.cline/ @miki4iaml
+.junie/ @miki4iaml
+
+/.github/ @miki4iaml
+/.vscode/ @miki4iaml
+/.pre-commit-config.yaml @miki4iaml
+/scripts/ @miki4iaml

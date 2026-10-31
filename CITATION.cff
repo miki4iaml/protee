@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: protee
+abstract: >-
+  Proteus: operations research and adaptive solving of life-cycle
+  profile graphs.
+authors:
+  - alias: Miki
+version: 0.1.0
+license: BSD-3-Clause
+repository-code: "https://github.com/miki4iaml/protee"
+keywords:
+  - operations research
+  - optimization
+  - graphs
+  - life cycle
+  - life-cycle profile
+  - adaptive solving

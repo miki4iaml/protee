@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ruff check",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--frozen", "ruff", "check"],
+      "problemMatcher": []
+    },
+    {
+      "label": "ruff format --check",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--frozen", "ruff", "format", "--check"],
+      "problemMatcher": []
+    },
+    {
+      "label": "mypy",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--frozen", "mypy"],
+      "problemMatcher": []
+    },
+    {
+      "label": "pytest",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--frozen", "pytest"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Quality gates",
+      "dependsOn": ["ruff check", "ruff format --check", "mypy", "pytest"],
+      "dependsOrder": "sequence",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}

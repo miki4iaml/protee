@@ -1,0 +1,114 @@
+[project]
+name = "protee"
+version = "0.1.0"
+description = "Proteus - Operations Research and Adaptive Solving of Life-Cycle Profile Graphs"
+readme = "README.md"
+authors = [
+    { name = "miki4ia", email = "miki4ia@gmail.com" }
+]
+requires-python = ">=3.14"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+keywords = [
+    "operations research",
+    "optimization",
+    "graphs",
+    "life cycle",
+    "life-cycle profile",
+    "adaptive solving",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/miki4iaml/protee"
+Repository = "https://github.com/miki4iaml/protee"
+Issues = "https://github.com/miki4iaml/protee/issues"
+Changelog = "https://github.com/miki4iaml/protee/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["uv_build>=0.12.18,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "codespell>=2.4.3",
+    "coverage>=7.16.2",
+    "mypy>=2.4.0",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+    "zizmor>=1.30.1",
+]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests", "scripts"]
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.pytest]
+minversion = "9.0"
+testpaths = ["tests"]
+strict = true
+filterwarnings = ["error"]
+addopts = ["-ra", "--showlocals"]
+log_level = "INFO"
+
+[tool.coverage.run]
+branch = true
+# Explicit: the hook scripts are loaded from their path by importlib.
+source = ["src/protee", "scripts"]
+# Same paths on Windows and Linux, so that reports can be merged.
+relative_files = true
+
+[tool.coverage.report]
+# Floor, not target: the actual rate is visible in the reports.
+fail_under = 80
+show_missing = true
+exclude_also = ['if __name__ == "__main__":']
+
+[tool.ruff.format]
+# The documents keep their own layout (aligned comments).
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+# On top of ruff's default selection, which Dependabot bumps surface in CI.
+extend-select = ["ARG", "B", "C4", "PIE", "PT", "PTH", "RET", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures requested for their side effects look like unused arguments.
+"tests/**" = ["ARG001"]
+# The hooks are command-line tools: printing is their output.
+"scripts/**" = ["T20"]
+
+[tool.codespell]
+skip = "*.fr.md,uv.lock"
+# Format terms: the Flate filter of PDF, the ALPH chunk of WebP.
+ignore-words-list = "flate,alph"
+
+[tool.repo-review.ignore]
+PC110 = "ruff format runs as a local hook through uv run --frozen (single version source: uv.lock)"
+PC140 = "mypy runs as a local hook through uv run --frozen (single version source: uv.lock)"
+PC160 = "codespell runs as a local hook through uv run --frozen (single version source: uv.lock)"
+PC190 = "ruff check runs as a local hook through uv run --frozen (single version source: uv.lock)"
+SEC001 = "zizmor runs as a local hook through uv run --frozen (single version source: uv.lock)"
+PC901 = "pre-commit.ci is not used; CI replays the hooks itself"
+PC902 = "pre-commit.ci is not used; CI replays the hooks itself"
+PC903 = "pre-commit.ci is not used; CI replays the hooks itself"
+PC180 = "no markdown formatter, by choice (dependency control, hand-written texts)"
+PY007 = "uv run is the task runner, identical on every OS"
+PY004 = "temporary: documentation not started yet"
+PC170 = "temporary: no reStructuredText until the documentation exists"

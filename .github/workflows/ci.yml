@@ -1,0 +1,111 @@
+# Continuous integration: replays the local checks (pre-commit) and
+# runs the tests on the complete, blocking matrix, Ubuntu and Windows x
+# Python 3.14 and 3.15 (the minimum, and the next version as a canary).
+#
+# Actions pinned by commit SHA (enforced by the repository); updated by
+# Dependabot. Job names are required checks in the rulesets: renaming
+# one requires updating the rulesets first.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main, "release/**"]
+  push:
+    branches: [develop, main]
+  # Manual run from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: "0.12.18"
+          python-version: "3.14"
+          enable-cache: true
+          # Distinct from the tests cache (ubuntu, 3.14), avoiding a collision.
+          cache-suffix: quality
+
+      - run: uv sync --frozen --all-extras
+
+      # no-commit-to-branch would fail on a push to develop or main; the
+      # repository rulesets already provide this protection.
+      - name: pre-commit (pre-commit stage)
+        run: uv run --frozen pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: no-commit-to-branch
+
+      - name: pre-commit (pre-push stage, mypy and pytest)
+        run: uv run --frozen pre-commit run --hook-stage pre-push --all-files
+
+  # A squash merge produces a commit signed by GitHub, so the ruleset
+  # signature rule never sees the commits of the pull request. This job
+  # requires each of them to be signed and verified by GitHub.
+  signatures:
+    name: signatures
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read  # read the pull request commits and their verification
+    steps:
+      - name: Pull request commits signed and verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          unverified=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" \
+            --jq '.[] | select(.commit.verification.verified | not) | .sha[0:7]')
+          if [ -n "$unverified" ]; then
+            echo "::error::Unsigned or unverified commits: $unverified"
+            exit 1
+          fi
+          echo "All pull request commits are signed and verified."
+
+  tests:
+    name: tests (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: "0.12.18"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+
+      - run: uv sync --frozen --all-extras
+
+      - name: Tests with branch coverage
+        run: uv run --frozen coverage run -m pytest
+
+      # Fails below the threshold set in [tool.coverage.report].
+      - name: Coverage report and threshold
+        run: uv run --frozen coverage report

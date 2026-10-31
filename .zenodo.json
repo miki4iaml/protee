@@ -1,0 +1,27 @@
+{
+  "title": "protee",
+  "upload_type": "software",
+  "description": "Proteus: operations research and adaptive solving of life-cycle profile graphs.",
+  "creators": [
+    {
+      "name": "Miki"
+    }
+  ],
+  "license": "bsd-3-clause",
+  "access_right": "open",
+  "keywords": [
+    "operations research",
+    "optimization",
+    "graphs",
+    "life cycle",
+    "life-cycle profile",
+    "adaptive solving"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/miki4iaml/protee",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
+  ]
+}

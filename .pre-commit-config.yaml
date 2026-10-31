@@ -1,0 +1,137 @@
+# Local checks: formatting, lint, secrets and anonymity before each
+# commit; message format at the commit-msg stage; typing and tests on
+# push.
+#
+# Setup: uv sync && uv run pre-commit install
+#
+# Prerequisite: uv. The ruff, mypy and pytest hooks run through `uv run`
+# to use the versions locked in uv.lock; without uv, they fail.
+#
+# Every `rev` is a commit SHA (never a moving tag), updated with:
+# uv run pre-commit autoupdate --freeze
+
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: fix-byte-order-marker
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main, --branch, develop]
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check --fix
+        entry: uv run --frozen ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+      # Known misspellings only; skips are set in [tool.codespell].
+      - id: codespell
+        name: codespell
+        entry: uv run --frozen codespell
+        language: system
+        types: [text]
+        exclude: '(\.fr\.md|uv\.lock)$'
+        require_serial: true
+      # Static security audit of the workflows; offline for
+      # reproducibility, no token needed.
+      - id: zizmor
+        name: zizmor
+        entry: uv run --frozen zizmor --offline
+        language: system
+        files: '^\.github/(workflows/[^/]+\.ya?ml|dependabot\.ya?ml)$'
+        require_serial: true
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 2ca41cc1372d1e939a6a879f18cdc19fc1cac1ce  # frozen: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: f5da19ce3b7b40e97c12ee9cd8ce97f48f97ddf7  # frozen: 0.9.1
+    hooks:
+      - id: nbstripout
+
+  - repo: local
+    hooks:
+      # Generic patterns here; personal patterns in a file outside the
+      # repository (see the script header). No type filter: binaries
+      # are checked too. `verbose` shows the warning when no personal
+      # pattern is configured.
+      - id: check-anonymity
+        name: anonymity
+        entry: python scripts/check_anonymity.py
+        language: python
+        verbose: true
+        require_serial: true
+      - id: check-anonymity-msg
+        name: anonymity of the commit message
+        entry: python scripts/check_anonymity.py --commit-msg
+        language: python
+        stages: [commit-msg]
+      # Hidden characters, files that stay local, and instruction files of
+      # coding agents outside the reviewed AGENTS.md (see the script
+      # header). No type filter: the paths of binaries are checked too.
+      - id: check-integrity
+        name: hidden characters and local-only files
+        entry: python scripts/check_integrity.py
+        language: python
+      # Images carry no metadata at all (the project draws them); PDFs keep
+      # theirs (the authors of a reference) and pass the anonymity
+      # patterns only, compressed metadata included.
+      - id: check-image-metadata
+        name: image metadata
+        entry: python scripts/check_image_metadata.py
+        language: python
+        files: '(?i)\.(png|jpe?g|gif|webp|svg|tiff?|bmp|ico|heic|heif|avif|jp2)$'
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: 3db014c16a9d31997ab8c07a4d61fcce936c8f0d  # frozen: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  - repo: local
+    hooks:
+      - id: ascii-subject
+        name: ascii-only commit subject
+        entry: '\A[^\n]*[^\x00-\x7F]'
+        language: pygrep
+        args: [--multiline]
+        stages: [commit-msg]
+
+      - id: mypy
+        name: mypy
+        entry: uv run --frozen mypy
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: pytest
+        name: pytest
+        entry: uv run --frozen pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
