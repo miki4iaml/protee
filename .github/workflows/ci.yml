@@ -35,7 +35,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
-          version: "0.12.18"
+          version: "0.13.5"
           python-version: "3.14"
           enable-cache: true
           # Distinct from the tests cache (ubuntu, 3.14), avoiding a collision.
@@ -97,7 +97,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
-          version: "0.12.18"
+          version: "0.13.5"
           python-version: ${{ matrix.python }}
           enable-cache: true
 
