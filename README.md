@@ -17,8 +17,10 @@ profile graphs.**
 Pure Python; it works on an offline workstation (no online solver,
 service or engine).
 
-> Project at its very beginning (pre-alpha): its model and its solvers
-> are being designed.
+> Pre-alpha: a first set of graph and flow algorithms is available
+> (`protee.graph`, `protee.paths`, `protee.flow`, `protee.structure`,
+> `protee.transforms`, `protee.io`); their API is provisional until
+> version 1.0, and the model of life-cycle profiles is being designed.
 
 ## Installation
 

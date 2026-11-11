@@ -20,8 +20,11 @@ graphes de profil de vie.**
 Pur Python ; il fonctionne sur un poste hors ligne (aucun solveur,
 service ou moteur en ligne).
 
-> Projet à ses tout débuts (pré-alpha) : son modèle et ses solveurs sont
-> en cours de conception.
+> Pré-alpha : un premier ensemble d'algorithmes de graphes et de flots
+> est disponible (`protee.graph`, `protee.paths`, `protee.flow`,
+> `protee.structure`, `protee.transforms`, `protee.io`) ; leur API reste
+> provisoire jusqu'à la version 1.0, et le modèle des profils de cycle de
+> vie est en cours de conception.
 
 ## Installation
 
