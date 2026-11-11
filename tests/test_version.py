@@ -19,4 +19,12 @@ def test_version_is_the_one_declared_in_pyproject() -> None:
 
 
 def test_the_public_api_is_explicit() -> None:
-    assert protee.__all__ == ["__version__"]
+    assert protee.__all__ == [
+        "__version__",
+        "flow",
+        "graph",
+        "io",
+        "paths",
+        "structure",
+        "transforms",
+    ]
