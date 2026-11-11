@@ -152,10 +152,25 @@ def test_warm_start_saves_pivots() -> None:
         g, upper=(5, 5, 5, 5, 5, 8), cost=(1, 2, 2, 1, 1, 0), lower=(0, 0, 0, 0, 0, 6)
     )
     prepared = prepare(p, method="network_simplex")
+    assert prepared.feasibility() is prepared.feasibility()
+    assert prepared.feasibility().feasible
     first = prepared.solve()
     same = prepared.solve()
     assert same.counters["pivots"] == 0
     assert same.flow == first.flow
+
+
+def test_float_tolerance_does_not_grow_with_the_graph() -> None:
+    # Two parallel arcs whose costs differ by 1e-6, in a graph of 2000
+    # nodes: the artificial big-M cost must not widen the tolerance.
+    n = 2000
+    g = Digraph.from_arcs(n, [(0, 1), (0, 1)])
+    p = FlowProblem(
+        g, upper=(1, 1), cost=(1.0, 0.999999), supply=(1, -1) + (0,) * (n - 2)
+    )
+    for method in METHODS:
+        r = solve(p, method=method)
+        assert r.flow == (0, 1), method
 
 
 def test_documented_example() -> None:

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from protee import structure
+from protee.flow._normal import shifted_supply
 from protee.flow._problem import FlowProblem
 from protee.graph import Digraph
 
@@ -90,10 +91,7 @@ class LowerBoundShift:
 def remove_lower_bounds(problem: FlowProblem) -> LowerBoundShift:
     """Substitute ``x = lower + y``, so that every lower bound becomes 0."""
     g = problem.graph
-    supply = list(problem.supply)
-    for a, (t, h) in enumerate(g.arcs()):
-        supply[t] -= problem.lower[a]
-        supply[h] += problem.lower[a]
+    supply = shifted_supply(problem)
     upper = tuple(
         None if hi is None else hi - lo
         for lo, hi in zip(problem.lower, problem.upper, strict=True)
@@ -224,6 +222,9 @@ def subdivide_arcs(
         )
     else:
         chosen = tuple(dict.fromkeys(arcs))
+        for a in chosen:
+            if not 0 <= a < g.m:
+                raise ValueError(f"arc {a} is outside 0..{g.m - 1}")
     n = g.n
     tails = list(g.tails)
     heads = list(g.heads)

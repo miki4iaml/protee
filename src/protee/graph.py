@@ -69,6 +69,11 @@ class Digraph:
     _index: dict[str, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        # Copies: a list passed by the caller could change afterwards.
+        object.__setattr__(self, "tails", tuple(self.tails))
+        object.__setattr__(self, "heads", tuple(self.heads))
+        if self.labels is not None:
+            object.__setattr__(self, "labels", tuple(self.labels))
         if self.n < 0:
             raise ValueError(f"the number of nodes must be non-negative, got {self.n}")
         if len(self.tails) != len(self.heads):
@@ -170,11 +175,11 @@ class Digraph:
             If no node carries this label.
         """
         if self.labels is None:
-            try:
-                v = int(label)
-            except ValueError:
-                raise KeyError(label) from None
-            if not 0 <= v < self.n:
+            # Only the labels that label() writes: "0", "1", … "n-1".
+            if not (label.isascii() and label.isdigit()) or str(int(label)) != label:
+                raise KeyError(label)
+            v = int(label)
+            if v >= self.n:
                 raise KeyError(label)
             return v
         return self._index[label]

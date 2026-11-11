@@ -10,10 +10,10 @@ from types import MappingProxyType
 
 from protee import __version__
 from protee.flow._augmenting import cycle_canceling, successive_shortest_paths
-from protee.flow._feasibility import check_feasibility
+from protee.flow._feasibility import Feasibility, check_feasibility
 from protee.flow._normal import (
     Normal,
-    improving_unbounded_cycle,
+    UnboundedCheck,
     normalize,
     signed_costs,
     tolerance_for,
@@ -65,6 +65,15 @@ class Prepared(ABC):
         self.problem = problem
         self.method = method
         self._normal = normalize(problem)
+        self._unbounded = UnboundedCheck(problem)
+        self._feasibility: Feasibility | None = None
+
+    def feasibility(self) -> Feasibility:
+        """Feasibility of the prepared structure, computed once: it does not
+        depend on the costs."""
+        if self._feasibility is None:
+            self._feasibility = check_feasibility(self.problem)
+        return self._feasibility
 
     def solve(
         self, cost: Sequence[Number] | None = None, sense: Sense | None = None
@@ -83,9 +92,9 @@ class Prepared(ABC):
                 self.problem.cost if cost is None else cost, sense
             )
         )
-        cycle = improving_unbounded_cycle(problem)
+        cycle = self._unbounded.cycle(signed_costs(problem))
         if cycle is not None:
-            feasibility = check_feasibility(problem)
+            feasibility = self.feasibility()
             if feasibility.feasible:
                 return self._result(problem, Status.UNBOUNDED, None, None, cycle, {})
             return self._result(
@@ -94,7 +103,7 @@ class Prepared(ABC):
         counters: dict[str, int] = {}
         found = self._run(problem, counters)
         if found is None:
-            cut = check_feasibility(problem).cut
+            cut = self.feasibility().cut
             return self._result(problem, Status.INFEASIBLE, None, None, cut, counters)
         y, potentials = found
         return self._result(
@@ -155,7 +164,7 @@ class _PreparedCycleCanceling(Prepared):
     def _run(
         self, problem: FlowProblem, counters: dict[str, int]
     ) -> tuple[list[int], list[Number]] | None:
-        feasibility = check_feasibility(problem)
+        feasibility = self.feasibility()
         if feasibility.flow is None:
             return None
         normal = self._with_cost(signed_costs(problem))

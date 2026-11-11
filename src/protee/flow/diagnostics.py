@@ -110,8 +110,8 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
     method : str
         A method of :func:`protee.flow.methods`.
     at_optimum : bool
-        ``False``: over all feasible flows (the maximum is NetPdv's "Occ
-        max", the greatest number of occurrences an arc can reach).
+        ``False``: over all feasible flows (the maximum is then the
+        greatest number of occurrences an arc can reach).
         ``True``: over the optimal flows only.
 
     Returns
@@ -182,7 +182,7 @@ def unattainable_bounds(problem: FlowProblem, *, method: str) -> UnattainableBou
     """Bounds that no feasible flow reaches.
 
     An unattainable upper bound is a maximum that the rest of the problem
-    already prevents (NetPdv's unattainable maxima): the bound can be
+    already prevents: the bound can be
     tightened to the greatest feasible flow without changing anything.
 
     Parameters

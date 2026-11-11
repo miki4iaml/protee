@@ -104,8 +104,9 @@ def to_node_link(
 def from_node_link(data: Mapping[str, Any]) -> Table:
     """Graph and attribute columns of a node-link dictionary.
 
-    Edges are taken in the order of their ``key`` when every edge has an
-    integer one, in file order otherwise. A node attribute or an edge
+    Arcs are numbered in the order of the edges in the data (a NetworkX
+    ``key`` only tells apart the edges between the same two nodes). A node
+    attribute or an edge
     attribute missing somewhere is ``None`` there.
 
     Raises
@@ -121,8 +122,6 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
     numeric = ids == list(range(len(ids)))
     labels = None if numeric else tuple(str(i) for i in ids)
     index = {i: v for v, i in enumerate(ids)}
-    if all(isinstance(e.get("key"), int) for e in raw_edges):
-        raw_edges.sort(key=lambda e: e["key"])
     arcs = []
     for e in raw_edges:
         try:
@@ -272,7 +271,10 @@ def read_dimacs_min(path: Path) -> FlowProblem:
                 n = int(fields[2])
                 supply = [0] * n
             elif fields[0] == "n":
-                supply[int(fields[1]) - 1] = int(fields[2])
+                v = int(fields[1])
+                if not 1 <= v <= n:
+                    raise ValueError(f"node {v} outside 1..{n}")
+                supply[v - 1] = int(fields[2])
             elif fields[0] == "a":
                 t, h, lo, hi, c = (int(x) for x in fields[1:6])
                 arcs.append((t - 1, h - 1))

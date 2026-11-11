@@ -172,3 +172,5 @@ def test_labels_of_new_nodes_avoid_existing_ones() -> None:
         "super-sink",
     )
     assert transforms.subdivide_arcs(p, [1]).arcs == (1,)
+    with pytest.raises(ValueError, match="outside"):
+        transforms.subdivide_arcs(p, [-1])

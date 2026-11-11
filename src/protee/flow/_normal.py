@@ -56,14 +56,21 @@ def signed_costs(problem: FlowProblem) -> list[Number]:
     return list(problem.cost) if problem.sense == "min" else [-c for c in problem.cost]
 
 
+def shifted_supply(problem: FlowProblem) -> list[int]:
+    """Supplies of ``y`` once ``x = lower + y`` is substituted."""
+    g = problem.graph
+    supply = list(problem.supply)
+    for a, (t, h) in enumerate(g.arcs()):
+        supply[t] -= problem.lower[a]
+        supply[h] += problem.lower[a]
+    return supply
+
+
 def normalize(problem: FlowProblem) -> Normal:
     """Standard form of ``problem`` (see the module docstring)."""
     g = problem.graph
     lower = tuple(problem.lower)
-    supply = list(problem.supply)
-    for a, (t, h) in enumerate(g.arcs()):
-        supply[t] -= lower[a]
-        supply[h] += lower[a]
+    supply = shifted_supply(problem)
     finite = [
         hi - lo for lo, hi in zip(lower, problem.upper, strict=True) if hi is not None
     ]
@@ -88,21 +95,30 @@ def normalize(problem: FlowProblem) -> Normal:
     )
 
 
-def improving_unbounded_cycle(problem: FlowProblem) -> NegativeCycle | None:
-    """A cycle of arcs without upper bound whose cost improves the objective.
+class UnboundedCheck:
+    """Cycles of arcs without upper bound, for successive cost vectors.
 
-    When the problem is feasible, such a cycle makes it unbounded; without
-    one, an optimum exists. The cycle's weight is given in the
-    minimization form (negative).
+    When the problem is feasible, a cycle of such arcs whose cost improves
+    the objective makes it unbounded; without one, an optimum exists. The
+    subgraph of these arcs is built once; each cost vector costs one
+    Bellman-Ford.
     """
-    g = problem.graph
-    keep = [a for a in range(g.m) if problem.upper[a] is None]
-    if not keep:
+
+    def __init__(self, problem: FlowProblem) -> None:
+        g = problem.graph
+        self.keep = [a for a in range(g.m) if problem.upper[a] is None]
+        self.graph = Digraph(
+            g.n,
+            tuple(g.tails[a] for a in self.keep),
+            tuple(g.heads[a] for a in self.keep),
+        )
+
+    def cycle(self, cost: Sequence[Number]) -> NegativeCycle | None:
+        """An improving cycle for ``cost`` (minimization form), or ``None``."""
+        if not self.keep:
+            return None
+        weight = [cost[a] for a in self.keep]
+        found = bellman_ford(self.graph, weight, tolerance=tolerance_for(weight))
+        if isinstance(found, NegativeCycle):
+            return NegativeCycle(tuple(self.keep[a] for a in found.arcs), found.weight)
         return None
-    sub = Digraph(g.n, tuple(g.tails[a] for a in keep), tuple(g.heads[a] for a in keep))
-    cost = signed_costs(problem)
-    weight = [cost[a] for a in keep]
-    found = bellman_ford(sub, weight, tolerance=tolerance_for(weight))
-    if isinstance(found, NegativeCycle):
-        return NegativeCycle(tuple(keep[a] for a in found.arcs), found.weight)
-    return None

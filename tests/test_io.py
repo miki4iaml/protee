@@ -33,10 +33,10 @@ def test_node_link_round_trip_and_networkx(graph: Digraph) -> None:
 
 
 def test_node_link_files_labels_and_errors(tmp_path: Path) -> None:
-    g = Digraph.from_arcs(3, [(0, 1), (1, 2)], labels=["Vannes", "Ploërmel", "Rennes"])
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2)], labels=["départ", "étape", "arrivée"])
     path = tmp_path / "g.json"
     io.write_node_link(path, g, arcs={"length": [3, 4]})
-    assert "Ploërmel" in path.read_text(encoding="utf-8")
+    assert "étape" in path.read_text(encoding="utf-8")
     table = io.read_node_link(path)
     assert table.graph == g
     assert table.arcs["length"] == (3, 4)
@@ -99,7 +99,18 @@ def test_dimacs_errors(tmp_path: Path) -> None:
         ("p max 2 1\n", "not a minimum cost flow"),
         ("p min 2 1\nx 1\n", "unknown descriptor"),
         ("p min 2 1\na 1 2 0\n", "line 2"),
+        ("p min 3 1\nn 0 5\n", "outside 1..3"),
     ]:
         path.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError, match=message):
             io.read_dimacs_min(path)
+
+
+def test_node_link_keeps_the_order_of_networkx_edges() -> None:
+    g = nx.MultiDiGraph()
+    g.add_edge("a", "b", w=1)
+    g.add_edge("a", "b", w=2)
+    g.add_edge("b", "c", w=3)
+    table = io.from_node_link(nx.node_link_data(g, edges="edges"))
+    assert list(table.graph.arcs()) == [(0, 1), (0, 1), (1, 2)]
+    assert table.arcs["w"] == (1, 2, 3)

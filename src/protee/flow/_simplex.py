@@ -80,7 +80,8 @@ class NetworkSimplex:
         art: Number = (biggest + 1) * (n + 1)
         for a in range(m, m + n):
             self.cost[a] = art
-        self.tolerance = tolerance_for(self.cost)
+        # Real costs only: the artificial big-M cost would widen it.
+        self.tolerance = tolerance_for(cost)
         self._potentials()
 
     def _potentials(self) -> None:

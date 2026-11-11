@@ -44,8 +44,9 @@ def test_parallel_arcs_loops_and_labels() -> None:
     assert (plain.label(2), plain.node("2")) == ("2", 2)
     with pytest.raises(KeyError):
         plain.node("7")
-    with pytest.raises(KeyError):
-        plain.node("x")
+    for wrong in ("x", "01", " 1", "+1", "1_0", "١"):
+        with pytest.raises(KeyError):
+            plain.node(wrong)
     with pytest.raises(KeyError):
         g.node("c")
 
@@ -80,3 +81,12 @@ def test_import_is_light_and_submodules_load_on_demand() -> None:
     assert "flow" in dir(protee)
     with pytest.raises(AttributeError, match="no attribute"):
         protee.nothing  # noqa: B018
+
+
+def test_inputs_are_copied() -> None:
+    tails, heads = [0, 1], [1, 0]
+    g = Digraph(2, tails, heads)  # type: ignore[arg-type]
+    tails[0] = 1
+    assert g.tails == (0, 1)
+    assert g.out_arcs(0) == (0,)
+    assert hash(g) == hash(Digraph(2, (0, 1), (1, 0)))
