@@ -45,5 +45,11 @@ and this project adheres to
     super-sink with a return arc, path contraction);
   - `protee.io`: node-link JSON, CSV table of arcs, DIMACS minimum cost
     flow format.
+- Route-level algorithms in `protee.routes`: a route through waypoints in
+  free order (exact, Held-Karp) or fixed order; the `k` shortest loopless
+  paths (Yen); replacement paths, one per arc of a route, to find its most
+  vital arc; the overlap of two routes, with arcs grouped by key; the most
+  reliable path for independent arc reliabilities. `protee.paths.dijkstra`
+  takes `excluded` arcs.
 - Tests against independent oracles (NetworkX, HiGHS, enumeration) and
   reproducible property-based tests (Hypothesis).
