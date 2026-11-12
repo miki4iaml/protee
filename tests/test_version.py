@@ -25,6 +25,7 @@ def test_the_public_api_is_explicit() -> None:
         "graph",
         "io",
         "paths",
+        "routes",
         "structure",
         "transforms",
     ]

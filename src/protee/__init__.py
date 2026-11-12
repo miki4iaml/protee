@@ -23,7 +23,16 @@ import importlib
 from importlib.metadata import version
 from types import ModuleType
 
-__all__ = ["__version__", "flow", "graph", "io", "paths", "structure", "transforms"]
+__all__ = [
+    "__version__",
+    "flow",
+    "graph",
+    "io",
+    "paths",
+    "routes",
+    "structure",
+    "transforms",
+]
 
 #: Version of the installed distribution, declared only in pyproject.toml.
 __version__ = version("protee")

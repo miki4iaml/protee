@@ -14,7 +14,7 @@ Provisional API (until version 1.0).
 
 import heapq
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
 from protee.graph import Digraph
@@ -103,6 +103,8 @@ def dijkstra(
     weight: Sequence[Number],
     source: int | Iterable[int],
     target: int | None = None,
+    *,
+    excluded: Collection[int] = (),
 ) -> ShortestPaths:
     """Shortest paths with non-negative weights (Dijkstra, binary heap).
 
@@ -116,6 +118,8 @@ def dijkstra(
     target : int, optional
         Stop as soon as the distance of ``target`` is final. Nodes not yet
         settled then keep a provisional distance, at least the true one.
+    excluded : collection of int, optional
+        Arcs to ignore, as if they were removed from the graph.
 
     Returns
     -------
@@ -124,7 +128,8 @@ def dijkstra(
     Raises
     ------
     ValueError
-        If a weight is negative or not finite, or a source is not a node.
+        If a weight is negative or not finite, or a source or an excluded
+        arc does not exist.
 
     Notes
     -----
@@ -137,6 +142,11 @@ def dijkstra(
                 f"the weight of arc {a} is negative ({w}): use bellman_ford"
             )
     sources = _sources(graph, source)
+    skip = [False] * graph.m
+    for a in excluded:
+        if not 0 <= a < graph.m:
+            raise ValueError(f"excluded arc {a} does not exist")
+        skip[a] = True
     dist: list[Number] = [math.inf] * graph.n
     pred = [-1] * graph.n
     done = [False] * graph.n
@@ -153,6 +163,8 @@ def dijkstra(
         if u == target:
             break
         for a in graph.out_arcs(u):
+            if skip[a]:
+                continue
             v = graph.heads[a]
             new_dist = d + weight[a]
             if new_dist < dist[v]:
