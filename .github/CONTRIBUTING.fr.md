@@ -38,6 +38,11 @@ La première commande installe aussi les extras optionnels, s'il y en
 a, couverts par les tests. La seconde commande installe les hooks aux
 trois stades (pre-commit, commit-msg, pre-push).
 
+Sous Windows sans compilateur C : PyYAML, dont pre-commit a besoin,
+n'a pas encore de roue pour Python 3.15. La variable d'environnement
+`PYYAML_FORCE_LIBYAML=0` le fait construire en pur Python, pour les
+commandes Python 3.15 d'`AGENTS.md`.
+
 ## Contrôles locaux
 
 | Stade | Contrôles |
