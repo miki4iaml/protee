@@ -21,9 +21,10 @@ online solver, service or engine).
 
 > Pre-alpha: a first set of graph and flow algorithms is available
 > (`protee.graph`, `protee.paths`, `protee.routes`, `protee.flow`,
-> `protee.structure`, `protee.transforms`, `protee.io`); their API is
-> provisional until version 1.0, and the model of life-cycle profiles is
-> being designed.
+> `protee.structure`, `protee.transforms`, `protee.io`), with
+> requirements turned into traceable constraints on graphs
+> (`protee.constraints`); their API is provisional until version 1.0,
+> and the model of life-cycle profiles is being designed.
 
 ## Installation
 

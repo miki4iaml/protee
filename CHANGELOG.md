@@ -58,3 +58,27 @@ and this project adheres to
   Python version: NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14, NumPy
   2.5.2 and SciPy 1.18.1 on Python 3.15. `import protee` does not import
   them.
+- `protee.constraints`: requirements (normalized statements taken from a
+  source, never package dependencies) turned into traceable constraints
+  on graphs, provisional API until version 1.0:
+  - model: sources, rulebooks, values with origin and declared
+    precedence (`resolve_values` refuses an unknown parameter or an
+    undeclared disagreement, and reports unused values), parameters with
+    units and aliases, requirements checked as a set (unique identifiers,
+    every cited identifier resolved), qualified correspondences between
+    rulebooks;
+  - a closed registry of patterns (`patterns`): `threshold_admissibility`,
+    `class_admissibility`, `zone_exclusion`, `speed_cap`,
+    `occurrence_bounds`;
+  - arc attributes with an explicit unknown (`ArcData`, `Attribute`), one
+    source per column, derived columns with their quality;
+  - `evaluate`: one immutable effect per requirement, with three-valued
+    verdicts and their reasons, cost terms or flow bounds;
+  - `compose`: a computation view independent of the order of the
+    effects, with the policy for the unknown stated by the caller
+    (`exclude`, `penalize`, `admit_and_count`) and applied once;
+  - `verify_route` and `verify_flow`: the status of each requirement
+    (`applied`, `partial`, `not_applied`, `no_data`, `not_applicable`)
+    comes from verification, never from the solver;
+  - `check_inputs`: what the data allow to prove, before solving;
+  - `requirement_table`: rows generated from the verification.

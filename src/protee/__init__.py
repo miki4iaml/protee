@@ -18,7 +18,10 @@ light:
   replacement paths, overlap and most reliable path;
 - :mod:`protee.flow`: maximum flows, feasibility, minimum or maximum cost
   flows with named methods, disjoint paths and diagnostics;
-- :mod:`protee.transforms`: reversible graph transformations.
+- :mod:`protee.transforms`: reversible graph transformations;
+- :mod:`protee.constraints`: requirements (exigences) turned into
+  traceable constraints on graphs, composed, verified on results and
+  reported in a table.
 
 The whole API is provisional until version 1.0: the formalization of the
 problems is refined with the feedback of the 0.x versions.
@@ -30,6 +33,7 @@ from types import ModuleType
 
 __all__ = [
     "__version__",
+    "constraints",
     "flow",
     "graph",
     "io",
