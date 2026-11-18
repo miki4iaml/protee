@@ -11,16 +11,18 @@
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196)](https://www.conventionalcommits.org/en/v1.0.0/)
 
-**Proteus: operations research and adaptive solving of life-cycle
-profile graphs.**
+**Proteus: graph and operations research algorithms whose methods are
+chosen explicitly, compared, and backed by certificates and
+diagnostics.**
 
 Pure Python; it works on an offline workstation (no online solver,
 service or engine).
 
 > Pre-alpha: a first set of graph and flow algorithms is available
-> (`protee.graph`, `protee.paths`, `protee.flow`, `protee.structure`,
-> `protee.transforms`, `protee.io`); their API is provisional until
-> version 1.0, and the model of life-cycle profiles is being designed.
+> (`protee.graph`, `protee.paths`, `protee.routes`, `protee.flow`,
+> `protee.structure`, `protee.transforms`, `protee.io`); their API is
+> provisional until version 1.0, and the model of life-cycle profiles is
+> being designed.
 
 ## Installation
 

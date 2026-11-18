@@ -1,7 +1,7 @@
 {
   "title": "protee",
   "upload_type": "software",
-  "description": "Proteus: operations research and adaptive solving of life-cycle profile graphs.",
+  "description": "Proteus: graph and operations research algorithms whose methods are chosen explicitly, compared, and backed by certificates and diagnostics.",
   "creators": [
     {
       "name": "Miki"
@@ -15,7 +15,8 @@
     "graphs",
     "life cycle",
     "life-cycle profile",
-    "adaptive solving"
+    "network flows",
+    "shortest paths"
   ],
   "related_identifiers": [
     {
