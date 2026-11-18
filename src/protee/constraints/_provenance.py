@@ -7,7 +7,6 @@ import dataclasses
 import enum
 import hashlib
 import json
-import math
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -22,7 +21,14 @@ from protee.constraints._model import RequirementSet, ResolvedValues
 __all__ = ["Provenance", "fingerprint", "provenance"]
 
 
+def _key(x: Any) -> str:
+    return json.dumps(x, sort_keys=True, separators=(",", ":"))
+
+
 def _canonical(x: Any) -> Any:
+    """A JSON form in which every type that JSON would confuse is tagged:
+    a float is not the string of its digits, a set is not a list, and the
+    keys of a mapping keep their type."""
     if x is None or isinstance(x, (bool, str)):
         return x
     if isinstance(x, enum.Enum):
@@ -30,25 +36,22 @@ def _canonical(x: Any) -> Any:
     if isinstance(x, int):
         return x
     if isinstance(x, float):
-        return repr(x) if math.isfinite(x) else str(x)
+        return {"float": repr(x)}
     if isinstance(x, np.ndarray):
-        return {"dtype": str(x.dtype), "values": _canonical(x.tolist())}
+        return {"ndarray": str(x.dtype), "values": _canonical(x.tolist())}
     if isinstance(x, np.generic):
         return _canonical(x.item())
     if isinstance(x, Mapping):
-        return {
-            str(k): _canonical(v)
-            for k, v in sorted(x.items(), key=lambda kv: str(kv[0]))
-        }
+        pairs = [[_canonical(k), _canonical(v)] for k, v in x.items()]
+        return {"map": sorted(pairs, key=lambda kv: _key(kv[0]))}
     if isinstance(x, (list, tuple)):
         return [_canonical(v) for v in x]
     if isinstance(x, AbstractSet):
-        items = [_canonical(v) for v in x]
-        return sorted(items, key=lambda v: json.dumps(v, sort_keys=True))
+        return {"set": sorted((_canonical(v) for v in x), key=_key)}
     if dataclasses.is_dataclass(x) and not isinstance(x, type):
         return {
-            "type": type(x).__name__,
-            **{
+            "dataclass": type(x).__name__,
+            "fields": {
                 f.name: _canonical(getattr(x, f.name))
                 for f in dataclasses.fields(x)
                 if not f.name.startswith("_")
@@ -57,13 +60,30 @@ def _canonical(x: Any) -> Any:
     raise TypeError(f"no canonical form for {type(x).__name__}")
 
 
+def _freeze(x: Any) -> Any:
+    """A copy that cannot change: tuples, read-only mappings and arrays."""
+    if isinstance(x, Mapping):
+        return MappingProxyType({k: _freeze(v) for k, v in x.items()})
+    if isinstance(x, (list, tuple)):
+        return tuple(_freeze(v) for v in x)
+    if isinstance(x, AbstractSet):
+        return frozenset(_freeze(v) for v in x)
+    if isinstance(x, np.ndarray):
+        out = np.array(x, copy=True)
+        out.flags.writeable = False
+        return out
+    return x
+
+
 def fingerprint(*objects: object) -> str:
     """SHA-256 of a canonical form of ``objects``.
 
     The same inputs give the same fingerprint on every machine; any change
-    of a value, an attribute or the topology changes it. Supported: the
-    objects of protee (frozen dataclasses), NumPy arrays, mappings,
-    sequences, sets, numbers, strings and ``None``.
+    of a value, an attribute or the topology changes it, a change of type
+    too (``1``, ``1.0`` and ``"1.0"`` differ). Supported: the objects of
+    protee (frozen dataclasses), NumPy arrays, mappings, sequences (a
+    tuple and a list with the same items are the same sequence), sets,
+    numbers, strings and ``None``.
 
     Raises
     ------
@@ -84,13 +104,15 @@ class Provenance:
     ----------
     method : str
     parameters : mapping of str to object
+        A frozen copy: lists become tuples, mappings read-only.
     version : str
         Version of protee.
     requirements : tuple of str
         Identifiers of the requirements.
     values : tuple of (str, str, str, bool)
-        For each value: parameter, rulebook, edition, and whether it was
-        retained (``False`` for a value set aside by precedence).
+        For each value: parameter, rulebook, edition (those of its value
+        set), and whether it was retained (``False`` for a value set aside
+        by precedence).
     inputs : str
         Fingerprint of the inputs, the method and its parameters.
     result : str
@@ -148,7 +170,7 @@ def provenance(
     -------
     Provenance
     """
-    params = MappingProxyType(dict(parameters))
+    params = _freeze(parameters)
     recorded = []
     for name, value in sorted(values.values.items()):
         for v, retained in (

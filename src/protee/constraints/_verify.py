@@ -4,6 +4,7 @@
 """Verification of a route or a flow against requirements."""
 
 import itertools
+import math
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -24,6 +25,7 @@ from protee.constraints._model import (
 from protee.constraints._patterns import PATTERNS, EffectKind
 from protee.flow import FlowProblem, FlowResult
 from protee.graph import Digraph
+from protee.paths import NegativeCycle, bellman_ford
 from protee.routes import Route
 
 __all__ = [
@@ -45,8 +47,9 @@ class RequirementStatus(StrEnum):
       reason;
     - ``no_data``: the data cannot support the requirement (an attribute is
       absent);
-    - ``not_applicable``: a value is to be set, or no element of the result
-      is in scope.
+    - ``not_applicable``: a value is to be set, no element of the result is
+      in scope, or the pattern does not apply to this kind of result (flow
+      bounds on a route, a speed cap on a flow).
     """
 
     APPLIED = "applied"
@@ -83,6 +86,12 @@ class RequirementCheck:
     failing: tuple[int, ...] = ()
     unknown_arcs: tuple[int, ...] = ()
 
+    def __post_init__(self) -> None:
+        set_ = object.__setattr__
+        set_(self, "status", RequirementStatus(self.status))
+        set_(self, "failing", tuple(self.failing))
+        set_(self, "unknown_arcs", tuple(self.unknown_arcs))
+
 
 @dataclass(frozen=True, slots=True)
 class Verification:
@@ -103,8 +112,11 @@ class Verification:
     )
 
     def __post_init__(self) -> None:
+        checks = tuple(self.checks)
+        object.__setattr__(self, "checks", checks)
+        object.__setattr__(self, "violations", tuple(self.violations))
         object.__setattr__(
-            self, "_by_id", MappingProxyType({c.requirement: c for c in self.checks})
+            self, "_by_id", MappingProxyType({c.requirement: c for c in checks})
         )
 
     def __iter__(self) -> Iterator[RequirementCheck]:
@@ -127,6 +139,44 @@ def _absent(requirement: Requirement, data: ArcData) -> list[str]:
     return [name for name in requirement.attributes.values() if name not in data]
 
 
+def _no_data(requirement: Requirement, absent: list[str]) -> RequirementCheck:
+    return RequirementCheck(
+        requirement.id,
+        RequirementStatus.NO_DATA,
+        f"attribute {absent[0]!r} absent from the data",
+    )
+
+
+def _outcome(
+    requirement: Requirement,
+    passed: int,
+    failing: tuple[int, ...],
+    unknown: tuple[int, ...],
+    reasons: tuple[str, str, str],
+) -> RequirementCheck:
+    """The check from its counts: a failure prevails, then the unknown.
+
+    ``reasons`` gives the text of each status, formatted with the number of
+    arcs that fail, lack data, or pass.
+    """
+    if failing:
+        status, reason = RequirementStatus.NOT_APPLIED, reasons[0].format(len(failing))
+    elif unknown:
+        status, reason = RequirementStatus.PARTIAL, reasons[1].format(len(unknown))
+    else:
+        status, reason = RequirementStatus.APPLIED, reasons[2].format(passed)
+    return RequirementCheck(
+        requirement.id,
+        status,
+        reason,
+        passed=passed,
+        failed=len(failing),
+        unknown=len(unknown),
+        failing=failing,
+        unknown_arcs=unknown,
+    )
+
+
 def _verdict_check(
     requirement: Requirement,
     effect: Effect,
@@ -136,11 +186,7 @@ def _verdict_check(
 ) -> RequirementCheck:
     rid = requirement.id
     if absent := _absent(requirement, data):
-        return RequirementCheck(
-            rid,
-            RequirementStatus.NO_DATA,
-            f"attribute {absent[0]!r} absent from the data",
-        )
+        return _no_data(requirement, absent)
     assert effect.verdict is not None
     assert effect.reasons is not None
     in_scope = arcs[effect.reasons[arcs] != Reason.OUT_OF_SCOPE]
@@ -149,25 +195,16 @@ def _verdict_check(
             rid, RequirementStatus.NOT_APPLICABLE, f"no {what} in the scope"
         )
     v = effect.verdict[in_scope]
-    failing = tuple(int(a) for a in in_scope[v == Verdict.FAIL])
-    unknown = tuple(int(a) for a in in_scope[v == Verdict.UNKNOWN])
-    passed = int((v == Verdict.PASS).sum())
-    counts = {"passed": passed, "failed": len(failing), "unknown": len(unknown)}
-    if failing:
-        status, reason = (
-            RequirementStatus.NOT_APPLIED,
-            f"{len(failing)} arcs violate it",
-        )
-    elif unknown:
-        status, reason = RequirementStatus.PARTIAL, f"{len(unknown)} arcs without data"
-    else:
-        status, reason = RequirementStatus.APPLIED, f"verified on {passed} arcs"
-    return RequirementCheck(
-        rid, status, reason, **counts, failing=failing, unknown_arcs=unknown
+    return _outcome(
+        requirement,
+        int((v == Verdict.PASS).sum()),
+        tuple(int(a) for a in in_scope[v == Verdict.FAIL]),
+        tuple(int(a) for a in in_scope[v == Verdict.UNKNOWN]),
+        ("{} arcs violate it", "{} arcs without data", "verified on {} arcs"),
     )
 
 
-def _route_arcs(graph: Digraph, route: Route | Sequence[int]) -> npt.NDArray[np.int64]:
+def _route_arcs(graph: Digraph, route: Route | Sequence[int]) -> tuple[int, ...]:
     arcs = tuple(route.arcs if isinstance(route, Route) else route)
     for a in arcs:
         if not 0 <= a < graph.m:
@@ -175,7 +212,31 @@ def _route_arcs(graph: Digraph, route: Route | Sequence[int]) -> npt.NDArray[np.
     for a, b in itertools.pairwise(arcs):
         if graph.heads[a] != graph.tails[b]:
             raise ValueError(f"arcs {a} and {b} are not consecutive")
-    return np.unique(np.array(arcs, dtype=np.int64))
+    return arcs
+
+
+type _Weights = tuple[npt.NDArray[np.float64], npt.NDArray[np.int64] | None]
+
+
+def _weights(
+    weights: Sequence[float] | Sequence[tuple[int, float]] | None, m: int
+) -> _Weights | None:
+    """The weights a route was computed with: the weight of each arc, and
+    the count of unknown arcs that comes first for lexicographic ones."""
+    if weights is None:
+        return None
+    items = list(weights)
+    if len(items) != m:
+        raise ValueError(f"expected {m} weights, got {len(items)}")
+    pairs = [x for x in items if isinstance(x, tuple)]
+    if not pairs:
+        return np.asarray(items, dtype=np.float64), None
+    if len(pairs) != m:
+        raise ValueError("weights mix numbers and (count, weight) pairs")
+    return (
+        np.array([float(w) for _, w in pairs], dtype=np.float64),
+        np.array([int(u) for u, _ in pairs], dtype=np.int64),
+    )
 
 
 def verify_route(
@@ -186,6 +247,8 @@ def verify_route(
     values: ResolvedValues,
     *,
     view: ComputationView | None = None,
+    weights: Sequence[float] | Sequence[tuple[int, float]] | None = None,
+    criterion: str | None = None,
 ) -> Verification:
     """Status of each requirement on a route, whatever method produced it.
 
@@ -201,9 +264,20 @@ def verify_route(
     data : ArcData
     values : ResolvedValues
     view : ComputationView, optional
-        The view the route was computed with. A cost term (a speed cap)
-        leaves no trace on the arcs: it is checked against this view, and
-        is ``not_applied`` without it.
+        The view the route was computed with: its excluded arcs bound the
+        routes an objective is compared with.
+    weights : sequence of float, or of (int, float), optional
+        The weight of each arc the route was computed with, as the solver
+        used it; pairs (count of unknown arcs, weight) for a lexicographic
+        search. A speed cap holds on an arc when its weight is at least its
+        length divided by the cap (the unit of the length divided by the
+        unit of the speed): a solver that forgot the cap is caught. An
+        objective holds when no admitted route is lighter, by an
+        independent computation (Bellman-Ford). Without weights, both are
+        ``not_applied``.
+    criterion : str, optional
+        What the weights measure (``"duration"``, ``"length"``), compared
+        with the declared objective.
 
     Returns
     -------
@@ -212,9 +286,15 @@ def verify_route(
     Raises
     ------
     ValueError
-        If an arc is out of range, or two arcs are not consecutive.
+        If an arc is out of range, two arcs are not consecutive, the
+        weights have another size, or a requirement does not fit the data
+        (see :func:`evaluate`).
+    TypeError
+        If a value does not fit its pattern (see :func:`evaluate`).
     """
-    arcs = _route_arcs(graph, route)
+    path = _route_arcs(graph, route)
+    arcs = np.unique(np.array(path, dtype=np.int64))
+    used = _weights(weights, graph.m)
     checks = []
     for r in requirements:
         effect = evaluate(r, graph, data, values)
@@ -226,61 +306,218 @@ def verify_route(
         elif kind is EffectKind.VERDICT:
             check = _verdict_check(r, effect, arcs, data, "arc of the route")
         elif kind is EffectKind.COST_TERM:
-            check = _cost_check(r, effect, arcs[data.in_scope(r.scope)[arcs]], view)
+            check = _cost_check(r, effect, arcs, data, used)
         elif kind is EffectKind.OBJECTIVE:
-            check = _objective_check(r, effect, values, view)
+            check = _route_objective(
+                r, effect, values, graph, path, view, used, criterion
+            )
         else:
             check = RequirementCheck(
-                r.id, RequirementStatus.NOT_APPLICABLE, "flow bounds apply to flows"
+                r.id,
+                RequirementStatus.NOT_APPLICABLE,
+                "flow bounds apply to flows, not to routes",
             )
         checks.append(check)
     return Verification(tuple(checks))
 
 
+def _tolerance(x: float) -> float:
+    return 1e-9 * max(1.0, abs(x))
+
+
 def _cost_check(
     requirement: Requirement,
     effect: Effect,
-    in_scope: npt.NDArray[np.int64],
-    view: ComputationView | None,
+    arcs: npt.NDArray[np.int64],
+    data: ArcData,
+    used: _Weights | None,
 ) -> RequirementCheck:
     rid = requirement.id
+    if absent := _absent(requirement, data):
+        return _no_data(requirement, absent)
     assert effect.cap is not None
+    in_scope = arcs[data.in_scope(requirement.scope)[arcs]]
     if in_scope.size == 0:
         return RequirementCheck(
             rid, RequirementStatus.NOT_APPLICABLE, "no arc of the route in the scope"
         )
-    if view is None:
+    if used is None:
         return RequirementCheck(
             rid,
             RequirementStatus.NOT_APPLIED,
-            "a cost term is checked against the computation view, not given",
+            "a speed cap is checked on the weights the route was computed "
+            "with, not given",
         )
-    over = in_scope[view.cap[in_scope] > effect.cap[in_scope]]
-    if over.size:
+    length = data[requirement.attributes["length"]].values
+    failing, unknown, passed = [], [], 0
+    for a in in_scope:
+        if math.isnan(length[a]):
+            unknown.append(int(a))
+            continue
+        # The time at the cap is the least time the cap allows.
+        least = float(length[a] / effect.cap[a])
+        if used[0][a] >= least - _tolerance(least):
+            passed += 1
+        else:
+            failing.append(int(a))
+    return _outcome(
+        requirement,
+        passed,
+        tuple(failing),
+        tuple(unknown),
+        (
+            "{} arcs timed faster than the cap allows",
+            "{} arcs without length",
+            "capped on {} arcs",
+        ),
+    )
+
+
+def _declared(requirement: Requirement, effect: Effect, values: ResolvedValues) -> str:
+    value = values.get(requirement.parameters["criterion"])
+    assert value is not None
+    if value.origin is Origin.CHOICE:
+        how = f"chosen: {value.justification}"
+    else:
+        how = f"prescribed ({value.origin})"
+    return f"objective {effect.objective!r}, {how}"
+
+
+def _objective_inputs(
+    requirement: Requirement,
+    effect: Effect,
+    given: Mapping[str, object],
+    criterion: str | None,
+    what: str,
+) -> RequirementCheck | None:
+    """The check when the inputs of the objective are missing or measure
+    another criterion; ``None`` when they can be checked."""
+    if missing := [name for name, x in given.items() if x is None]:
+        return RequirementCheck(
+            requirement.id,
+            RequirementStatus.NOT_APPLIED,
+            f"an objective is checked with the {', '.join(missing)} of the "
+            "computation, not given",
+        )
+    if criterion != effect.objective:
+        return RequirementCheck(
+            requirement.id,
+            RequirementStatus.NOT_APPLIED,
+            f"the {what} measure {criterion!r}, not {effect.objective!r}",
+        )
+    return None
+
+
+def _route_objective(
+    requirement: Requirement,
+    effect: Effect,
+    values: ResolvedValues,
+    graph: Digraph,
+    path: tuple[int, ...],
+    view: ComputationView | None,
+    used: _Weights | None,
+    criterion: str | None,
+) -> RequirementCheck:
+    rid = requirement.id
+    given = {"view": view, "weights": used, "criterion": criterion}
+    if (
+        early := _objective_inputs(requirement, effect, given, criterion, "weights")
+    ) is not None:
+        return early
+    assert view is not None
+    assert used is not None
+    declared = _declared(requirement, effect, values)
+    if not path:
+        return RequirementCheck(
+            rid, RequirementStatus.APPLIED, f"{declared}; empty route"
+        )
+    if barred := sorted(set(path) & set(view.excluded)):
         return RequirementCheck(
             rid,
             RequirementStatus.NOT_APPLIED,
-            f"the view does not cap {over.size} arcs",
-            passed=int(in_scope.size - over.size),
-            failed=int(over.size),
-            failing=tuple(int(a) for a in over),
+            f"the route uses {len(barred)} arcs the view excludes",
+            failed=len(barred),
+            failing=tuple(barred),
         )
+    weight, unknown = used
+    best = _best_route(
+        graph, graph.tails[path[0]], graph.heads[path[-1]], view.excluded, used
+    )
+    found_w = math.fsum(float(weight[a]) for a in path)
+    found_u = 0 if unknown is None else int(sum(int(unknown[a]) for a in path))
+    if best is None:
+        return RequirementCheck(
+            rid,
+            RequirementStatus.NOT_APPLIED,
+            "the weights admit a cycle of negative weight: no route is optimal",
+        )
+    best_u, best_w = best
+    if (found_u, found_w) > (best_u, best_w + _tolerance(best_w)):
+        lighter = f"{best_w:g}" if unknown is None else f"({best_u}, {best_w:g})"
+        heavy = f"{found_w:g}" if unknown is None else f"({found_u}, {found_w:g})"
+        return RequirementCheck(
+            rid,
+            RequirementStatus.NOT_APPLIED,
+            f"a route of weight {lighter} exists, this one weighs {heavy}",
+        )
+    first = "" if unknown is None else "fewest unknown arcs first, then "
     return RequirementCheck(
         rid,
         RequirementStatus.APPLIED,
-        f"capped on {in_scope.size} arcs",
-        passed=int(in_scope.size),
+        f"{declared}; optimal ({first}{criterion}), checked by Bellman-Ford",
     )
+
+
+def _best_route(
+    graph: Digraph,
+    source: int,
+    target: int,
+    excluded: tuple[int, ...],
+    used: _Weights,
+) -> tuple[int, float] | None:
+    """The least weight from ``source`` to ``target`` on the admitted arcs,
+    by Bellman-Ford, independently of the solver; for lexicographic weights,
+    the fewest unknown arcs first, then the least weight on the arcs of the
+    routes that reach that count."""
+    weight, unknown = used
+    barred = set(excluded)
+    keep = [a for a in range(graph.m) if a not in barred]
+    count = 0
+    if unknown is not None:
+        # Unknown counts are non-negative: no negative cycle.
+        count_to = _distances(graph, keep, [int(unknown[a]) for a in keep], source)
+        assert count_to is not None
+        # The route reaches the target on admitted arcs.
+        count = int(count_to[target])
+        keep = [
+            a
+            for a in keep
+            if count_to[graph.tails[a]] + int(unknown[a]) == count_to[graph.heads[a]]
+        ]
+    dist = _distances(graph, keep, [float(weight[a]) for a in keep], source)
+    if dist is None:
+        return None
+    return count, float(dist[target])
+
+
+def _distances(
+    graph: Digraph, keep: list[int], weight: Sequence[float], source: int
+) -> tuple[float, ...] | None:
+    sub = Digraph.from_arcs(graph.n, [(graph.tails[a], graph.heads[a]) for a in keep])
+    found = bellman_ford(sub, weight, source)
+    if isinstance(found, NegativeCycle):
+        return None
+    return tuple(float(d) for d in found.distance)
 
 
 def verify_flow(
     flow: FlowResult | Sequence[int],
-    problem: FlowProblem,
     requirements: RequirementSet,
+    problem: FlowProblem,
     data: ArcData,
     values: ResolvedValues,
     *,
-    view: ComputationView | None = None,
+    criterion: str | None = None,
 ) -> Verification:
     """Status of each requirement on a flow, whatever method produced it.
 
@@ -292,12 +529,17 @@ def verify_flow(
     ----------
     flow : FlowResult or sequence of int
         A result with a flow, or one flow per arc.
-    problem : FlowProblem
     requirements : RequirementSet
+    problem : FlowProblem
+        The problem the flow was computed for.
     data : ArcData
     values : ResolvedValues
-    view : ComputationView, optional
-        The view the flow was computed with, for its objective.
+    criterion : str, optional
+        What the costs of ``problem`` measure, compared with the declared
+        objective. The objective holds when the flow is feasible and no
+        improving cycle exists in its residual network (Bellman-Ford,
+        independently of the solver); it is ``not_applied`` without a
+        criterion.
 
     Returns
     -------
@@ -306,7 +548,10 @@ def verify_flow(
     Raises
     ------
     ValueError
-        If the result has no flow, or the flow has another size.
+        If the result has no flow, the flow has another size, or a
+        requirement does not fit the data (see :func:`evaluate`).
+    TypeError
+        If a value does not fit its pattern (see :func:`evaluate`).
     """
     if isinstance(flow, FlowResult):
         if flow.flow is None:
@@ -317,6 +562,7 @@ def verify_flow(
     graph = problem.graph
     if len(x) != graph.m:
         raise ValueError(f"expected {graph.m} arc flows, got {len(x)}")
+    violations = tuple(problem.violations(x))
     carried = np.flatnonzero(np.asarray(x) > 0).astype(np.int64)
     checks = []
     for r in requirements:
@@ -329,47 +575,82 @@ def verify_flow(
         elif kind is EffectKind.VERDICT:
             check = _verdict_check(r, effect, carried, data, "arc with flow")
         elif kind is EffectKind.BOUND:
-            check = _bound_check(r, effect, np.asarray(x, dtype=np.float64), data)
+            check = _bound_check(
+                r, effect, np.asarray(x, dtype=np.float64), data, values
+            )
         elif kind is EffectKind.OBJECTIVE:
-            check = _objective_check(r, effect, values, view)
+            check = _flow_objective(
+                r, effect, values, problem, x, violations, criterion
+            )
         else:
             check = RequirementCheck(
                 r.id,
                 RequirementStatus.NOT_APPLICABLE,
-                "cost terms are checked on routes",
+                "speed caps apply to routes, not to flows",
             )
         checks.append(check)
-    return Verification(tuple(checks), tuple(problem.violations(x)))
+    return Verification(tuple(checks), violations)
 
 
-def _objective_check(
+def _flow_objective(
     requirement: Requirement,
     effect: Effect,
     values: ResolvedValues,
-    view: ComputationView | None,
+    problem: FlowProblem,
+    x: Sequence[int],
+    violations: tuple[str, ...],
+    criterion: str | None,
 ) -> RequirementCheck:
     rid = requirement.id
-    if view is None:
+    given = {"criterion": criterion}
+    if (
+        early := _objective_inputs(requirement, effect, given, criterion, "costs")
+    ) is not None:
+        return early
+    if violations:
+        return RequirementCheck(
+            rid, RequirementStatus.NOT_APPLIED, "the flow is not feasible"
+        )
+    cycle = _improving_cycle(problem, x)
+    if cycle is not None:
         return RequirementCheck(
             rid,
             RequirementStatus.NOT_APPLIED,
-            "an objective is checked against the computation view, not given",
+            f"an improving cycle of {len(cycle.arcs)} arcs exists "
+            f"(cost {cycle.weight:g})",
         )
-    if view.objective != effect.objective:
-        return RequirementCheck(
-            rid,
-            RequirementStatus.NOT_APPLIED,
-            f"the view optimizes {view.objective!r}, not {effect.objective!r}",
-        )
-    value = values.get(requirement.parameters["criterion"])
-    assert value is not None
-    if value.origin is Origin.CHOICE:
-        how = f"chosen: {value.justification}"
-    else:
-        how = f"prescribed ({value.origin})"
     return RequirementCheck(
-        rid, RequirementStatus.APPLIED, f"objective {effect.objective!r}, {how}"
+        rid,
+        RequirementStatus.APPLIED,
+        f"{_declared(requirement, effect, values)}; optimal ({problem.sense} "
+        f"{criterion}), no improving cycle (Bellman-Ford)",
     )
+
+
+def _improving_cycle(problem: FlowProblem, x: Sequence[int]) -> NegativeCycle | None:
+    """A cycle of the residual network whose cost improves the flow, in the
+    minimization form of the problem."""
+    g = problem.graph
+    sign = 1 if problem.sense == "min" else -1
+    arcs: list[tuple[int, int]] = []
+    cost: list[float] = []
+    for a, (u, v) in enumerate(g.arcs()):
+        c = sign * float(problem.cost[a])
+        hi = problem.upper[a]
+        if hi is None or x[a] < hi:
+            arcs.append((u, v))
+            cost.append(c)
+        if x[a] > problem.lower[a]:
+            arcs.append((v, u))
+            cost.append(-c)
+    scale = max((abs(c) for c in cost), default=0.0)
+    exact = all(isinstance(c, int) for c in problem.cost)
+    found = bellman_ford(
+        Digraph.from_arcs(g.n, arcs),
+        cost,
+        tolerance=0.0 if exact else 1e-9 * max(1.0, scale) * max(1, g.n),
+    )
+    return found if isinstance(found, NegativeCycle) else None
 
 
 def _bound_check(
@@ -377,6 +658,7 @@ def _bound_check(
     effect: Effect,
     x: npt.NDArray[np.float64],
     data: ArcData,
+    values: ResolvedValues,
 ) -> RequirementCheck:
     assert effect.lower is not None
     assert effect.upper is not None
@@ -386,20 +668,23 @@ def _bound_check(
             requirement.id, RequirementStatus.NOT_APPLICABLE, "no arc in the scope"
         )
     lo, hi, v = effect.lower[in_scope], effect.upper[in_scope], x[in_scope]
-    out = in_scope[(v < lo) | (v > hi)]
-    passed = int(in_scope.size - out.size)
-    if out.size:
-        return RequirementCheck(
-            requirement.id,
-            RequirementStatus.NOT_APPLIED,
-            f"{out.size} arcs outside their bounds",
-            passed=passed,
-            failed=int(out.size),
-            failing=tuple(int(a) for a in out),
-        )
-    return RequirementCheck(
-        requirement.id,
-        RequirementStatus.APPLIED,
-        f"within bounds on {passed} arcs",
-        passed=passed,
+    out = (v < lo) | (v > hi)
+    # The minimum is not imposed on an arc of unknown element: below it,
+    # the membership of the arc decides, and the arc is counted unknown.
+    name = requirement.parameters.get("minimum")
+    least = None if name is None else values.get(name)
+    minimum = least.value if least is not None else 0
+    assert isinstance(minimum, (int, float))
+    presumed = data.scope_unknown(requirement.scope)[in_scope]
+    doubt = presumed & (v < minimum) & ~out
+    return _outcome(
+        requirement,
+        int((~out & ~doubt).sum()),
+        tuple(int(a) for a in in_scope[out]),
+        tuple(int(a) for a in in_scope[doubt]),
+        (
+            "{} arcs outside their bounds",
+            "{} arcs of unknown element below the minimum",
+            "within bounds on {} arcs",
+        ),
     )

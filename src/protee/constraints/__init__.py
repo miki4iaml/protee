@@ -15,13 +15,14 @@ The phases come in a fixed order:
    precedence (:func:`resolve_values`); an arc without data gets the
    ``UNKNOWN`` verdict, never a presumed pass;
 2. **compose** (:func:`compose`): the effects become a
-   :class:`ComputationView` (arcs excluded, weights, flow bounds),
-   independently of their order; the policy for the unknown, stated by
-   the caller, is applied once;
+   :class:`ComputationView` (arcs excluded, weights, travel times under
+   the speed caps, flow bounds), independently of their order; the policy
+   for the unknown, stated by the caller, is applied once;
 3. **solve** with a named method of :mod:`protee.paths`,
    :mod:`protee.routes` or :mod:`protee.flow`;
 4. **verify** (:func:`verify_route`, :func:`verify_flow`): each requirement
-   is evaluated again on the result, which gives its
+   is evaluated again on the result, a speed cap and an objective on the
+   weights or costs the result was computed with, which gives its
    :class:`RequirementStatus`; the solver never writes a status;
 5. **explain** (:func:`requirement_table`): the table is generated from the
    verification.

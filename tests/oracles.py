@@ -7,7 +7,9 @@
 - :func:`networkx_oracle`: NetworkX's network simplex;
 - :func:`highs_oracle`: the linear program solved by HiGHS;
 - :func:`problems`: a Hypothesis strategy of small flow problems, with
-  parallel arcs, loops, lower bounds, missing upper bounds and supplies.
+  parallel arcs, loops, lower bounds, missing upper bounds and supplies;
+- :func:`check_certificate`: the content of a certificate of infeasibility
+  or unboundedness.
 """
 
 import itertools
@@ -18,7 +20,14 @@ from typing import Any, cast
 import networkx as nx
 from hypothesis import strategies as st
 
-from protee.flow import FlowProblem
+from protee.flow import (
+    FlowProblem,
+    FlowResult,
+    InfeasibleCut,
+    NegativeCycle,
+    Status,
+    check_feasibility,
+)
 from protee.flow._problem import Sense
 from protee.graph import Digraph
 
@@ -180,3 +189,21 @@ def problems(
     return FlowProblem(
         g, lower=lower, upper=upper, cost=cost, supply=supply, sense=sense
     )
+
+
+def check_certificate(problem: FlowProblem, result: FlowResult) -> None:
+    if result.status is Status.INFEASIBLE:
+        cut = result.certificate
+        assert isinstance(cut, InfeasibleCut)
+        assert cut.excess > 0
+        assert not check_feasibility(problem).feasible
+    else:
+        assert result.status is Status.UNBOUNDED
+        cycle = result.certificate
+        assert isinstance(cycle, NegativeCycle)
+        assert cycle.weight < 0
+        g = problem.graph
+        for a, b in zip(cycle.arcs, (*cycle.arcs[1:], cycle.arcs[0]), strict=True):
+            assert problem.upper[a] is None
+            assert g.heads[a] == g.tails[b]
+        assert check_feasibility(problem).feasible

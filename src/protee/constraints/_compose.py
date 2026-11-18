@@ -32,15 +32,24 @@ class UnknownPolicy(StrEnum):
 
 
 def _frozen[T: np.generic](array: npt.NDArray[T]) -> npt.NDArray[T]:
-    array.flags.writeable = False
-    return array
+    out = np.array(array, copy=True)
+    out.flags.writeable = False
+    return out
+
+
+def _per_arc(name: str, values: Sequence[float], m: int) -> npt.NDArray[np.float64]:
+    out = np.asarray(values, dtype=np.float64)
+    if out.shape != (m,):
+        raise ValueError(f"expected {m} {name}, got shape {out.shape}")
+    return out
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class ComputationView:
     """What a solver consumes, with links back to the effects.
 
-    All arrays are read-only, one value per arc.
+    All arrays are read-only copies, one value per arc. Build one with
+    :func:`compose`.
 
     Attributes
     ----------
@@ -57,7 +66,8 @@ class ComputationView:
     unknown : numpy.ndarray of bool
         Arcs whose verdict is unknown.
     cap : numpy.ndarray of float64
-        Minimum of the caps, ``inf`` where none applies.
+        Minimum of the speed caps, ``inf`` where none applies; it enters
+        the travel times (:meth:`times`), never plain weights.
     factor : numpy.ndarray of float64
         Product of the factors.
     added : numpy.ndarray of float64
@@ -84,6 +94,30 @@ class ComputationView:
     effects: tuple[Effect, ...]
     objective: str | None = None
 
+    def __post_init__(self) -> None:
+        set_ = object.__setattr__
+        set_(self, "policy", UnknownPolicy(self.policy))
+        for name in (
+            "verdict",
+            "admitted",
+            "unknown",
+            "cap",
+            "factor",
+            "added",
+            "lower",
+            "upper",
+        ):
+            array = _frozen(getattr(self, name))
+            if array.shape != (self.m,):
+                raise ValueError(f"{name}: expected {self.m} values")
+            set_(self, name, array)
+        set_(self, "effects", tuple(self.effects))
+
+    @property
+    def capped(self) -> tuple[int, ...]:
+        """The arcs whose speed is capped, in increasing order."""
+        return tuple(int(a) for a in np.flatnonzero(np.isfinite(self.cap)))
+
     @property
     def excluded(self) -> tuple[int, ...]:
         """The arcs a solver must not use, in increasing order."""
@@ -105,29 +139,71 @@ class ComputationView:
         ``base * factor + added``, plus the penalty on unknown arcs under
         the ``penalize`` policy. Excluded arcs keep a weight: pass
         :attr:`excluded` to the solver.
+
+        Raises
+        ------
+        ValueError
+            If the view caps speeds: a cap changes travel times, which
+            :meth:`times` computes; plain weights would ignore it.
         """
-        b = np.asarray(base, dtype=np.float64)
-        if b.shape != (self.m,):
-            raise ValueError(f"expected {self.m} base weights, got shape {b.shape}")
-        w = b * self.factor + self.added
+        if capped := self.capped:
+            raise ValueError(
+                f"the view caps the speed on {len(capped)} arcs: use "
+                "times(length, speed), plain weights would ignore the caps"
+            )
+        return self._finish(_per_arc("base weights", base, self.m))
+
+    def times(
+        self, length: Sequence[float], speed: Sequence[float]
+    ) -> tuple[float, ...]:
+        """Travel times for a solver, with the speed caps applied.
+
+        ``length / min(speed, cap)``, then ``* factor + added``, plus the
+        penalty on unknown arcs under the ``penalize`` policy; in the unit
+        of the length divided by the unit of the speed (hours for
+        kilometres and km/h).
+
+        Raises
+        ------
+        ValueError
+            If a length or a speed is unknown (``NaN``), a length negative
+            or a speed not positive and finite: the time of the arc cannot
+            be computed, and is never presumed; derive the missing values
+            explicitly (a derived :class:`Attribute`, with its quality).
+        """
+        size = _per_arc("lengths", length, self.m)
+        pace = _per_arc("speeds", speed, self.m)
+        if (unknown := int(np.isnan(size).sum() + np.isnan(pace).sum())) > 0:
+            raise ValueError(
+                f"{unknown} unknown lengths or speeds: a travel time needs both"
+            )
+        if not ((size >= 0).all() and np.isfinite(size).all()):
+            raise ValueError("lengths must be non-negative and finite")
+        if not ((pace > 0).all() and np.isfinite(pace).all()):
+            raise ValueError("speeds must be positive and finite")
+        return self._finish(size / np.minimum(pace, self.cap))
+
+    def _finish(self, base: npt.NDArray[np.float64]) -> tuple[float, ...]:
+        w = base * self.factor + self.added
         if self.policy is UnknownPolicy.PENALIZE:
             assert self.penalty is not None
             w = w + np.where(self.unknown, self.penalty, 0.0)
         return tuple(float(x) for x in w)
 
     def lexicographic_weights(
-        self, base: Sequence[float]
+        self, weights: Sequence[float]
     ) -> tuple[tuple[int, float], ...]:
         """Weight vectors that count the unknown arcs first, then the weight.
 
         For :func:`~protee.paths.lexicographic_dijkstra`: among the routes
-        with the fewest unknown arcs, the lightest one (``base * factor +
-        added``).
+        with the fewest unknown arcs, the lightest one.
+
+        Parameters
+        ----------
+        weights : sequence of float
+            One weight per arc, from :meth:`weights` or :meth:`times`.
         """
-        b = np.asarray(base, dtype=np.float64)
-        if b.shape != (self.m,):
-            raise ValueError(f"expected {self.m} base weights, got shape {b.shape}")
-        w = b * self.factor + self.added
+        w = _per_arc("weights", weights, self.m)
         return tuple((int(u), float(x)) for u, x in zip(self.unknown, w, strict=True))
 
     def flow_bounds(self) -> tuple[tuple[int, ...], tuple[int | None, ...]]:
@@ -165,7 +241,7 @@ def compose(
     graph: Digraph,
     effects: Iterable[Effect],
     *,
-    unknown: UnknownPolicy | str,
+    policy: UnknownPolicy | str,
     penalty: float | None = None,
 ) -> ComputationView:
     """Compose effects into a computation view, independently of their order.
@@ -181,8 +257,8 @@ def compose(
     graph : Digraph
     effects : iterable of Effect
         One per requirement; effects that do not apply are neutral.
-    unknown : UnknownPolicy or str
-        No default: the caller states the policy.
+    policy : UnknownPolicy or str
+        The policy for the unknown; no default: the caller states it.
     penalty : float, optional
         Positive and finite, required by the ``penalize`` policy only.
 
@@ -197,7 +273,7 @@ def compose(
         graph, ``penalty`` does not fit the policy, or two objectives
         differ.
     """
-    policy = UnknownPolicy(unknown)
+    policy = UnknownPolicy(policy)
     if policy is UnknownPolicy.PENALIZE:
         if penalty is None or not (math.isfinite(penalty) and penalty > 0):
             raise ValueError("the penalize policy needs a positive, finite penalty")
@@ -240,14 +316,14 @@ def compose(
         m=m,
         policy=policy,
         penalty=penalty,
-        verdict=_frozen(verdict),
-        admitted=_frozen(admitted),
-        unknown=_frozen(unknown_mask),
-        cap=_frozen(cap),
-        factor=_frozen(factor),
-        added=_frozen(added),
-        lower=_frozen(lower),
-        upper=_frozen(upper),
+        verdict=verdict,
+        admitted=admitted,
+        unknown=unknown_mask,
+        cap=cap,
+        factor=factor,
+        added=added,
+        lower=lower,
+        upper=upper,
         effects=tuple(ordered),
         objective=next(iter(objectives), None),
     )

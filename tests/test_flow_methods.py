@@ -6,7 +6,14 @@
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from oracles import brute_force, highs_oracle, networkx_oracle, problems, same_value
+from oracles import (
+    brute_force,
+    check_certificate,
+    highs_oracle,
+    networkx_oracle,
+    problems,
+    same_value,
+)
 
 from protee.flow import (
     FlowProblem,
@@ -14,7 +21,6 @@ from protee.flow import (
     InfeasibleCut,
     NegativeCycle,
     Status,
-    check_feasibility,
     methods,
     prepare,
     solve,
@@ -47,24 +53,6 @@ def check_optimal(problem: FlowProblem, result: FlowResult) -> None:
             assert rc >= -tol, f"arc {a} below its upper bound with reduced cost {rc}"
         if result.flow[a] > problem.lower[a]:
             assert rc <= tol, f"arc {a} above its lower bound with reduced cost {rc}"
-
-
-def check_certificate(problem: FlowProblem, result: FlowResult) -> None:
-    if result.status is Status.INFEASIBLE:
-        cut = result.certificate
-        assert isinstance(cut, InfeasibleCut)
-        assert cut.excess > 0
-        assert not check_feasibility(problem).feasible
-    else:
-        assert result.status is Status.UNBOUNDED
-        cycle = result.certificate
-        assert isinstance(cycle, NegativeCycle)
-        assert cycle.weight < 0
-        g = problem.graph
-        for a, b in zip(cycle.arcs, (*cycle.arcs[1:], cycle.arcs[0]), strict=True):
-            assert problem.upper[a] is None
-            assert g.heads[a] == g.tails[b]
-        assert check_feasibility(problem).feasible
 
 
 @pytest.mark.parametrize(("method", "options"), VARIANTS)

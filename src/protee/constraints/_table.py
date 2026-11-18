@@ -20,7 +20,7 @@ __all__ = ["RequirementRow", "requirement_table"]
 
 @dataclass(frozen=True, slots=True)
 class RequirementRow:
-    """One row of the requirement table (format ``requirement-table/0``).
+    """One row of the requirement table.
 
     Every field is generated from the requirements, the values and the
     verification: no list of active constraints is kept by hand.
@@ -38,7 +38,7 @@ class RequirementRow:
     status : RequirementStatus
     reason : str
     verification : mapping of str to int
-        Number of elements that ``pass``, ``fail`` or are ``unknown``.
+        Number of elements that ``passed``, ``failed`` or are ``unknown``.
     unknowns : int
         Elements without data.
     policy : UnknownPolicy or None
@@ -61,13 +61,14 @@ class RequirementRow:
     impact: Mapping[str, float | bool | None] | None = field(default=None)
 
     def to_dict(self) -> dict[str, Any]:
-        """The row as plain data, ready for JSON (``inf`` as ``"inf"``)."""
+        """The row as plain data, ready for JSON (``inf`` as ``"inf"``, and
+        ``-inf`` as ``"-inf"``)."""
         return {
             "id": self.id,
             "family": str(self.family),
             "statement": dict(self.statement),
             "source": _source(self.source),
-            "value": [
+            "values": [
                 {
                     "parameter": name,
                     **_value(v),
@@ -99,8 +100,10 @@ def _source(s: Source) -> dict[str, Any]:
 
 def _value(v: Value) -> dict[str, Any]:
     x = v.value
+    if isinstance(x, float) and math.isinf(x):
+        x = "inf" if x > 0 else "-inf"
     return {
-        "value": "inf" if isinstance(x, float) and math.isinf(x) else x,
+        "value": x,
         "unit": v.unit,
         "origin": str(v.origin),
         "precedence": v.precedence,
@@ -135,7 +138,15 @@ def requirement_table(
     -------
     tuple of RequirementRow
         In the order of the verification.
+
+    Raises
+    ------
+    ValueError
+        If an impact names a requirement the verification does not check.
     """
+    checked = {c.requirement for c in verification}
+    if impacts is not None and (stray := sorted(set(impacts) - checked)):
+        raise ValueError(f"impacts of unchecked requirements {stray}")
     rows = []
     for check in verification:
         r = requirements[check.requirement]
@@ -155,8 +166,8 @@ def requirement_table(
                 reason=check.reason,
                 verification=MappingProxyType(
                     {
-                        "pass": check.passed,
-                        "fail": check.failed,
+                        "passed": check.passed,
+                        "failed": check.failed,
                         "unknown": check.unknown,
                     }
                 ),
@@ -164,7 +175,7 @@ def requirement_table(
                 policy=None if view is None else view.policy,
                 impact=None
                 if impacts is None or r.id not in impacts
-                else MappingProxyType(impacts[r.id].as_dict()),
+                else MappingProxyType(impacts[r.id].to_dict()),
             )
         )
     return tuple(rows)

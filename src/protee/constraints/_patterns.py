@@ -3,8 +3,10 @@
 
 """The closed registry of constraint patterns."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 
 __all__ = ["PATTERNS", "EffectKind", "Family", "Pattern", "Subject", "patterns"]
 
@@ -95,88 +97,94 @@ class Pattern:
 
 _KLEENE = "Kleene conjunction: a failure prevails, then the unknown"
 
-PATTERNS: dict[str, Pattern] = {
-    p.name: p
-    for p in (
-        Pattern(
-            name="threshold_admissibility",
-            summary=(
-                "An arc is admissible when the quantity of the vehicle (mass, "
-                "height, width) is at most the limit of the arc."
+PATTERNS: Mapping[str, Pattern] = MappingProxyType(
+    {
+        p.name: p
+        for p in (
+            Pattern(
+                name="threshold_admissibility",
+                summary=(
+                    "An arc is admissible when the quantity of the vehicle (mass, "
+                    "height, width) is at most the limit of the arc."
+                ),
+                family=Family.ADMISSIBILITY,
+                effect_kind=EffectKind.VERDICT,
+                subject=Subject.VEHICLE,
+                parameters=("quantity",),
+                attributes=("limit",),
+                composition=_KLEENE,
             ),
-            family=Family.ADMISSIBILITY,
-            effect_kind=EffectKind.VERDICT,
-            subject=Subject.VEHICLE,
-            parameters=("quantity",),
-            attributes=("limit",),
-            composition=_KLEENE,
-        ),
-        Pattern(
-            name="class_admissibility",
-            summary=(
-                "An arc is admissible when its class, in a declared order, is "
-                "at least the class required by the vehicle (load class, "
-                "tunnel category)."
+            Pattern(
+                name="class_admissibility",
+                summary=(
+                    "An arc is admissible when its class, in a declared order, is "
+                    "at least the class required by the vehicle (load class, "
+                    "tunnel category)."
+                ),
+                family=Family.ADMISSIBILITY,
+                effect_kind=EffectKind.VERDICT,
+                subject=Subject.VEHICLE,
+                parameters=("required_class",),
+                attributes=("class",),
+                composition=_KLEENE,
             ),
-            family=Family.ADMISSIBILITY,
-            effect_kind=EffectKind.VERDICT,
-            subject=Subject.VEHICLE,
-            parameters=("required_class",),
-            attributes=("class",),
-            composition=_KLEENE,
-        ),
-        Pattern(
-            name="zone_exclusion",
-            summary=(
-                "An arc inside a zone is not admissible; membership is a "
-                "relation computed elsewhere (1 inside, 0 outside)."
+            Pattern(
+                name="zone_exclusion",
+                summary=(
+                    "An arc inside a zone is not admissible; membership is a "
+                    "relation computed elsewhere (1 inside, 0 outside)."
+                ),
+                family=Family.ADMISSIBILITY,
+                effect_kind=EffectKind.VERDICT,
+                subject=Subject.INFRASTRUCTURE,
+                parameters=(),
+                attributes=("inside",),
+                composition=_KLEENE,
             ),
-            family=Family.ADMISSIBILITY,
-            effect_kind=EffectKind.VERDICT,
-            subject=Subject.INFRASTRUCTURE,
-            parameters=(),
-            attributes=("inside",),
-            composition=_KLEENE,
-        ),
-        Pattern(
-            name="speed_cap",
-            summary="The speed of the vehicle on an arc is at most a cap.",
-            family=Family.COST,
-            effect_kind=EffectKind.COST_TERM,
-            subject=Subject.VEHICLE,
-            parameters=("maximum",),
-            attributes=(),
-            composition="minimum of the caps",
-        ),
-        Pattern(
-            name="occurrence_bounds",
-            summary=(
-                "The flow of an arc (the occurrences of a link of a life-cycle "
-                "profile) lies between a minimum and a maximum."
+            Pattern(
+                name="speed_cap",
+                summary=(
+                    "The speed of the vehicle on an arc is at most a cap: the "
+                    "travel time of the arc is its length divided by the least of "
+                    "its speed and the cap."
+                ),
+                family=Family.COST,
+                effect_kind=EffectKind.COST_TERM,
+                subject=Subject.VEHICLE,
+                parameters=("maximum",),
+                attributes=("length", "speed"),
+                composition="minimum of the caps",
             ),
-            family=Family.CAPACITY,
-            effect_kind=EffectKind.BOUND,
-            subject=Subject.FLOW,
-            parameters=("maximum",),
-            attributes=(),
-            optional=("minimum",),
-            composition="maximum of the lower bounds, minimum of the upper bounds",
-        ),
-        Pattern(
-            name="objective",
-            summary=(
-                "The criterion a result optimizes, prescribed by a text, or "
-                "chosen with a justification."
+            Pattern(
+                name="occurrence_bounds",
+                summary=(
+                    "The flow of an arc (the occurrences of a link of a life-cycle "
+                    "profile) lies between a minimum and a maximum."
+                ),
+                family=Family.CAPACITY,
+                effect_kind=EffectKind.BOUND,
+                subject=Subject.FLOW,
+                parameters=("maximum",),
+                attributes=(),
+                optional=("minimum",),
+                composition="maximum of the lower bounds, minimum of the upper bounds",
             ),
-            family=Family.RESOLUTION,
-            effect_kind=EffectKind.OBJECTIVE,
-            subject=Subject.RESULT,
-            parameters=("criterion",),
-            attributes=(),
-            composition="one objective per computation",
-        ),
-    )
-}
+            Pattern(
+                name="objective",
+                summary=(
+                    "The criterion a result optimizes, prescribed by a text, or "
+                    "chosen with a justification."
+                ),
+                family=Family.RESOLUTION,
+                effect_kind=EffectKind.OBJECTIVE,
+                subject=Subject.RESULT,
+                parameters=("criterion",),
+                attributes=(),
+                composition="one objective per computation",
+            ),
+        )
+    }
+)
 
 
 def patterns() -> tuple[Pattern, ...]:
