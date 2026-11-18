@@ -24,9 +24,11 @@ poste hors ligne (aucun solveur, service ou moteur en ligne).
 
 > Pré-alpha : un premier ensemble d'algorithmes de graphes et de flots
 > est disponible (`protee.graph`, `protee.paths`, `protee.routes`,
-> `protee.flow`, `protee.structure`, `protee.transforms`, `protee.io`) ;
-> leur API reste provisoire jusqu'à la version 1.0, et le modèle des
-> profils de cycle de vie est en cours de conception.
+> `protee.flow`, `protee.structure`, `protee.transforms`, `protee.io`),
+> ainsi que la traduction d'exigences en contraintes traçables sur les
+> graphes (`protee.constraints`) ; leur API reste provisoire jusqu'à la
+> version 1.0, et le modèle des profils de cycle de vie est en cours de
+> conception.
 
 ## Installation
 
