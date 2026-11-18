@@ -150,6 +150,8 @@ class Value:
     precedence : int
         Between values of the same parameter from several value sets, the
         highest precedence wins; equal precedences must agree.
+    justification : str, optional
+        Why the value was chosen; required for a chosen objective.
     """
 
     value: Datum | None
@@ -157,6 +159,7 @@ class Value:
     origin: Origin
     unit: str | None = None
     precedence: int = 0
+    justification: str | None = None
 
     def __post_init__(self) -> None:
         v = self.value
@@ -423,9 +426,10 @@ def resolve_values(
     ------
     ValueError
         If a value set names an unknown parameter, gives a unit other than
-        the parameter's, gives a parameter twice, or if two values of the
+        the parameter's, gives a parameter twice, if two values of the
         same parameter disagree with the same precedence (the disagreement
-        must be declared by a precedence).
+        must be declared by a precedence), or if an objective is chosen
+        without a justification.
     """
     aliases = {
         (book, alias): p.name
@@ -468,6 +472,17 @@ def resolve_values(
         retained[name] = ranked[0]
         if len(ranked) > 1:
             discarded[name] = tuple(ranked[1:])
+    for r in requirements:
+        if r.pattern == "objective":
+            chosen = retained.get(r.parameters["criterion"])
+            if (
+                chosen is not None
+                and chosen.origin is Origin.CHOICE
+                and not chosen.justification
+            ):
+                raise ValueError(
+                    f"requirement {r.id}: a chosen objective needs a justification"
+                )
     used = {name for r in requirements for name in r.parameters.values()}
     return ResolvedValues(
         values=MappingProxyType(retained),

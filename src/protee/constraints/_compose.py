@@ -66,6 +66,8 @@ class ComputationView:
         Greatest lower bound and least upper bound of the flow.
     effects : tuple of Effect
         The composed effects, by requirement identifier.
+    objective : str or None
+        The criterion declared by an ``objective`` requirement.
     """
 
     m: int
@@ -80,6 +82,7 @@ class ComputationView:
     lower: npt.NDArray[np.float64]
     upper: npt.NDArray[np.float64]
     effects: tuple[Effect, ...]
+    objective: str | None = None
 
     @property
     def excluded(self) -> tuple[int, ...]:
@@ -111,6 +114,21 @@ class ComputationView:
             assert self.penalty is not None
             w = w + np.where(self.unknown, self.penalty, 0.0)
         return tuple(float(x) for x in w)
+
+    def lexicographic_weights(
+        self, base: Sequence[float]
+    ) -> tuple[tuple[int, float], ...]:
+        """Weight vectors that count the unknown arcs first, then the weight.
+
+        For :func:`~protee.paths.lexicographic_dijkstra`: among the routes
+        with the fewest unknown arcs, the lightest one (``base * factor +
+        added``).
+        """
+        b = np.asarray(base, dtype=np.float64)
+        if b.shape != (self.m,):
+            raise ValueError(f"expected {self.m} base weights, got shape {b.shape}")
+        w = b * self.factor + self.added
+        return tuple((int(u), float(x)) for u, x in zip(self.unknown, w, strict=True))
 
     def flow_bounds(self) -> tuple[tuple[int, ...], tuple[int | None, ...]]:
         """Lower and upper flow bounds for a :class:`~protee.flow.FlowProblem`.
@@ -176,7 +194,8 @@ def compose(
     ------
     ValueError
         If two effects share a requirement, an effect does not match the
-        graph, or ``penalty`` does not fit the policy.
+        graph, ``penalty`` does not fit the policy, or two objectives
+        differ.
     """
     policy = UnknownPolicy(unknown)
     if policy is UnknownPolicy.PENALIZE:
@@ -210,6 +229,9 @@ def compose(
             lower = np.maximum(lower, e.lower)
         if e.upper is not None:
             upper = np.minimum(upper, e.upper)
+    objectives = {e.objective for e in ordered if e.objective is not None}
+    if len(objectives) > 1:
+        raise ValueError(f"several objectives declared: {sorted(objectives)}")
     unknown_mask = verdict == Verdict.UNKNOWN
     admitted = verdict != Verdict.FAIL
     if policy is UnknownPolicy.EXCLUDE:
@@ -227,4 +249,5 @@ def compose(
         lower=_frozen(lower),
         upper=_frozen(upper),
         effects=tuple(ordered),
+        objective=next(iter(objectives), None),
     )

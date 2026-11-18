@@ -30,12 +30,14 @@ class EffectKind(StrEnum):
     - ``verdict``: pass, fail or unknown for each arc (a ban is never turned
       into a penalty silently);
     - ``cost_term``: a cap, a factor or an added amount for each arc;
-    - ``bound``: lower and upper bounds on the flow of each arc.
+    - ``bound``: lower and upper bounds on the flow of each arc;
+    - ``objective``: the criterion a result optimizes.
     """
 
     VERDICT = "verdict"
     COST_TERM = "cost_term"
     BOUND = "bound"
+    OBJECTIVE = "objective"
 
 
 class Subject(StrEnum):
@@ -48,6 +50,7 @@ class Subject(StrEnum):
     VEHICLE = "vehicle"
     INFRASTRUCTURE = "infrastructure"
     FLOW = "flow"
+    RESULT = "result"
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +161,19 @@ PATTERNS: dict[str, Pattern] = {
             attributes=(),
             optional=("minimum",),
             composition="maximum of the lower bounds, minimum of the upper bounds",
+        ),
+        Pattern(
+            name="objective",
+            summary=(
+                "The criterion a result optimizes, prescribed by a text, or "
+                "chosen with a justification."
+            ),
+            family=Family.RESOLUTION,
+            effect_kind=EffectKind.OBJECTIVE,
+            subject=Subject.RESULT,
+            parameters=("criterion",),
+            attributes=(),
+            composition="one objective per computation",
         ),
     )
 }

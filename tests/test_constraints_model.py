@@ -46,6 +46,7 @@ def test_registry_is_closed_and_ordered() -> None:
         "zone_exclusion",
         "speed_cap",
         "occurrence_bounds",
+        "objective",
     ]
     by_name = {p.name: p for p in patterns()}
     assert by_name["speed_cap"].effect_kind is EffectKind.COST_TERM
@@ -60,6 +61,8 @@ def test_pattern_states_what_its_value_constrains() -> None:
     assert by_name["threshold_admissibility"].subject is Subject.VEHICLE
     assert by_name["zone_exclusion"].subject is Subject.INFRASTRUCTURE
     assert by_name["occurrence_bounds"].subject is Subject.FLOW
+    assert by_name["objective"].subject is Subject.RESULT
+    assert by_name["objective"].effect_kind is EffectKind.OBJECTIVE
 
 
 def test_rulebook_needs_english_title_and_coerces_kind() -> None:

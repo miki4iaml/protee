@@ -27,6 +27,14 @@ The phases come in a fixed order:
    verification.
 
 :func:`check_inputs` says beforehand what the data allow to prove.
+When requirements cannot hold together, :func:`minimal_conflict`,
+:func:`minimal_relaxation` and :func:`relax_by_tiers` explain the failure
+and propose relaxations, with their :class:`Impact`, on a
+:class:`RouteSearch` or a :class:`FlowSearch`. :func:`provenance` records
+how a result was produced, with :func:`fingerprint` of its inputs.
+:class:`RulebookValues` reads rulebooks and values from TOML, and loads
+the ones embedded from public texts.
+
 Patterns form a closed registry (:func:`patterns`). Arrays come from
 NumPy and are read-only.
 
@@ -36,6 +44,18 @@ Provisional API (until version 1.0).
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData, Attribute
 from protee.constraints._effects import Effect, Reason, Verdict, evaluate
+from protee.constraints._failure import (
+    Conflict,
+    FlowSearch,
+    Impact,
+    Relaxation,
+    RouteSearch,
+    Tier,
+    TieredRelaxation,
+    minimal_conflict,
+    minimal_relaxation,
+    relax_by_tiers,
+)
 from protee.constraints._inputs import InputCheck, InputReport, check_inputs
 from protee.constraints._model import (
     Correspondence,
@@ -53,7 +73,9 @@ from protee.constraints._model import (
     resolve_values,
 )
 from protee.constraints._patterns import EffectKind, Family, Pattern, Subject, patterns
+from protee.constraints._provenance import Provenance, fingerprint, provenance
 from protee.constraints._table import RequirementRow, requirement_table
+from protee.constraints._toml import RulebookValues
 from protee.constraints._verify import (
     RequirementCheck,
     RequirementStatus,
@@ -66,27 +88,36 @@ __all__ = [
     "ArcData",
     "Attribute",
     "ComputationView",
+    "Conflict",
     "Correspondence",
     "Effect",
     "EffectKind",
     "Family",
+    "FlowSearch",
+    "Impact",
     "InputCheck",
     "InputReport",
     "Origin",
     "Parameter",
     "Pattern",
+    "Provenance",
     "Reason",
     "Relation",
+    "Relaxation",
     "Requirement",
     "RequirementCheck",
     "RequirementRow",
     "RequirementSet",
     "RequirementStatus",
     "ResolvedValues",
+    "RouteSearch",
     "Rulebook",
     "RulebookKind",
+    "RulebookValues",
     "Source",
     "Subject",
+    "Tier",
+    "TieredRelaxation",
     "UnknownPolicy",
     "Value",
     "ValueSet",
@@ -95,7 +126,12 @@ __all__ = [
     "check_inputs",
     "compose",
     "evaluate",
+    "fingerprint",
+    "minimal_conflict",
+    "minimal_relaxation",
     "patterns",
+    "provenance",
+    "relax_by_tiers",
     "requirement_table",
     "resolve_values",
     "verify_flow",

@@ -3,9 +3,12 @@
 
 """Shortest paths on a :class:`~protee.graph.Digraph`.
 
-Two named methods, chosen explicitly by the caller:
+Named methods, chosen explicitly by the caller:
 
 - :func:`dijkstra`, for non-negative arc weights;
+- :func:`lexicographic_dijkstra`, for non-negative weight vectors compared
+  in lexicographic order (first the number of unknown arcs, then the
+  length, for instance);
 - :func:`bellman_ford`, for any weights, which returns a
   :class:`NegativeCycle` certificate when distances are unbounded.
 
@@ -19,7 +22,14 @@ from dataclasses import dataclass
 
 from protee.graph import Digraph
 
-__all__ = ["NegativeCycle", "ShortestPaths", "bellman_ford", "dijkstra"]
+__all__ = [
+    "LexicographicPaths",
+    "NegativeCycle",
+    "ShortestPaths",
+    "bellman_ford",
+    "dijkstra",
+    "lexicographic_dijkstra",
+]
 
 type Number = int | float
 
@@ -172,6 +182,128 @@ def dijkstra(
                 pred[v] = a
                 heapq.heappush(heap, (new_dist, v))
     return ShortestPaths(sources, tuple(dist), tuple(pred), graph.heads, graph.tails)
+
+
+@dataclass(frozen=True, slots=True)
+class LexicographicPaths:
+    """Shortest path tree for weight vectors in lexicographic order.
+
+    Attributes
+    ----------
+    sources : tuple of int
+        The sources, at the zero vector.
+    distance : tuple of (tuple of int or float) or None
+        Distance vector of each node, ``None`` when it is unreachable.
+    predecessor : tuple of int
+        Last arc of a shortest path to each node, ``-1`` for a source or an
+        unreachable node.
+    """
+
+    sources: tuple[int, ...]
+    distance: tuple[tuple[Number, ...] | None, ...]
+    predecessor: tuple[int, ...]
+    _tails: tuple[int, ...]
+
+    def path(self, target: int) -> tuple[int, ...] | None:
+        """Arcs of a shortest path from a source to ``target``, or ``None``
+        when ``target`` is unreachable."""
+        if self.distance[target] is None:
+            return None
+        arcs: list[int] = []
+        v = target
+        while (a := self.predecessor[v]) != -1:
+            arcs.append(a)
+            v = self._tails[a]
+        arcs.reverse()
+        return tuple(arcs)
+
+
+def lexicographic_dijkstra(
+    graph: Digraph,
+    weight: Sequence[Sequence[Number]],
+    source: int | Iterable[int],
+    target: int | None = None,
+    *,
+    excluded: Collection[int] = (),
+) -> LexicographicPaths:
+    """Shortest paths for weight vectors compared in lexicographic order.
+
+    Vectors add componentwise and compare lexicographically: the first
+    component decides, the next ones break ties. Exact, with no scaling by
+    a large constant, which is fragile in floating point.
+
+    Parameters
+    ----------
+    graph : Digraph
+    weight : sequence of sequences of int or float
+        One vector per arc, all of the same length, with non-negative,
+        finite components.
+    source : int or iterable of int
+    target : int, optional
+        Stop as soon as the distance of ``target`` is final.
+    excluded : collection of int, optional
+        Arcs to ignore.
+
+    Returns
+    -------
+    LexicographicPaths
+
+    Raises
+    ------
+    ValueError
+        If a vector has another length, a component is negative or not
+        finite, or a source or an excluded arc does not exist.
+
+    Notes
+    -----
+    Dijkstra's algorithm applies because non-negative vectors form an
+    ordered monoid under componentwise addition and lexicographic order.
+    Complexity :math:`O(k (n + m) \\log n)` for vectors of length ``k``.
+    """
+    if len(weight) != graph.m:
+        raise ValueError(f"expected {graph.m} weight vectors, got {len(weight)}")
+    vectors = [tuple(w) for w in weight]
+    size = len(vectors[0]) if vectors else 1
+    for a, w in enumerate(vectors):
+        if len(w) != size or size == 0:
+            raise ValueError(
+                f"the weight of arc {a} has {len(w)} components, not {size}"
+            )
+        if not all(math.isfinite(x) and x >= 0 for x in w):
+            raise ValueError(f"the weight of arc {a} is negative or not finite: {w}")
+    sources = _sources(graph, source)
+    skip = [False] * graph.m
+    for a in excluded:
+        if not 0 <= a < graph.m:
+            raise ValueError(f"excluded arc {a} does not exist")
+        skip[a] = True
+    zero: tuple[Number, ...] = (0,) * size
+    dist: list[tuple[Number, ...] | None] = [None] * graph.n
+    pred = [-1] * graph.n
+    done = [False] * graph.n
+    heap: list[tuple[tuple[Number, ...], int]] = []
+    for s in sources:
+        dist[s] = zero
+        heap.append((zero, s))
+    heapq.heapify(heap)
+    while heap:
+        d, u = heapq.heappop(heap)
+        if done[u]:
+            continue
+        done[u] = True
+        if u == target:
+            break
+        for a in graph.out_arcs(u):
+            if skip[a]:
+                continue
+            v = graph.heads[a]
+            new_dist = tuple(x + y for x, y in zip(d, vectors[a], strict=True))
+            old = dist[v]
+            if old is None or new_dist < old:
+                dist[v] = new_dist
+                pred[v] = a
+                heapq.heappush(heap, (new_dist, v))
+    return LexicographicPaths(sources, tuple(dist), tuple(pred), graph.tails)
 
 
 def _negative_cycle_from(
