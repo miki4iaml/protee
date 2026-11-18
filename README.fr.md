@@ -30,6 +30,43 @@ poste hors ligne (aucun solveur, service ou moteur en ligne).
 > version 1.0, et le modèle des profils de cycle de vie est en cours de
 > conception.
 
+## Pourquoi protee
+
+Bien des problèmes de graphes partent d'exigences écrites par des
+personnes : la spécification d'un client, une réglementation, une
+doctrine, une norme. « La masse du véhicule reste dans la limite de
+charge de chaque pont », ou « cette situation survient au plus deux
+fois dans la vie du matériel », devient une contrainte sur un graphe,
+et une méthode rend un itinéraire ou un flot. Pour se fier à ce
+résultat, il faut pouvoir suivre chaque exigence de sa source à sa
+preuve.
+
+protee implémente cette chaîne de six maillons :
+
+1. **source** : le document, son édition et son paragraphe, ou
+   l'énoncé du client ;
+2. **exigence normalisée** : un énoncé identifié, en anglais et, au
+   besoin, dans d'autres langues ;
+3. **motif de contrainte** : une forme générique et nommée
+   (admissibilité d'un arc, plafond de vitesse, bornes d'occurrence…),
+   sans valeur ;
+4. **valeurs** : tirées de jeux de valeurs, chacune avec sa source, son
+   édition et sa préséance ; une donnée absente reste inconnue, jamais
+   présumée compatible ;
+5. **méthode nommée** : choisie explicitement par l'appelant ;
+6. **preuve** : chaque exigence vérifiée sur le résultat,
+   indépendamment de la méthode (`applied`, `partial`, `not_applied`,
+   `no_data`, `not_applicable`), avec son impact (le résultat avec et
+   sans elle) et la provenance du résultat.
+
+Chaque maillon a des précédents ; nous n'avons pas trouvé la chaîne
+complète dans les sources consultées. Deux applications de référence
+la guident et la valident : les profils de cycle de vie (le graphe des
+situations que traverse un matériel, de sa fabrication à son usage) et
+le routage sur de grands réseaux routiers. protee propose quelques jeux
+de valeurs tirés de textes publics, à des fins de test et
+d'illustration.
+
 ## Installation
 
 Le paquet n'est pas encore publié. Depuis un clone du dépôt, avec

@@ -26,6 +26,39 @@ online solver, service or engine).
 > (`protee.constraints`); their API is provisional until version 1.0,
 > and the model of life-cycle profiles is being designed.
 
+## Why protee
+
+Many graph problems start from requirements written by people: a
+client's specification, a regulation, a doctrine, a standard. "The
+mass of the vehicle stays within the load limit of each bridge", or
+"this situation occurs at most twice in the life of the equipment",
+becomes a constraint on a graph, and a method returns a route or a
+flow. To trust that result, each requirement must be traceable from its
+source to its proof.
+
+protee implements this chain of six links:
+
+1. **source**: the document, its edition and paragraph, or the
+   client's statement;
+2. **normalized requirement**: an identified statement, in English and
+   in other languages if needed;
+3. **constraint pattern**: a generic, named form (arc admissibility,
+   speed cap, occurrence bounds…), without values;
+4. **values**: from value sets, each value with its source, edition and
+   precedence; missing data stay unknown, never presumed compatible;
+5. **named method**: chosen explicitly by the caller;
+6. **proof**: each requirement verified on the result, independently of
+   the method (`applied`, `partial`, `not_applied`, `no_data`,
+   `not_applicable`), with its impact (the result with and without it)
+   and the provenance of the result.
+
+Each link has precedents; we did not find the complete chain in the
+sources we reviewed. Two reference applications guide and validate it:
+life-cycle profiles (the graph of the situations an equipment goes
+through, from manufacture to use) and route planning on large road
+networks. protee provides a few value sets taken from public texts, for
+testing and illustration.
+
 ## Installation
 
 The package is not published yet. From a clone of the repository, with
