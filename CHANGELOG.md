@@ -53,3 +53,8 @@ and this project adheres to
   takes `excluded` arcs.
 - Tests against independent oracles (NetworkX, HiGHS, enumeration) and
   reproducible property-based tests (Hypothesis).
+- Runtime dependencies NumPy and SciPy (wheels for every supported
+  platform). Lower bounds are the first releases with wheels for each
+  Python version: NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14, NumPy
+  2.5.2 and SciPy 1.18.1 on Python 3.15. `import protee` does not import
+  them.

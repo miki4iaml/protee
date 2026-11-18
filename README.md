@@ -15,8 +15,9 @@
 chosen explicitly, compared, and backed by certificates and
 diagnostics.**
 
-Pure Python; it works on an offline workstation (no online solver,
-service or engine).
+Pure Python package, depending only on NumPy and SciPy (wheels for
+every supported platform); it works on an offline workstation (no
+online solver, service or engine).
 
 > Pre-alpha: a first set of graph and flow algorithms is available
 > (`protee.graph`, `protee.paths`, `protee.routes`, `protee.flow`,
