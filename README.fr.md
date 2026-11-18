@@ -18,8 +18,9 @@
 les méthodes sont choisies explicitement, comparées, et appuyées par
 des certificats et des diagnostics.**
 
-Pur Python ; il fonctionne sur un poste hors ligne (aucun solveur,
-service ou moteur en ligne).
+Paquet en pur Python, qui ne dépend que de NumPy et de SciPy (roues
+pour toutes les plates-formes prises en charge) ; il fonctionne sur un
+poste hors ligne (aucun solveur, service ou moteur en ligne).
 
 > Pré-alpha : un premier ensemble d'algorithmes de graphes et de flots
 > est disponible (`protee.graph`, `protee.paths`, `protee.routes`,

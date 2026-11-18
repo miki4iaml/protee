@@ -30,7 +30,13 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    # Lower bounds: the first releases with wheels for each Python version.
+    "numpy>=2.3.2 ; python_full_version < '3.15'",
+    "numpy>=2.5.2 ; python_full_version >= '3.15'",
+    "scipy>=1.16.1 ; python_full_version < '3.15'",
+    "scipy>=1.18.1 ; python_full_version >= '3.15'",
+]
 
 [project.urls]
 Homepage = "https://github.com/miki4iaml/protee"

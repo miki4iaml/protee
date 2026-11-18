@@ -123,10 +123,12 @@ and the resulting schedule.
   links back to the effects) → transform (protected nodes, mapping back)
   → solve → verify → explain. Topology transformations come after the
   effects; route-level constraints act during the search.
-- No core dependency yet: each one is chosen with the dependency grid
-  and explicit approval (see Working rules).
+- Core dependencies: NumPy and SciPy, chosen with the dependency grid;
+  each lower bound is the first release with wheels for the Python
+  version. Any other one needs explicit approval (see Working rules).
 - `import protee` stays light: subpackages are imported on demand
-  (PEP 562).
+  (PEP 562); NumPy and SciPy are imported only by the subpackages that
+  use them.
 - Reference data is immutable: frozen structures (`frozen=True`), inputs
   copied into tuples or read-only arrays, no mutation after
   construction.
@@ -260,8 +262,9 @@ No safety rule is bypassed, including during project bootstrap.
   next version as a canary, which shows breakages before users meet
   them. Portability and `requires-python >=3.14` are promises made to
   the package's users; a non-blocking cell ends up ignored and the
-  promise stops being checked. The minimum version is to be confirmed
-  in the first work items, with the first dependencies.
+  promise stops being checked. The minimum is confirmed with the first
+  dependencies: NumPy and SciPy publish wheels for 3.14 and 3.15 on
+  both systems.
 - **Contributor signatures**: a squash merge produces a commit signed
   by GitHub, which hides the commits of the pull request; the
   `signatures` CI job therefore requires each of them to be signed and

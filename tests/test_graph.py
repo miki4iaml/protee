@@ -75,6 +75,7 @@ def test_frozen() -> None:
 def test_import_is_light_and_submodules_load_on_demand() -> None:
     code = (
         "import sys, protee; assert 'protee.flow' not in sys.modules; "
+        "assert not {'numpy', 'scipy'} & sys.modules.keys(); "
         "protee.flow; assert 'protee.flow' in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
