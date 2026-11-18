@@ -11,19 +11,21 @@ cases included: non-zero minimum, zero or infinite maxima, unattainable or
 non-binding maxima, an overconstrained system and multiple optima.
 """
 
+import json
 import math
 from collections.abc import Mapping
 
 import pytest
-from constraints_cases import REG, requirement
 from oracles import networkx_oracle
 
 from protee.constraints import (
     ArcData,
     Attribute,
+    Family,
     FlowSearch,
     Origin,
     Parameter,
+    Provenance,
     Requirement,
     RequirementSet,
     RequirementStatus,
@@ -33,6 +35,8 @@ from protee.constraints import (
     Value,
     ValueSet,
     minimal_conflict,
+    provenance,
+    requirement_table,
     resolve_values,
     verify_flow,
 )
@@ -174,9 +178,16 @@ def occurrences(
             entries[f"min_{key}"] = Value(minima[label], SPEC, Origin.STATEMENT)
         scope = None if label == "*" else [label]
         reqs.append(
-            requirement(f"OC-{key}", "occurrence_bounds", parameters=bind, scope=scope)
+            Requirement(
+                f"OC-{key}",
+                "occurrence_bounds",
+                {"en": f"Occurrences of {label} within their bounds."},
+                SPEC,
+                parameters=bind,
+                scope=None if scope is None else frozenset(scope),
+            )
         )
-    rs = RequirementSet(tuple(reqs), tuple(params), (REG, CLIENT))
+    rs = RequirementSet(tuple(reqs), tuple(params), (CLIENT,))
     values = resolve_values([ValueSet("client", "1", entries)], rs)
     data = ArcData(
         graph.m,
@@ -270,3 +281,52 @@ def test_multiple_optima_are_detected() -> None:
     assert problem is not None
     assert result is not None
     assert not optimum_uniqueness(problem, result).unique
+
+
+def test_profile_chain_to_the_table_and_the_provenance() -> None:
+    # From the specification of use to the requirement table and the
+    # provenance, as for routes.
+    search = occurrences("case-01", {"*": 4, "L06": 2})
+    problem = search.problem_for()
+    result = search.solve()
+    assert problem is not None
+    assert result is not None
+    check = verify_flow(
+        result, problem, search.requirements, search.data, search.values
+    )
+    impacts = {rid: search.impact(rid) for rid in search.ids}
+    rows = requirement_table(check, search.requirements, search.values, impacts=impacts)
+    assert [r.id for r in rows] == list(search.ids)
+    row = next(r for r in rows if r.id == "OC-L06")
+    assert row.status is S.APPLIED
+    assert row.family is Family.CAPACITY
+    assert row.source.rulebook == "client"
+    assert row.values["max_L06"].value == 2
+    assert row.values["max_L06"].origin is Origin.STATEMENT
+    assert row.verification == {"pass": 1, "fail": 0, "unknown": 0}
+    # The maximum of L06 is binding: without it, four more occurrences.
+    assert row.impact is not None
+    assert (row.impact["cost_with"], row.impact["delta"]) == (13.0, -4.0)
+    data = json.dumps([r.to_dict() for r in rows])
+    assert '"origin": "statement"' in data
+
+    def record(s: FlowSearch) -> Provenance:
+        p = s.problem_for()
+        r = s.solve()
+        assert r is not None
+        return provenance(
+            s.method,
+            {"sense": "max"},
+            inputs={"problem": p, "data": s.data},
+            requirements=s.requirements,
+            values=s.values,
+            result=r,
+            counters=r.counters,
+        )
+
+    first, again = record(search), record(occurrences("case-01", {"*": 4, "L06": 2}))
+    assert first == again
+    assert first.replays(again)
+    assert ("max_L06", "client", "1", True) in first.values
+    changed = record(occurrences("case-01", {"*": 4, "L06": 1}))
+    assert set(first.differences(changed)) == {"inputs", "result"}
