@@ -6,9 +6,10 @@ tool. The practical guide (setup, hooks, pull request workflow) is in
 
 ## Project
 
-`protee` (Proteus) is a Python package for operations research and the
-adaptive solving of life-cycle profile graphs. Its model, its solvers
-and its design goals are defined in the first work items.
+`protee` (Proteus) is a Python package of graph and operations research
+algorithms whose methods are chosen explicitly, compared, and backed by
+certificates and diagnostics. Its model, its solvers and its design
+goals are defined in the first work items.
 
 Structural constraint: the package must work on an offline workstation.
 It may rely on well-supported, widely adopted dependencies, but never on

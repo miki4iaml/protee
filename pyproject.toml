@@ -1,7 +1,7 @@
 [project]
 name = "protee"
 version = "0.1.0"
-description = "Proteus - Operations Research and Adaptive Solving of Life-Cycle Profile Graphs"
+description = "Proteus: graph and operations research algorithms whose methods are chosen explicitly, compared, and backed by certificates and diagnostics"
 readme = "README.md"
 authors = [
     { name = "miki4ia", email = "miki4ia@gmail.com" }
@@ -15,7 +15,8 @@ keywords = [
     "graphs",
     "life cycle",
     "life-cycle profile",
-    "adaptive solving",
+    "network flows",
+    "shortest paths",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",

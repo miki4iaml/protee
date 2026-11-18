@@ -14,17 +14,18 @@
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196)](https://www.conventionalcommits.org/fr/v1.0.0/)
 
-**Protée : recherche opérationnelle et résolution adaptative des
-graphes de profil de vie.**
+**Protée : algorithmes de graphes et de recherche opérationnelle, dont
+les méthodes sont choisies explicitement, comparées, et appuyées par
+des certificats et des diagnostics.**
 
 Pur Python ; il fonctionne sur un poste hors ligne (aucun solveur,
 service ou moteur en ligne).
 
 > Pré-alpha : un premier ensemble d'algorithmes de graphes et de flots
-> est disponible (`protee.graph`, `protee.paths`, `protee.flow`,
-> `protee.structure`, `protee.transforms`, `protee.io`) ; leur API reste
-> provisoire jusqu'à la version 1.0, et le modèle des profils de cycle de
-> vie est en cours de conception.
+> est disponible (`protee.graph`, `protee.paths`, `protee.routes`,
+> `protee.flow`, `protee.structure`, `protee.transforms`, `protee.io`) ;
+> leur API reste provisoire jusqu'à la version 1.0, et le modèle des
+> profils de cycle de vie est en cours de conception.
 
 ## Installation
 

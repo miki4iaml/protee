@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Miki
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""protee: operations research and adaptive solving of life-cycle profile graphs.
+"""protee: graph and operations research algorithms.
+
+Their methods are chosen explicitly, compared, and backed by certificates
+and diagnostics.
 
 The subpackages are imported on demand, so that ``import protee`` stays
 light:
@@ -11,6 +14,8 @@ light:
 - :mod:`protee.structure`: components, degree-2 paths, spanning trees and
   cycle bases;
 - :mod:`protee.paths`: shortest paths;
+- :mod:`protee.routes`: routes through waypoints, k shortest paths,
+  replacement paths, overlap and most reliable path;
 - :mod:`protee.flow`: maximum flows, feasibility, minimum or maximum cost
   flows with named methods, disjoint paths and diagnostics;
 - :mod:`protee.transforms`: reversible graph transformations.
