@@ -82,3 +82,34 @@ and this project adheres to
     comes from verification, never from the solver;
   - `check_inputs`: what the data allow to prove, before solving;
   - `requirement_table`: rows generated from the verification.
+- `protee.paths.lexicographic_dijkstra`: exact shortest paths for weight
+  vectors compared in lexicographic order, for instance the number of
+  unknown arcs first, then the length, with no scaling by a large
+  constant.
+- Useful failure in `protee.constraints`:
+  - `minimal_conflict` (methods `enumeration` and `deletion_filter`) and
+    `minimal_relaxation` (methods `enumeration` and `greedy`) explain why
+    requirements cannot hold together and what to relax;
+  - `relax_by_tiers`: declared tiers tried in order, the tier of an option
+    computed from the requirements it relaxes;
+  - `RouteSearch` and `FlowSearch` solve under any subset of the
+    requirements, with their `Impact` (result with and without a
+    requirement), reported in the requirement table.
+- Declared objective: the `objective` pattern, prescribed by a text or
+  chosen with a mandatory justification, checked against the computation
+  view (`ComputationView.lexicographic_weights` counts the unknown arcs
+  first).
+- Provenance: `fingerprint` (SHA-256 of a canonical form) and
+  `provenance` (method, parameters, version, requirements, values retained
+  and set aside, fingerprints of the inputs and of the result), to reuse a
+  result and report a replay that differs.
+- `RulebookValues`: rulebooks and their values read from TOML; first
+  embedded value set, taken from a public text: the categories (art. 3)
+  and maximum speeds (art. 14) of the French order of 4 May 2006 on
+  exceptional transport, reused from Legifrance under the Licence Ouverte
+  2.0.
+- Tests of the whole chain on both reference applications: from the
+  embedded values to a verified route, its table and its provenance; nine
+  hand-built reference life-cycle profiles, with edge cases (non-zero
+  minimum, zero or infinite maxima, unattainable or non-binding maxima,
+  overconstrained system, multiple optima).

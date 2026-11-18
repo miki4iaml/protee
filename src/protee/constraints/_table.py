@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 from protee.constraints._compose import ComputationView, UnknownPolicy
+from protee.constraints._failure import Impact
 from protee.constraints._model import RequirementSet, ResolvedValues, Source, Value
 from protee.constraints._patterns import PATTERNS, Family
 from protee.constraints._verify import RequirementStatus, Verification
@@ -42,8 +43,8 @@ class RequirementRow:
         Elements without data.
     policy : UnknownPolicy or None
         The policy for the unknown of the view the result was computed with.
-    impact : mapping of str to float or None
-        Difference with and without the requirement; not computed yet.
+    impact : mapping of str to float, bool or None, optional
+        What the requirement changes to the result (see :class:`Impact`).
     """
 
     id: str
@@ -57,7 +58,7 @@ class RequirementRow:
     verification: Mapping[str, int]
     unknowns: int
     policy: UnknownPolicy | None = None
-    impact: Mapping[str, float] | None = field(default=None)
+    impact: Mapping[str, float | bool | None] | None = field(default=None)
 
     def to_dict(self) -> dict[str, Any]:
         """The row as plain data, ready for JSON (``inf`` as ``"inf"``)."""
@@ -103,6 +104,7 @@ def _value(v: Value) -> dict[str, Any]:
         "unit": v.unit,
         "origin": str(v.origin),
         "precedence": v.precedence,
+        "justification": v.justification,
         "source": _source(v.source),
     }
 
@@ -113,6 +115,7 @@ def requirement_table(
     values: ResolvedValues,
     *,
     view: ComputationView | None = None,
+    impacts: Mapping[str, Impact] | None = None,
 ) -> tuple[RequirementRow, ...]:
     """The rows of the requirement table, one per verified requirement.
 
@@ -124,6 +127,9 @@ def requirement_table(
     values : ResolvedValues
     view : ComputationView, optional
         The view the result was computed with, for its policy.
+    impacts : mapping of str to Impact, optional
+        By requirement identifier, from :meth:`RouteSearch.impact` or
+        :meth:`FlowSearch.impact`.
 
     Returns
     -------
@@ -156,6 +162,9 @@ def requirement_table(
                 ),
                 unknowns=check.unknown,
                 policy=None if view is None else view.policy,
+                impact=None
+                if impacts is None or r.id not in impacts
+                else MappingProxyType(impacts[r.id].as_dict()),
             )
         )
     return tuple(rows)

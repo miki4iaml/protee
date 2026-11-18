@@ -15,7 +15,12 @@ import numpy.typing as npt
 from protee.constraints._compose import ComputationView
 from protee.constraints._data import ArcData
 from protee.constraints._effects import Effect, Reason, Verdict, evaluate
-from protee.constraints._model import Requirement, RequirementSet, ResolvedValues
+from protee.constraints._model import (
+    Origin,
+    Requirement,
+    RequirementSet,
+    ResolvedValues,
+)
 from protee.constraints._patterns import PATTERNS, EffectKind
 from protee.flow import FlowProblem, FlowResult
 from protee.graph import Digraph
@@ -222,6 +227,8 @@ def verify_route(
             check = _verdict_check(r, effect, arcs, data, "arc of the route")
         elif kind is EffectKind.COST_TERM:
             check = _cost_check(r, effect, arcs[data.in_scope(r.scope)[arcs]], view)
+        elif kind is EffectKind.OBJECTIVE:
+            check = _objective_check(r, effect, values, view)
         else:
             check = RequirementCheck(
                 r.id, RequirementStatus.NOT_APPLICABLE, "flow bounds apply to flows"
@@ -272,6 +279,8 @@ def verify_flow(
     requirements: RequirementSet,
     data: ArcData,
     values: ResolvedValues,
+    *,
+    view: ComputationView | None = None,
 ) -> Verification:
     """Status of each requirement on a flow, whatever method produced it.
 
@@ -287,6 +296,8 @@ def verify_flow(
     requirements : RequirementSet
     data : ArcData
     values : ResolvedValues
+    view : ComputationView, optional
+        The view the flow was computed with, for its objective.
 
     Returns
     -------
@@ -319,6 +330,8 @@ def verify_flow(
             check = _verdict_check(r, effect, carried, data, "arc with flow")
         elif kind is EffectKind.BOUND:
             check = _bound_check(r, effect, np.asarray(x, dtype=np.float64), data)
+        elif kind is EffectKind.OBJECTIVE:
+            check = _objective_check(r, effect, values, view)
         else:
             check = RequirementCheck(
                 r.id,
@@ -327,6 +340,36 @@ def verify_flow(
             )
         checks.append(check)
     return Verification(tuple(checks), tuple(problem.violations(x)))
+
+
+def _objective_check(
+    requirement: Requirement,
+    effect: Effect,
+    values: ResolvedValues,
+    view: ComputationView | None,
+) -> RequirementCheck:
+    rid = requirement.id
+    if view is None:
+        return RequirementCheck(
+            rid,
+            RequirementStatus.NOT_APPLIED,
+            "an objective is checked against the computation view, not given",
+        )
+    if view.objective != effect.objective:
+        return RequirementCheck(
+            rid,
+            RequirementStatus.NOT_APPLIED,
+            f"the view optimizes {view.objective!r}, not {effect.objective!r}",
+        )
+    value = values.get(requirement.parameters["criterion"])
+    assert value is not None
+    if value.origin is Origin.CHOICE:
+        how = f"chosen: {value.justification}"
+    else:
+        how = f"prescribed ({value.origin})"
+    return RequirementCheck(
+        rid, RequirementStatus.APPLIED, f"objective {effect.objective!r}, {how}"
+    )
 
 
 def _bound_check(

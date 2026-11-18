@@ -12,15 +12,23 @@ import pytest
 from constraints_cases import (
     ELEMENTS,
     MASS,
+    MIN_L03,
+    OC_ALL,
+    OC_INF,
+    OC_L03,
     PARAMETERS,
+    PROFILE,
     REG,
+    RETURN,
     ROUTING,
     SPEED,
     SRC,
     VERDICT_REQUIREMENTS,
     ZONE,
     best_admissible,
+    occurrence,
     oracle_verdict,
+    profile,
     random_case,
     requirement,
     requirement_set,
@@ -36,14 +44,9 @@ from protee.constraints import (
     ComputationView,
     Effect,
     Origin,
-    Parameter,
-    Requirement,
     RequirementSet,
     RequirementStatus,
     ResolvedValues,
-    Rulebook,
-    RulebookKind,
-    Source,
     UnknownPolicy,
     Value,
     ValueSet,
@@ -374,60 +377,6 @@ def test_table_keeps_discarded_values_and_infinity() -> None:
 #
 #   a0 L01: 0 -> 1   a1 L02: 1 -> 2   a2 L03: 2 -> 1 (loop)
 #   a3 L04: 1 -> 3   a4 L05: 2 -> 3   a5 L06: 3 -> 0 (return, 1..1)
-
-PROFILE = Digraph.from_arcs(4, [(0, 1), (1, 2), (2, 1), (1, 3), (2, 3), (3, 0)])
-LINKS = ("L01", "L02", "L03", "L04", "L05", "L06")
-CLIENT = Rulebook(
-    "client", RulebookKind.CLIENT_SPECIFICATION, {"en": "Client specification"}, "1"
-)
-CLIENT_SRC = Source("Specification of use", rulebook="client", edition="1")
-OCC_PARAMETERS = (
-    Parameter("occ_all"),
-    Parameter("occ_l03"),
-    Parameter("occ_l02"),
-    Parameter("one"),
-    Parameter("three"),
-)
-
-
-def occurrence(
-    id: str, maximum: str, scope: list[str] | None, minimum: str | None = None
-) -> Requirement:
-    params = {"maximum": maximum} | ({} if minimum is None else {"minimum": minimum})
-    return requirement(id, "occurrence_bounds", parameters=params, scope=scope)
-
-
-OC_ALL = occurrence("OC-ALL", "occ_all", None)
-OC_L03 = occurrence("OC-L03", "occ_l03", ["L03"])
-RETURN = occurrence("RETURN", "one", ["L06"], minimum="one")
-OC_INF = occurrence("OC-L02", "occ_l02", ["L02"])
-MIN_L03 = occurrence("MIN-L03", "three", ["L03"], minimum="three")
-
-
-def profile(
-    *requirements: Requirement,
-) -> tuple[RequirementSet, ArcData, ResolvedValues]:
-    reqs = RequirementSet(requirements, (*PARAMETERS, *OCC_PARAMETERS), (REG, CLIENT))
-    spec = ValueSet(
-        "client",
-        "1",
-        {
-            "occ_all": Value(4, CLIENT_SRC, Origin.STATEMENT),
-            "occ_l03": Value(2, CLIENT_SRC, Origin.STATEMENT),
-            "occ_l02": Value(math.inf, CLIENT_SRC, Origin.STATEMENT),
-            "one": Value(1, CLIENT_SRC, Origin.STATEMENT),
-            "three": Value(3, CLIENT_SRC, Origin.STATEMENT),
-        },
-    )
-    data = ArcData(
-        6,
-        (
-            Attribute.categorical("link", list(LINKS), LINKS),
-            Attribute.numeric("in_zone", [0, 0, 0, 1, None, 0]),
-        ),
-        element="link",
-    )
-    return reqs, data, resolve_values([spec], reqs)
 
 
 def bounded(reqs: RequirementSet, data: ArcData, vals: ResolvedValues) -> FlowProblem:

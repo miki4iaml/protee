@@ -421,6 +421,8 @@ def effects(draw: st.DrawFn) -> list[Effect]:
                     added=draw(st.lists(num, min_size=M, max_size=M)),
                 )
             )
+        elif kind is EffectKind.OBJECTIVE:
+            out.append(effect(rid, kind, M, objective="length"))
         else:
             lo = draw(st.lists(st.integers(0, 3), min_size=M, max_size=M))
             hi = draw(

@@ -78,6 +78,8 @@ class Effect:
         Amount added to the cost (``cost_term`` kind).
     lower, upper : numpy.ndarray of float64, optional
         Integer flow bounds, ``inf`` for no upper bound (``bound`` kind).
+    objective : str, optional
+        The criterion to optimize (``objective`` kind).
     not_applicable : str, optional
         Why the requirement has no effect (a value to be set); the arrays
         are then absent.
@@ -93,6 +95,7 @@ class Effect:
     added: npt.NDArray[np.float64] | None = None
     lower: npt.NDArray[np.float64] | None = None
     upper: npt.NDArray[np.float64] | None = None
+    objective: str | None = None
     not_applicable: str | None = None
 
     def __post_init__(self) -> None:
@@ -117,9 +120,15 @@ class Effect:
             if getattr(self, name) is not None
         }
         if self.not_applicable is not None:
-            if arrays:
+            if arrays or self.objective is not None:
                 raise ValueError("an effect that does not apply carries no array")
             return
+        if self.kind is EffectKind.OBJECTIVE:
+            if arrays or not self.objective:
+                raise ValueError("an objective effect carries its criterion only")
+            return
+        if self.objective is not None:
+            raise ValueError("only an objective effect carries a criterion")
         expected = {
             EffectKind.VERDICT: ({"verdict", "reasons"}, {"verdict", "reasons"}),
             EffectKind.COST_TERM: (set(), {"cap", "factor", "added"}),
@@ -345,10 +354,23 @@ def _occurrences(
     return Effect(requirement.id, EffectKind.BOUND, data.m, lower=lower, upper=upper)
 
 
+def _objective(
+    requirement: Requirement,
+    data: ArcData,
+    bound: dict[str, Datum],
+    _scope: npt.NDArray[np.bool_],
+) -> Effect:
+    criterion = bound["criterion"]
+    if not isinstance(criterion, str):
+        raise TypeError(f"requirement {requirement.id}: the criterion must be a name")
+    return Effect(requirement.id, EffectKind.OBJECTIVE, data.m, objective=criterion)
+
+
 _EVALUATORS: dict[str, _Evaluator] = {
     "threshold_admissibility": _threshold,
     "class_admissibility": _class,
     "zone_exclusion": _zone,
     "speed_cap": _speed_cap,
     "occurrence_bounds": _occurrences,
+    "objective": _objective,
 }

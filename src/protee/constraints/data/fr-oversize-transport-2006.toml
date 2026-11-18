@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 Miki
+# SPDX-License-Identifier: BSD-3-Clause
+
+format = "protee-rulebook-values/0"
+notice = """
+Values taken from the consolidated text published on Legifrance
+(https://www.legifrance.gouv.fr/loda/id/LEGITEXT000006053685), checked on
+18 November 2026: article 3, in force since 21 June 2019, and article 14,
+in force since 12 July 2006. Only the values and the article references
+are reproduced, the statements being protee's own. Legifrance data are
+reused under the Licence Ouverte 2.0 (Etalab); the authoritative text is
+the one published on legifrance.gouv.fr.
+"""
+
+[rulebook]
+id = "fr-oversize-transport-2006"
+kind = "regulation"
+edition = "consolidated, in force on 2026-11-18"
+link = "https://www.legifrance.gouv.fr/loda/id/LEGITEXT000006053685"
+
+[rulebook.title]
+en = "Order of 4 May 2006 on exceptional transport (France)"
+fr = "Arrêté du 4 mai 2006 relatif aux transports exceptionnels de marchandises, d'engins ou de véhicules et ensembles de véhicules comportant plus d'une remorque"
+
+[source]
+document = "Arrêté du 4 mai 2006 relatif aux transports exceptionnels"
+citation_checked = true
+
+# Article 3: the strongest characteristic decides the category.
+[[parameters]]
+name = "oversize_length_category_1_max"
+unit = "m"
+
+[[parameters]]
+name = "oversize_length_category_2_max"
+unit = "m"
+
+[[parameters]]
+name = "oversize_width_category_1_max"
+unit = "m"
+
+[[parameters]]
+name = "oversize_width_category_2_max"
+unit = "m"
+
+[[parameters]]
+name = "oversize_mass_category_1_max"
+unit = "kg"
+
+[[parameters]]
+name = "oversize_mass_category_2_max"
+unit = "kg"
+
+# Article 14: maximum speeds of the 2nd and 3rd categories.
+[[parameters]]
+name = "oversize_category_2_speed_urban"
+unit = "km/h"
+
+[[parameters]]
+name = "oversize_category_3_speed_motorway"
+unit = "km/h"
+
+[[parameters]]
+name = "oversize_category_3_speed_road"
+unit = "km/h"
+
+[[parameters]]
+name = "oversize_category_3_speed_urban"
+unit = "km/h"
+
+[values.oversize_length_category_1_max]
+value = 20.0
+unit = "m"
+locator = "art. 3"
+
+[values.oversize_length_category_2_max]
+value = 25.0
+unit = "m"
+locator = "art. 3"
+
+[values.oversize_width_category_1_max]
+value = 3.0
+unit = "m"
+locator = "art. 3"
+
+[values.oversize_width_category_2_max]
+value = 4.0
+unit = "m"
+locator = "art. 3"
+
+[values.oversize_mass_category_1_max]
+value = 48000.0
+unit = "kg"
+locator = "art. 3"
+
+[values.oversize_mass_category_2_max]
+value = 72000.0
+unit = "kg"
+locator = "art. 3"
+
+[values.oversize_category_2_speed_urban]
+value = 40.0
+unit = "km/h"
+locator = "art. 14"
+
+[values.oversize_category_3_speed_motorway]
+value = 60.0
+unit = "km/h"
+locator = "art. 14"
+
+[values.oversize_category_3_speed_road]
+value = 50.0
+unit = "km/h"
+locator = "art. 14"
+
+[values.oversize_category_3_speed_urban]
+value = 30.0
+unit = "km/h"
+locator = "art. 14"
