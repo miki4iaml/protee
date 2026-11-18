@@ -34,6 +34,11 @@ The first command also installs the optional extras, if any, which
 the tests cover. The second command installs the hooks at all three
 stages (pre-commit, commit-msg, pre-push).
 
+On Windows without a C compiler: PyYAML, which pre-commit requires,
+has no wheel for Python 3.15 yet. Setting the environment variable
+`PYYAML_FORCE_LIBYAML=0` builds it in pure Python, for the Python 3.15
+commands of `AGENTS.md`.
+
 ## Local checks
 
 | Stage | Checks |
