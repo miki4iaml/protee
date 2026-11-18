@@ -16,7 +16,7 @@ import math
 from collections.abc import Mapping
 
 import pytest
-from oracles import networkx_oracle
+from oracles import check_certificate, networkx_oracle
 
 from protee.constraints import (
     ArcData,
@@ -32,6 +32,7 @@ from protee.constraints import (
     Rulebook,
     RulebookKind,
     Source,
+    UnknownPolicy,
     Value,
     ValueSet,
     minimal_conflict,
@@ -195,39 +196,65 @@ def occurrences(
         element="link",
     )
     return FlowSearch(
-        rs, FlowProblem(graph, cost=cost, sense="max"), data, values, method
+        rs,
+        FlowProblem(graph, cost=cost, sense="max"),
+        data,
+        values,
+        method=method,
+        policy=UnknownPolicy.EXCLUDE,
     )
+
+
+def oracle_problem(
+    name: str, maximum: int | None, given: Mapping[int, int] | None = None
+) -> FlowProblem:
+    """The problem built directly from the reference topology, bounds by
+    link number, without any requirement: the same maximum on every arc,
+    the given maxima on their links, and the return bounded to 1..1."""
+    graph, _, cost = closed(name)
+    upper: list[int | None] = [maximum] * graph.m
+    for link, v in (given or {}).items():
+        upper[link - 1] = v
+    upper[-1] = 1
+    lower = [0] * (graph.m - 1) + [1]
+    return FlowProblem(graph, lower=lower, upper=upper, cost=cost, sense="max")
 
 
 @pytest.mark.parametrize("method", METHODS)
 @pytest.mark.parametrize("name", sorted(REFERENCE))
 def test_bounded_profiles_against_the_oracle(name: str, method: str) -> None:
     search = occurrences(name, {"*": 3}, method=method)
-    problem = search.problem_for()
-    assert problem is not None
     result = search.solve()
     assert result is not None
-    assert (str(result.status), result.objective) == networkx_oracle(problem)
-    check = verify_flow(
-        result, problem, search.requirements, search.data, search.values
-    )
+    expected = networkx_oracle(oracle_problem(name, 3))
+    assert (str(result.status), result.objective) == expected
+    assert result.flow is not None
+    assert max(result.flow) <= 3
+    assert result.flow[-1] == 1
+    check = search.verify(result)
     assert check.violations == ()
     assert set(check.statuses.values()) == {S.APPLIED}
 
 
 @pytest.mark.parametrize("name", sorted(REFERENCE))
 def test_infinite_maxima_give_the_oracle_status(name: str) -> None:
-    given = {f"L{k:02d}": v for k, v in GIVEN_09.items()} if name == "case-09" else {}
-    search = occurrences(name, given)
+    links = GIVEN_09 if name == "case-09" else {}
+    search = occurrences(name, {f"L{k:02d}": v for k, v in links.items()})
     problem = search.problem_for()
     assert problem is not None
     result = search.solve()
     assert result is not None
-    status, value = networkx_oracle(problem)
+    status, value = networkx_oracle(oracle_problem(name, None, links))
     assert str(result.status) == status
     assert result.objective == value
     if result.status is Status.UNBOUNDED:
-        assert result.certificate is not None
+        check_certificate(problem, result)
+    else:
+        # case-09, bounded by its given maxima.
+        assert result.flow is not None
+        for link, maximum in links.items():
+            assert result.flow[link - 1] <= maximum
+        assert set(search.verify(result).statuses.values()) == {S.APPLIED}
 
 
 def test_nonzero_minimum_and_zero_maximum() -> None:
@@ -240,7 +267,7 @@ def test_nonzero_minimum_and_zero_maximum() -> None:
     problem = search.problem_for()
     assert problem is not None
     assert (
-        verify_flow(result, problem, search.requirements, search.data, search.values)[
+        verify_flow(result, search.requirements, problem, search.data, search.values)[
             "OC-L06"
         ].status
         is S.APPLIED
@@ -292,7 +319,7 @@ def test_profile_chain_to_the_table_and_the_provenance() -> None:
     assert problem is not None
     assert result is not None
     check = verify_flow(
-        result, problem, search.requirements, search.data, search.values
+        result, search.requirements, problem, search.data, search.values
     )
     impacts = {rid: search.impact(rid) for rid in search.ids}
     rows = requirement_table(check, search.requirements, search.values, impacts=impacts)
@@ -303,7 +330,7 @@ def test_profile_chain_to_the_table_and_the_provenance() -> None:
     assert row.source.rulebook == "client"
     assert row.values["max_L06"].value == 2
     assert row.values["max_L06"].origin is Origin.STATEMENT
-    assert row.verification == {"pass": 1, "fail": 0, "unknown": 0}
+    assert row.verification == {"passed": 1, "failed": 0, "unknown": 0}
     # The maximum of L06 is binding: without it, four more occurrences.
     assert row.impact is not None
     assert (row.impact["cost_with"], row.impact["delta"]) == (13.0, -4.0)

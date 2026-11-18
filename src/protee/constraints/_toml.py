@@ -4,6 +4,7 @@
 """Rulebooks and their values, read from TOML."""
 
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any
@@ -22,11 +23,37 @@ __all__ = ["RulebookValues"]
 
 FORMAT = "protee-rulebook-values/0"
 
+_ROOT = ("format", "notice", "rulebook", "source", "parameters", "values")
+_RULEBOOK = ("id", "kind", "edition", "title", "link")
+_SOURCE = ("document", "link", "citation_checked")
+_PARAMETER = ("name", "unit", "aliases")
+_VALUE = (
+    "value",
+    "unit",
+    "origin",
+    "precedence",
+    "justification",
+    "document",
+    "locator",
+    "link",
+    "citation_checked",
+)
 
-def _table(where: str, x: object) -> dict[str, Any]:
+
+def _table(
+    where: str, x: object, allowed: Iterable[str] | None = None
+) -> dict[str, Any]:
     if not isinstance(x, dict):
         raise TypeError(f"{where} must be a table")
+    if allowed is not None and (unknown := sorted(set(x) - set(allowed))):
+        raise ValueError(f"{where}: unknown keys {unknown}")
     return x
+
+
+def _required(where: str, table: dict[str, Any], key: str) -> Any:
+    if key not in table:
+        raise ValueError(f"{where}: missing key {key!r}")
+    return table[key]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,32 +71,40 @@ class RulebookValues:
 
     Notes
     -----
-    The TOML format (``protee-rulebook-values/0``)::
+    The TOML format (``protee-rulebook-values/0``); keys in brackets are
+    optional, any other key is refused::
 
         format = "protee-rulebook-values/0"
-        notice = "..."
+        notice = "..."                  # source and conditions of reuse
 
         [rulebook]
         id = "..."
-        kind = "regulation"
+        kind = "regulation"             # doctrine, regulation, standard,
+                                        # client_specification
         edition = "..."
-        link = "..."
-        title = { en = "...", fr = "..." }
+        title = { en = "...", fr = "..." }   # English required
+        [link] = "..."
 
-        [source]                # defaults of every value
-        document = "..."
-        link = "..."
-        citation_checked = true
+        [source]                        # defaults of every value
+        [document] = "..."              # the English title by default
+        [link] = "..."                  # the link of the rulebook by default
+        [citation_checked] = true       # false by default
 
         [[parameters]]
         name = "..."
-        unit = "m"
+        [unit] = "m"
+        [aliases] = { other-rulebook = "..." }
 
-        [values.<parameter>]
-        value = 20.0            # inf for no limit
-        unit = "m"
-        origin = "rulebook"
-        locator = "art. 3"
+        [values.<parameter>]            # a declared parameter
+        [value] = 20.0                  # inf for no limit; absent: to be set
+        [unit] = "m"                    # the unit of the parameter
+        [origin] = "rulebook"           # rulebook by default
+        [precedence] = 0
+        [justification] = "..."         # required for a chosen objective
+        [document], [link], [citation_checked]   # override [source]
+        [locator] = "art. 3"
+
+    Every value takes the edition of the rulebook.
     """
 
     rulebook: Rulebook
@@ -84,35 +119,48 @@ class RulebookValues:
         Raises
         ------
         ValueError
-            If the format is not ``protee-rulebook-values/0``, a table is
-            missing, or a value does not fit its parameter.
+            If the format is not ``protee-rulebook-values/0``, a table or a
+            required key is missing, a key is unknown, the notice is empty,
+            or a value does not fit its parameter.
+        TypeError
+            If a key that holds a table holds another type.
         """
-        doc = tomllib.loads(text)
+        doc = _table("the document", tomllib.loads(text), _ROOT)
         if doc.get("format") != FORMAT:
             raise ValueError(f"expected format {FORMAT!r}, got {doc.get('format')!r}")
-        book = _table("rulebook", doc.get("rulebook"))
+        notice = _required("the document", doc, "notice")
+        if not isinstance(notice, str) or not notice.strip():
+            raise ValueError("the notice must say where the values come from")
+        book = _table("rulebook", _required("the document", doc, "rulebook"), _RULEBOOK)
         rulebook = Rulebook(
-            book["id"],
-            RulebookKind(book["kind"]),
-            _table("rulebook.title", book.get("title")),
-            book["edition"],
+            _required("rulebook", book, "id"),
+            RulebookKind(_required("rulebook", book, "kind")),
+            _table("rulebook.title", _required("rulebook", book, "title")),
+            _required("rulebook", book, "edition"),
             link=book.get("link"),
         )
-        default = _table("source", doc.get("source", {}))
-        parameters = tuple(
-            Parameter(p["name"], unit=p.get("unit"), aliases=p.get("aliases", {}))
-            for p in doc.get("parameters", [])
-        )
+        default = _table("source", doc.get("source", {}), _SOURCE)
+        parameters = []
+        for k, entry in enumerate(doc.get("parameters", [])):
+            where = f"parameters[{k}]"
+            p = _table(where, entry, _PARAMETER)
+            parameters.append(
+                Parameter(
+                    _required(where, p, "name"),
+                    unit=p.get("unit"),
+                    aliases=p.get("aliases", {}),
+                )
+            )
         units = {p.name: p.unit for p in parameters}
         values = {}
         for name, entry in _table("values", doc.get("values", {})).items():
-            v = _table(f"values.{name}", entry)
+            v = _table(f"values.{name}", entry, _VALUE)
             if name not in units:
                 raise ValueError(f"value of undeclared parameter {name!r}")
             source = Source(
                 v.get("document", default.get("document", rulebook.title["en"])),
                 rulebook=rulebook.id,
-                edition=v.get("edition", default.get("edition", rulebook.edition)),
+                edition=rulebook.edition,
                 locator=v.get("locator"),
                 link=v.get("link", default.get("link", rulebook.link)),
                 citation_checked=v.get(
@@ -133,9 +181,9 @@ class RulebookValues:
                 )
         return cls(
             rulebook,
-            parameters,
+            tuple(parameters),
             ValueSet(rulebook.id, rulebook.edition, values),
-            str(doc.get("notice", "")),
+            notice,
         )
 
     @classmethod

@@ -3,9 +3,10 @@
 
 """Sources, rulebooks, values and requirements."""
 
+import itertools
 import math
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -13,7 +14,6 @@ from protee.constraints._patterns import PATTERNS, Pattern
 
 __all__ = [
     "Correspondence",
-    "Datum",
     "Origin",
     "Parameter",
     "Relation",
@@ -154,7 +154,7 @@ class Value:
         Why the value was chosen; required for a chosen objective.
     """
 
-    value: Datum | None
+    value: int | float | str | None
     source: Source
     origin: Origin
     unit: str | None = None
@@ -187,7 +187,14 @@ class ValueSet:
         Identifier of the rulebook.
     edition : str
     values : mapping of str to Value
-        By canonical parameter name, or by the alias the rulebook uses.
+        By canonical parameter name, or by the alias the rulebook uses. A
+        source that names no rulebook or no edition is given those of the
+        set, so that every value keeps them.
+
+    Raises
+    ------
+    ValueError
+        If the source of a value cites another rulebook or edition.
     """
 
     rulebook: str
@@ -197,11 +204,25 @@ class ValueSet:
     def __post_init__(self) -> None:
         _name("rulebook", self.rulebook)
         _name("edition", self.edition)
-        values = dict(self.values)
-        for key, value in values.items():
+        values = {}
+        for key, value in dict(self.values).items():
             _name("parameter", key)
             if not isinstance(value, Value):
                 raise TypeError(f"values[{key!r}] must be a Value, got {value!r}")
+            src = value.source
+            for what, cited, own in (
+                ("rulebook", src.rulebook, self.rulebook),
+                ("edition", src.edition, self.edition),
+            ):
+                if cited is not None and cited != own:
+                    raise ValueError(
+                        f"values[{key!r}]: its source cites the {what} {cited!r}, "
+                        f"the value set is {own!r}"
+                    )
+            values[key] = replace(
+                value,
+                source=replace(src, rulebook=self.rulebook, edition=self.edition),
+            )
         object.__setattr__(self, "values", MappingProxyType(values))
 
 
@@ -249,7 +270,7 @@ class Requirement:
         Arc attribute bound to each attribute role of the pattern.
     scope : frozenset of str, optional
         Element types the requirement applies to (see
-        :attr:`ArcData.element`); all arcs when ``None``.
+        :attr:`ArcData.element`), not empty; all arcs when ``None``.
     """
 
     id: str
@@ -267,6 +288,8 @@ class Requirement:
         object.__setattr__(self, "attributes", _names("attributes", self.attributes))
         if self.scope is not None:
             scope = frozenset(self.scope)
+            if not scope:
+                raise ValueError(f"requirement {self.id}: an empty scope covers no arc")
             for label in scope:
                 _name("scope label", label)
             object.__setattr__(self, "scope", scope)
@@ -401,6 +424,17 @@ class ResolvedValues:
     unused: tuple[str, ...]
     missing: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        set_ = object.__setattr__
+        set_(self, "values", MappingProxyType(dict(self.values)))
+        set_(
+            self,
+            "discarded",
+            MappingProxyType({k: tuple(v) for k, v in self.discarded.items()}),
+        )
+        set_(self, "unused", tuple(self.unused))
+        set_(self, "missing", tuple(self.missing))
+
     def get(self, name: str) -> Value | None:
         """The value retained for ``name``, or ``None``."""
         return self.values.get(name)
@@ -414,22 +448,26 @@ def resolve_values(
     Parameters
     ----------
     value_sets : iterable of ValueSet
-        Their order does not matter.
+        At most one per rulebook and edition; their order does not matter.
     requirements : RequirementSet
         Gives the parameters, their units and their aliases.
 
     Returns
     -------
     ResolvedValues
+        Between agreeing values of the same precedence, the one of the
+        first rulebook and edition (in alphabetical order) is retained,
+        and the others are kept with the discarded values.
 
     Raises
     ------
     ValueError
-        If a value set names an unknown parameter, gives a unit other than
-        the parameter's, gives a parameter twice, if two values of the
-        same parameter disagree with the same precedence (the disagreement
-        must be declared by a precedence), or if an objective is chosen
-        without a justification.
+        If two value sets share a rulebook and an edition, a value set
+        names an unknown parameter, gives a unit other than the
+        parameter's, gives a parameter twice, if two values of the same
+        parameter disagree with the same precedence (the disagreement must
+        be declared by a precedence), or if a value of an objective is
+        chosen without a justification.
     """
     aliases = {
         (book, alias): p.name
@@ -438,7 +476,13 @@ def resolve_values(
     }
     known = {p.name for p in requirements.parameters}
     candidates: dict[str, list[Value]] = {}
-    for vs in sorted(value_sets, key=lambda s: (s.rulebook, s.edition)):
+    ordered = sorted(value_sets, key=lambda s: (s.rulebook, s.edition))
+    for vs, other in itertools.pairwise(ordered):
+        if (vs.rulebook, vs.edition) == (other.rulebook, other.edition):
+            raise ValueError(
+                f"two value sets for {vs.rulebook} ({vs.edition}): merge them"
+            )
+    for vs in ordered:
         seen: set[str] = set()
         for key, value in vs.values.items():
             name = key if key in known else aliases.get((vs.rulebook, key))
@@ -474,15 +518,11 @@ def resolve_values(
             discarded[name] = tuple(ranked[1:])
     for r in requirements:
         if r.pattern == "objective":
-            chosen = retained.get(r.parameters["criterion"])
-            if (
-                chosen is not None
-                and chosen.origin is Origin.CHOICE
-                and not chosen.justification
-            ):
-                raise ValueError(
-                    f"requirement {r.id}: a chosen objective needs a justification"
-                )
+            for v in candidates.get(r.parameters["criterion"], ()):
+                if v.origin is Origin.CHOICE and not v.justification:
+                    raise ValueError(
+                        f"requirement {r.id}: a chosen objective needs a justification"
+                    )
     used = {name for r in requirements for name in r.parameters.values()}
     return ResolvedValues(
         values=MappingProxyType(retained),

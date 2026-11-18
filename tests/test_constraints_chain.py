@@ -8,10 +8,17 @@ import enum
 import json
 import math
 import random
+import re
 
 import numpy as np
 import pytest
-from constraints_cases import best_admissible, random_case, requirement_set, resolved
+from constraints_cases import (
+    best_admissible,
+    endpoints,
+    random_case,
+    requirement_set,
+    resolved,
+)
 
 from protee.constraints import (
     ArcData,
@@ -25,6 +32,7 @@ from protee.constraints import (
     RequirementSet,
     RequirementStatus,
     ResolvedValues,
+    RouteSearch,
     Rulebook,
     RulebookKind,
     RulebookValues,
@@ -32,6 +40,7 @@ from protee.constraints import (
     UnknownPolicy,
     Value,
     ValueSet,
+    check_inputs,
     compose,
     evaluate,
     fingerprint,
@@ -44,7 +53,6 @@ from protee.constraints import (
 from protee.flow import FlowProblem
 from protee.graph import Digraph
 from protee.paths import dijkstra
-from protee.routes import Route
 
 S = RequirementStatus
 
@@ -106,6 +114,7 @@ def speed_requirement(kind: str) -> Requirement:
             citation_checked=True,
         ),
         parameters={"maximum": f"oversize_category_3_speed_{kind}"},
+        attributes={"length": "length", "speed": "speed_limit"},
         scope=frozenset({kind}),
     )
 
@@ -164,47 +173,69 @@ def test_full_chain_from_the_text_to_a_verified_route(seed: int) -> None:
     assert category(rv, length=18.0, width=3.0, mass=48000.0) == 1
     assert "oversize_mass_category_1_max" in values.unused
     graph, data, length, limit, kinds = network(seed)
-    view = compose(
+    s, t = endpoints(seed, graph.n)
+    search = RouteSearch(
+        reqs,
         graph,
-        [evaluate(r, graph, data, values) for r in reqs],
-        unknown="admit_and_count",
+        data,
+        values,
+        s,
+        t,
+        method="dijkstra",
+        policy=UnknownPolicy.ADMIT_AND_COUNT,
+        criterion="duration",
     )
+    view = search.view()
     assert view.objective == "duration"
-    hours = [x / min(v, c) for x, v, c in zip(length, limit, view.cap, strict=True)]
-    rng = random.Random(seed)
-    s, t = rng.sample(range(graph.n), 2)
+    # The oracle applies the caps of article 14 to the raw lists.
     capped = {"motorway": 60.0, "road": 50.0, "urban": 30.0}
-    oracle = [x / capped[k] for x, k in zip(length, kinds, strict=True)]
+    oracle = [
+        x / min(v, capped[k]) for x, v, k in zip(length, limit, kinds, strict=True)
+    ]
     best = best_admissible(
         random_case(seed, n=7, m=18, unknown=0.0), s, t, [True] * graph.m, oracle
     )
-    sp = dijkstra(graph, hours, s, t, excluded=view.excluded)
-    assert math.isclose(sp.distance[t], best) or sp.distance[t] == best == math.inf
-    path = sp.path(t)
-    if path is None:
+    route = search.solve()
+    if route is None:
+        assert best == math.inf
         return
-    route = Route(arcs=path, cost=sp.distance[t])
-    check = verify_route(route, reqs, graph, data, values, view=view)
-    on_route = {kinds[a] for a in path}
+    assert math.isclose(route.cost, best)
+    check = search.verify(route)
+    on_route = {kinds[a] for a in route.arcs}
     for k in KINDS:
         expected = S.APPLIED if k in on_route else S.NOT_APPLICABLE
         assert check[f"OVERSIZE-SPEED-{k.upper()}"].status is expected
     assert check["OBJ"].status is S.APPLIED
-    assert (
-        check["OBJ"].reason
-        == "objective 'duration', chosen: the fastest route was asked for"
+    assert check["OBJ"].reason == (
+        "objective 'duration', chosen: the fastest route was asked for; "
+        "optimal (duration), checked by Bellman-Ford"
     )
-    rows = requirement_table(check, reqs, values, view=view)
+    # A1: a solver that times the arcs at their own speed is caught: every
+    # speed limit of the network is above the cap of its kind.
+    free = [x / v for x, v in zip(length, limit, strict=True)]
+    forgot = dijkstra(graph, free, s, t).path(t)
+    assert forgot is not None
+    blind = verify_route(
+        forgot, reqs, graph, data, values, view=view, weights=free, criterion="duration"
+    )
+    for k in {kinds[a] for a in forgot}:
+        assert blind[f"OVERSIZE-SPEED-{k.upper()}"].status is S.NOT_APPLIED
+    impacts = {rid: search.impact(rid) for rid in search.ids}
+    for k in on_route:
+        delta = impacts[f"OVERSIZE-SPEED-{k.upper()}"].delta
+        assert delta is not None
+        assert delta >= 0
+    rows = requirement_table(check, reqs, values, view=view, impacts=impacts)
     road = next(r for r in rows if r.id == "OVERSIZE-SPEED-ROAD").to_dict()
     assert road["source"]["locator"] == "art. 14"
-    assert road["value"][0]["value"] == 50.0
-    assert road["value"][0]["source"]["link"] == rv.rulebook.link
+    assert road["values"][0]["value"] == 50.0
+    assert road["values"][0]["source"]["link"] == rv.rulebook.link
     assert road["family"] == "cost"
     json.dumps([r.to_dict() for r in rows])
     first = provenance(
         "dijkstra",
         {"unknown": "admit_and_count"},
-        inputs={"graph": graph, "data": data, "hours": hours},
+        inputs={"graph": graph, "data": data, "weights": search.weights()},
         requirements=reqs,
         values=values,
         result=route,
@@ -212,10 +243,10 @@ def test_full_chain_from_the_text_to_a_verified_route(seed: int) -> None:
     again = provenance(
         "dijkstra",
         {"unknown": "admit_and_count"},
-        inputs={"graph": graph, "data": data, "hours": list(hours)},
+        inputs={"graph": graph, "data": data, "weights": list(search.weights())},
         requirements=reqs,
         values=values,
-        result=Route(arcs=path, cost=sp.distance[t]),
+        result=search.solve(),
     )
     assert first == again
     assert first.replays(again)
@@ -240,20 +271,22 @@ def test_prescribed_objective_and_objective_checks() -> None:
     values = resolve_values([prescribed], reqs)
     graph = Digraph.from_arcs(2, [(0, 1)])
     data = ArcData(1, ())
-    view = compose(graph, [evaluate(OBJECTIVE, graph, data, values)], unknown="exclude")
+    view = compose(graph, [evaluate(OBJECTIVE, graph, data, values)], policy="exclude")
     assert view.requirements_on(0) == ()
-    assert verify_route((0,), reqs, graph, data, values, view=view)["OBJ"].reason == (
-        "objective 'length', prescribed (statement)"
+    check = verify_route(
+        (0,), reqs, graph, data, values, view=view, weights=[1.0], criterion="length"
+    )
+    assert check["OBJ"].reason == (
+        "objective 'length', prescribed (statement); optimal (length), "
+        "checked by Bellman-Ford"
     )
     assert verify_route((0,), reqs, graph, data, values)["OBJ"].status is S.NOT_APPLIED
-    other = compose(graph, [], unknown="exclude")
-    assert (
-        "optimizes None"
-        in verify_route((0,), reqs, graph, data, values, view=other)["OBJ"].reason
-    )
+    report = check_inputs(reqs, graph, data, values)["OBJ"]
+    assert report.expected is S.APPLIED
+    assert report.reason == "checked on the weights or costs of the result"
     problem = FlowProblem(graph)
     assert (
-        verify_flow([0], problem, reqs, data, values, view=view)["OBJ"].status
+        verify_flow([0], reqs, problem, data, values, criterion="length")["OBJ"].status
         is S.APPLIED
     )
     effects = [
@@ -261,7 +294,7 @@ def test_prescribed_objective_and_objective_checks() -> None:
         Effect("B", EffectKind.OBJECTIVE, 1, objective="duration"),
     ]
     with pytest.raises(ValueError, match="several objectives"):
-        compose(graph, effects, unknown="exclude")
+        compose(graph, effects, policy="exclude")
     with pytest.raises(ValueError, match="criterion only"):
         Effect("A", EffectKind.OBJECTIVE, 1)
     with pytest.raises(ValueError, match="only an objective"):
@@ -309,13 +342,44 @@ def test_toml_reading_and_errors() -> None:
     with pytest.raises(ValueError, match="expected format"):
         RulebookValues.from_toml('format = "other"')
     with pytest.raises(TypeError, match="rulebook must be a table"):
-        RulebookValues.from_toml('format = "protee-rulebook-values/0"\nrulebook = 1')
+        RulebookValues.from_toml(
+            'format = "protee-rulebook-values/0"\nnotice = "n"\nrulebook = 1'
+        )
     with pytest.raises(ValueError, match="undeclared parameter"):
         RulebookValues.from_toml(TOML.replace('name = "limit"', 'name = "other"'))
     with pytest.raises(ValueError, match="expected 't'"):
         RulebookValues.from_toml(
             TOML.replace('unit = "t"\norigin', 'unit = "kg"\norigin')
         )
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "error"),
+    [
+        # A misspelt or unknown key is refused, never ignored.
+        ("[values.limit]", "[value.limit]", "the document: unknown keys ['value']"),
+        ('origin = "provisional"', "precedance = 5", "unknown keys ['precedance']"),
+        ("value = inf", "amount = inf", "unknown keys ['amount']"),
+        ('id = "book"', "", "rulebook: missing key 'id'"),
+        ('name = "limit"', 'nom = "limit"', "unknown keys ['nom']"),
+        ('notice = "test"', "", "missing key 'notice'"),
+        ('notice = "test"', 'notice = " "', "where the values come from"),
+        ('kind = "standard"', 'kind = "standard"\nedition2 = "x"', "edition2"),
+    ],
+)
+def test_toml_reading_is_strict(old: str, new: str, error: str) -> None:
+    assert old in TOML
+    with pytest.raises(ValueError, match=re.escape(error)):
+        RulebookValues.from_toml(TOML.replace(old, new))
+
+
+def test_toml_without_a_parameter_name() -> None:
+    with pytest.raises(
+        ValueError, match=re.escape("parameters[0]: missing key 'name'")
+    ):
+        RulebookValues.from_toml(TOML.replace('name = "limit"\n', ""))
+    with pytest.raises(ValueError, match="source: unknown keys"):
+        RulebookValues.from_toml(TOML + '\n[source]\nedition = "2"\n')
 
 
 # Provenance ----------------------------------------------------------------
@@ -329,6 +393,15 @@ def test_fingerprint_is_canonical_and_sensitive() -> None:
     assert fingerprint({"b": 1, "a": 2}) == fingerprint({"a": 2, "b": 1})
     assert fingerprint(frozenset({"x", "y"})) == fingerprint(frozenset({"y", "x"}))
     assert fingerprint(1.0) != fingerprint(1)
+    # Types that JSON would confuse are told apart.
+    assert fingerprint(1.5) != fingerprint("1.5")
+    assert fingerprint(math.inf) != fingerprint("inf")
+    assert fingerprint(math.nan) != fingerprint("nan")
+    assert fingerprint(frozenset({1, 2})) != fingerprint([1, 2])
+    assert fingerprint({1: "a"}) != fingerprint({"1": "a"})
+    assert fingerprint({1: "a", "1": "b"}) != fingerprint({"1": "b"})
+    # A tuple and a list with the same items are the same sequence.
+    assert fingerprint((1, 2)) == fingerprint([1, 2])
     assert fingerprint(
         math.inf,
         np.float64(2.0),
@@ -393,3 +466,44 @@ def test_provenance_keeps_both_values_and_reports_a_different_replay() -> None:
     assert not p.replays(r)
     assert set(p.differences(r)) == {"method", "inputs"}
     assert isinstance(p, Provenance)
+
+
+def test_provenance_keeps_the_edition_and_freezes_its_parameters() -> None:
+    # The values of two editions, given without rulebook in their source,
+    # keep the edition of their set: the provenances differ.
+    reqs = requirement_set()
+
+    def record(edition: str) -> Provenance:
+        vs = ValueSet(
+            "doc-b",
+            edition,
+            {
+                "vehicle_mass": Value(
+                    60.0, Source("Doctrine B"), Origin.RULEBOOK, unit="t"
+                )
+            },
+        )
+        return provenance(
+            "dijkstra",
+            {
+                "weights": [1, 2],
+                "options": {"tolerance": 0.0},
+                "kinds": {"road"},
+                "base": np.arange(2),
+            },
+            inputs={},
+            requirements=reqs,
+            values=resolve_values([vs], reqs),
+            result=(),
+        )
+
+    old, new = record("2019"), record("2023")
+    assert old.values == (("vehicle_mass", "doc-b", "2019", True),)
+    assert new.values == (("vehicle_mass", "doc-b", "2023", True),)
+    assert not old.replays(new)
+    assert old.parameters["weights"] == (1, 2)
+    assert old.parameters["kinds"] == frozenset({"road"})
+    with pytest.raises(TypeError):
+        old.parameters["options"]["tolerance"] = 1.0  # type: ignore[index]
+    with pytest.raises(ValueError, match="read-only"):
+        old.parameters["base"][0] = 1  # type: ignore[index]

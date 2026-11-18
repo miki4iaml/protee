@@ -27,6 +27,7 @@ from protee.constraints import (
     Parameter,
     Relation,
     RequirementSet,
+    ResolvedValues,
     Rulebook,
     RulebookKind,
     Source,
@@ -130,6 +131,8 @@ def test_requirement_binds_exactly_the_roles_of_its_pattern() -> None:
         type(MASS)("R", "zone_exclusion", {"fr": "x"}, SRC, attributes={"inside": "z"})
     with pytest.raises(ValueError, match="scope label"):
         requirement("R", "zone_exclusion", attributes={"inside": "z"}, scope=[""])
+    with pytest.raises(ValueError, match="empty scope"):
+        requirement("R", "zone_exclusion", attributes={"inside": "z"}, scope=[])
 
 
 def test_requirement_set_resolves_every_cited_identifier() -> None:
@@ -159,8 +162,10 @@ def test_unknown_parameter_refused_and_unused_reported() -> None:
     bad = ValueSet("reg-a", "2006", {"vehicle_speed": value(1, "km/h")})
     with pytest.raises(ValueError, match="unknown parameter 'vehicle_speed'"):
         resolve_values([bad], reqs)
-    extra = ValueSet("reg-a", "2006", {"unused_width": value(2.5, "m")})
-    r = resolve_values([values(), extra], reqs)
+    extra = ValueSet(
+        "reg-a", "2006", {**values().values, "unused_width": value(2.5, "m")}
+    )
+    r = resolve_values([extra], reqs)
     assert r.unused == ("unused_width",)
     assert r.missing == ()
     assert resolve_values([], reqs).missing == (
@@ -176,7 +181,11 @@ def test_alias_resolves_to_the_canonical_name() -> None:
     r = resolve_values([values(mass=40.0)], requirement_set())
     assert r.values["vehicle_mass"].value == 40.0
     assert r.get("total_mass") is None
-    other = ValueSet("doc-b", "2019", {"total_mass": value(40.0, "t")})
+    other = ValueSet(
+        "doc-b",
+        "2019",
+        {"total_mass": Value(40.0, DOC_SRC, Origin.RULEBOOK, unit="t")},
+    )
     with pytest.raises(ValueError, match="unknown parameter 'total_mass'"):
         resolve_values([other], requirement_set())
 
@@ -185,11 +194,11 @@ def test_unit_must_be_the_parameters_and_given_once() -> None:
     reqs = requirement_set()
     with pytest.raises(ValueError, match="expected 't'"):
         resolve_values(
-            [ValueSet("reg-a", "1", {"vehicle_mass": value(40, "kg")})], reqs
+            [ValueSet("reg-a", "2006", {"vehicle_mass": value(40, "kg")})], reqs
         )
     twice = ValueSet(
         "reg-a",
-        "1",
+        "2006",
         {"vehicle_mass": value(40.0, "t"), "total_mass": value(40.0, "t")},
     )
     with pytest.raises(ValueError, match="given twice"):
@@ -209,11 +218,82 @@ def test_declared_precedence_settles_a_disagreement() -> None:
         r = resolve_values(order, reqs)
         assert r.values["vehicle_mass"].value == 60.0
         assert [v.value for v in r.discarded["vehicle_mass"]] == [44.0]
-    same = ValueSet("doc-b", "2019", {"vehicle_mass": value(60.0, "t")})
+    same = ValueSet(
+        "doc-b",
+        "2019",
+        {"vehicle_mass": Value(60.0, DOC_SRC, Origin.RULEBOOK, unit="t")},
+    )
     with pytest.raises(ValueError, match="same precedence"):
         resolve_values([values(), same], reqs)
-    agree = ValueSet("doc-b", "2019", {"vehicle_mass": value(44, "t")})
-    assert resolve_values([values(), agree], reqs).values["vehicle_mass"].value == 44
+    agree = ValueSet(
+        "doc-b",
+        "2019",
+        {"vehicle_mass": Value(44, DOC_SRC, Origin.RULEBOOK, unit="t")},
+    )
+    # Agreeing values of the same precedence: the first rulebook in
+    # alphabetical order is retained, whatever the order of the sets.
+    for order in ([values(), agree], [agree, values()]):
+        r = resolve_values(order, reqs)
+        assert r.values["vehicle_mass"].source.rulebook == "doc-b"
+        assert r.values["vehicle_mass"].value == 44
+        assert [v.source.rulebook for v in r.discarded["vehicle_mass"]] == ["reg-a"]
+
+
+def test_value_sets_keep_their_rulebook_and_edition() -> None:
+    # A value keeps the rulebook and the edition of its set; a source that
+    # cites another one is refused, and so is a second set of the same
+    # rulebook and edition.
+    bare = ValueSet(
+        "doc-b",
+        "2019",
+        {"vehicle_mass": Value(60.0, Source("Doctrine B"), Origin.RULEBOOK, unit="t")},
+    )
+    source = bare.values["vehicle_mass"].source
+    assert (source.document, source.rulebook, source.edition) == (
+        "Doctrine B",
+        "doc-b",
+        "2019",
+    )
+    with pytest.raises(ValueError, match="cites the rulebook 'reg-a'"):
+        ValueSet("doc-b", "2019", {"vehicle_mass": value(60.0, "t")})
+    with pytest.raises(ValueError, match="cites the edition '2006'"):
+        ValueSet("reg-a", "2023", {"vehicle_mass": value(60.0, "t")})
+    with pytest.raises(ValueError, match="two value sets for reg-a"):
+        resolve_values([values(), values()], requirement_set())
+
+
+def test_every_chosen_objective_needs_a_justification() -> None:
+    # A chosen value without justification is refused even when a value of
+    # higher precedence sets it aside.
+    objective = requirement(
+        "OBJ", "objective", parameters={"criterion": "route_criterion"}
+    )
+    reqs = RequirementSet(
+        (objective,), (*PARAMETERS, Parameter("route_criterion")), (REG, DOC)
+    )
+    chosen = ValueSet(
+        "reg-a",
+        "2006",
+        {"route_criterion": Value("length", SRC, Origin.CHOICE)},
+    )
+    text = ValueSet(
+        "doc-b",
+        "2019",
+        {"route_criterion": Value("duration", DOC_SRC, Origin.STATEMENT, precedence=1)},
+    )
+    with pytest.raises(ValueError, match="needs a justification"):
+        resolve_values([chosen, text], reqs)
+
+
+def test_resolved_values_copy_what_they_are_given() -> None:
+    given = {"vehicle_mass": value(44.0, "t")}
+    r = ResolvedValues(given, {"vehicle_mass": [value(40.0, "t")]}, ["x"], [])  # type: ignore[dict-item,arg-type]
+    given["vehicle_mass"] = value(1.0, "t")
+    assert r.values["vehicle_mass"].value == 44.0
+    assert r.discarded["vehicle_mass"] == (value(40.0, "t"),)
+    assert r.unused == ("x",)
+    with pytest.raises(TypeError):
+        r.values["other"] = value(1.0, "t")  # type: ignore[index]
 
 
 def test_parameter_aliases_name_known_rulebooks() -> None:

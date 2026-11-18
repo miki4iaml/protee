@@ -6,7 +6,7 @@
 import random
 
 import pytest
-from constraints_cases import simple_paths
+from constraints_cases import endpoints, simple_paths
 
 from protee.graph import Digraph
 from protee.paths import dijkstra, lexicographic_dijkstra
@@ -28,9 +28,8 @@ def random_vectors(
 @pytest.mark.parametrize("seed", range(20))
 def test_matches_enumeration(seed: int) -> None:
     graph, weights = random_vectors(seed)
-    rng = random.Random(seed)
-    s, t = rng.sample(range(graph.n), 2)
-    excluded = {rng.randrange(graph.m)}
+    s, t = endpoints(seed, graph.n)
+    excluded = {random.Random(f"excluded-{seed}").randrange(graph.m)}
     best = min(
         (
             tuple(map(sum, zip(*(weights[a] for a in p), strict=True)))

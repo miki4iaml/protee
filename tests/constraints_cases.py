@@ -104,7 +104,11 @@ CLASS = requirement(
 )
 ZONE = requirement("ADM-ZONE", "zone_exclusion", attributes={"inside": "in_zone"})
 SPEED = requirement(
-    "COST-SPEED", "speed_cap", parameters={"maximum": "speed_max"}, scope=["road"]
+    "COST-SPEED",
+    "speed_cap",
+    parameters={"maximum": "speed_max"},
+    attributes={"length": "length", "speed": "speed_limit"},
+    scope=["road"],
 )
 ROUTING = (MASS, HEIGHT, CLASS, ZONE, SPEED)
 VERDICT_REQUIREMENTS = (MASS, HEIGHT, CLASS, ZONE)
@@ -155,6 +159,7 @@ class Case:
     load_class: list[str | None]
     in_zone: list[float | None]
     length: list[float]
+    speed: list[float]
 
     def data(self) -> ArcData:
         return ArcData(
@@ -166,9 +171,18 @@ class Case:
                 Attribute.categorical("load_class", self.load_class, CLASSES),
                 Attribute.numeric("in_zone", self.in_zone),
                 Attribute.numeric("length", self.length, unit="km"),
+                Attribute.numeric("speed_limit", self.speed, unit="km/h"),
             ),
             element="element",
         )
+
+    def times(self, cap: float = 50.0) -> list[float]:
+        """Travel times under the speed cap of the roads, from the raw
+        lists: an arc of unknown element is presumed a road."""
+        return [
+            x / (min(v, cap) if e in (None, "road") else v)
+            for x, v, e in zip(self.length, self.speed, self.element, strict=True)
+        ]
 
 
 def random_case(seed: int, n: int = 6, m: int = 14, unknown: float = 0.25) -> Case:
@@ -193,7 +207,14 @@ def random_case(seed: int, n: int = 6, m: int = 14, unknown: float = 0.25) -> Ca
         load_class=[maybe(rng.choice(CLASSES)) for _ in arcs],
         in_zone=[maybe(float(rng.random() < 0.15)) for _ in arcs],
         length=[float(rng.randint(1, 9)) for _ in arcs],
+        speed=[float(rng.choice((30, 50, 80, 130))) for _ in arcs],
     )
+
+
+def endpoints(seed: int, n: int) -> tuple[int, int]:
+    """A source and a target, drawn apart from the graph of the same seed."""
+    s, t = random.Random(f"endpoints-{seed}").sample(range(n), 2)
+    return s, t
 
 
 FAIL, UNKNOWN, PASS = 0, 1, 2

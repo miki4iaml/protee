@@ -28,15 +28,21 @@ class InputCheck:
     ----------
     requirement : str
     expected : RequirementStatus
-        The best status a result can reach: ``applied``, ``partial``,
-        ``no_data`` or ``not_applicable``.
+        The best status a result that uses an arc in scope can reach:
+        ``applied`` when a known arc can satisfy the requirement,
+        ``partial`` when only arcs without data can, ``not_applied`` when
+        no arc can (every known value fails), ``no_data`` when an
+        attribute is absent, ``not_applicable`` when a value is to be set
+        or no arc is in scope.
     reason : str
     missing_values : tuple of str
         Parameters to be set or without a value.
     missing_attributes : tuple of str
         Attributes absent from the data.
     known, total : int
-        Arcs in scope whose data is known, and arcs in scope.
+        Arcs in scope whose data is known, and arcs in scope. The data of
+        an arc of unknown element are unknown for flow bounds with a
+        minimum, which is not imposed there.
     coverage : mapping of str or None to (int, int)
         ``(known, total)`` by element type, ``None`` for an unknown element.
     provable : bool or None
@@ -71,8 +77,10 @@ class InputReport:
     _by_id: Mapping[str, InputCheck] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        checks = tuple(self.checks)
+        object.__setattr__(self, "checks", checks)
         object.__setattr__(
-            self, "_by_id", MappingProxyType({c.requirement: c for c in self.checks})
+            self, "_by_id", MappingProxyType({c.requirement: c for c in checks})
         )
 
     def __iter__(self) -> Iterator[InputCheck]:
@@ -109,7 +117,17 @@ def check_inputs(
     Returns
     -------
     InputReport
+
+    Raises
+    ------
+    ValueError
+        If ``data`` does not match ``graph``, or a requirement does not fit
+        the data (see :func:`evaluate`).
+    TypeError
+        If a value does not fit its pattern (see :func:`evaluate`).
     """
+    if data.m != graph.m:
+        raise ValueError(f"data for {data.m} arcs, graph of {graph.m} arcs")
     elements = data.element_labels()
     return InputReport(
         tuple(_check(r, graph, data, values, elements) for r in requirements)
@@ -161,17 +179,30 @@ def _check(
         )
     if total == 0:
         return replace(base, reason="no arc in the scope")
-    if pattern.effect_kind is not EffectKind.VERDICT:
+    effect = evaluate(requirement, graph, data, values)
+    kind = pattern.effect_kind
+    if kind is EffectKind.OBJECTIVE:
         return replace(
             base,
             expected=RequirementStatus.APPLIED,
-            reason=f"{total} arcs in the scope, no data needed",
-            known=total,
-            total=total,
+            reason="checked on the weights or costs of the result",
         )
-    effect = evaluate(requirement, graph, data, values)
-    assert effect.reasons is not None
-    known_mask = scope & (effect.reasons != Reason.MISSING_DATA)
+    if kind is EffectKind.VERDICT:
+        assert effect.reasons is not None
+        known_mask = scope & (effect.reasons != Reason.MISSING_DATA)
+        passing = known_mask & (effect.reasons == Reason.SATISFIED)
+    elif kind is EffectKind.COST_TERM:
+        # A speed cap is verified on the length of an arc.
+        known_mask = scope & data[requirement.attributes["length"]].known
+        passing = known_mask
+    else:
+        # Flow bounds: the minimum is not imposed on an arc of unknown
+        # element, whose data are then unknown.
+        doubt = data.scope_unknown(requirement.scope)
+        if _minimum(requirement, values) == 0:
+            doubt = np.zeros_like(doubt)
+        known_mask = scope & ~doubt
+        passing = known_mask
     known = int(known_mask.sum())
     totals = Counter(e for e, s in zip(elements, scope, strict=True) if s)
     knowns = Counter(e for e, k in zip(elements, known_mask, strict=True) if k)
@@ -181,22 +212,18 @@ def _check(
             for e in sorted(totals, key=lambda e: (e is None, e or ""))
         }
     )
-    provable = None
-    if known:
-        provable = bool(np.any(known_mask & (effect.reasons == Reason.SATISFIED)))
-    if known == 0:
-        expected, reason = (
-            RequirementStatus.NO_DATA,
-            f"no data on the {total} arcs in scope",
-        )
+    provable = None if known == 0 else bool(passing.any())
+    if provable:
+        expected = RequirementStatus.APPLIED
     elif known < total:
         expected = RequirementStatus.PARTIAL
-        reason = f"data on {known} of the {total} arcs in scope"
     else:
-        expected, reason = (
-            RequirementStatus.APPLIED,
-            f"data on the {total} arcs in scope",
-        )
+        expected = RequirementStatus.NOT_APPLIED
+    reason = (
+        f"no data on the {total} arcs in scope"
+        if known == 0
+        else f"data on {known} of the {total} arcs in scope"
+    )
     if provable is False:
         reason += "; no known arc passes: the requirement cannot be proved on any arc"
     return replace(
@@ -208,3 +235,11 @@ def _check(
         coverage=coverage,
         provable=provable,
     )
+
+
+def _minimum(requirement: Requirement, values: ResolvedValues) -> float:
+    name = requirement.parameters.get("minimum")
+    value = None if name is None else values.get(name)
+    if value is None or not isinstance(value.value, (int, float)):
+        return 0.0
+    return float(value.value)

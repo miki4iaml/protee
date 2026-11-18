@@ -62,25 +62,34 @@ and this project adheres to
   source, never package dependencies) turned into traceable constraints
   on graphs, provisional API until version 1.0:
   - model: sources, rulebooks, values with origin and declared
-    precedence (`resolve_values` refuses an unknown parameter or an
-    undeclared disagreement, and reports unused values), parameters with
-    units and aliases, requirements checked as a set (unique identifiers,
-    every cited identifier resolved), qualified correspondences between
-    rulebooks;
+    precedence, each keeping the rulebook and edition of its value set
+    (`resolve_values` refuses an unknown parameter, an undeclared
+    disagreement or two value sets of the same rulebook and edition, and
+    reports unused values), parameters with units and aliases,
+    requirements checked as a set (unique identifiers, every cited
+    identifier resolved), qualified correspondences between rulebooks;
   - a closed registry of patterns (`patterns`): `threshold_admissibility`,
     `class_admissibility`, `zone_exclusion`, `speed_cap`,
     `occurrence_bounds`;
   - arc attributes with an explicit unknown (`ArcData`, `Attribute`), one
-    source per column, derived columns with their quality;
+    source per column, derived columns with their quality; a scope label
+    must be a declared element, and an arc of unknown element is presumed
+    in scope for a restriction, never for a minimum;
   - `evaluate`: one immutable effect per requirement, with three-valued
-    verdicts and their reasons, cost terms or flow bounds;
+    verdicts and their reasons, speed caps or flow bounds;
   - `compose`: a computation view independent of the order of the
     effects, with the policy for the unknown stated by the caller
-    (`exclude`, `penalize`, `admit_and_count`) and applied once;
+    (`exclude`, `penalize`, `admit_and_count`) and applied once; under a
+    speed cap, the view computes the travel times from the length and
+    speed of each arc (`ComputationView.times`), and refuses plain
+    weights that would ignore the cap;
   - `verify_route` and `verify_flow`: the status of each requirement
     (`applied`, `partial`, `not_applied`, `no_data`, `not_applicable`)
-    comes from verification, never from the solver;
-  - `check_inputs`: what the data allow to prove, before solving;
+    comes from verification, never from the solver; a speed cap is
+    verified on the weights the route was computed with, so that a
+    solver that forgot it is caught;
+  - `check_inputs`: what the data allow to prove before solving, and the
+    best status a result can reach;
   - `requirement_table`: rows generated from the verification.
 - `protee.paths.lexicographic_dijkstra`: exact shortest paths for weight
   vectors compared in lexicographic order, for instance the number of
@@ -89,21 +98,28 @@ and this project adheres to
 - Useful failure in `protee.constraints`:
   - `minimal_conflict` (methods `enumeration` and `deletion_filter`) and
     `minimal_relaxation` (methods `enumeration` and `greedy`) explain why
-    requirements cannot hold together and what to relax;
-  - `relax_by_tiers`: declared tiers tried in order, the tier of an option
-    computed from the requirements it relaxes;
+    requirements cannot hold together and what to relax, with the cost of
+    the result once relaxed;
+  - `relax_by_tiers`: declared tiers tried in order, the requirements to
+    relax chosen by a named method within the first feasible tier, the
+    tier of an option computed from the requirements it relaxes;
   - `RouteSearch` and `FlowSearch` solve under any subset of the
-    requirements, with their `Impact` (result with and without a
-    requirement), reported in the requirement table.
+    requirements, with a named method and a stated policy for the unknown
+    (keyword arguments without default), and give their `Impact` (result
+    with and without a requirement), reported in the requirement table;
+    an identifier that names no requirement is refused.
 - Declared objective: the `objective` pattern, prescribed by a text or
-  chosen with a mandatory justification, checked against the computation
-  view (`ComputationView.lexicographic_weights` counts the unknown arcs
-  first).
-- Provenance: `fingerprint` (SHA-256 of a canonical form) and
-  `provenance` (method, parameters, version, requirements, values retained
-  and set aside, fingerprints of the inputs and of the result), to reuse a
-  result and report a replay that differs.
-- `RulebookValues`: rulebooks and their values read from TOML; first
+  chosen with a mandatory justification, verified on the result: the
+  criterion of its weights or costs, and its optimality, recomputed
+  independently of the solver (Bellman-Ford; for a lexicographic search,
+  the fewest unknown arcs first).
+- Provenance: `fingerprint` (SHA-256 of a canonical form that tells
+  apart the types JSON would confuse) and `provenance` (method, frozen
+  parameters, version, requirements, values retained and set aside with
+  their rulebook and edition, fingerprints of the inputs and of the
+  result), to reuse a result and report a replay that differs.
+- `RulebookValues`: rulebooks and their values read from TOML, strictly
+  (an unknown or missing key is refused, the notice is required); first
   embedded value set, taken from a public text: the categories (art. 3)
   and maximum speeds (art. 14) of the French order of 4 May 2006 on
   exceptional transport, reused from Legifrance under the Licence Ouverte

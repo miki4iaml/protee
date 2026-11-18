@@ -3,7 +3,9 @@
 
 """Arc data, evaluation of requirements into effects, and composition."""
 
+import dataclasses
 import math
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -32,7 +34,6 @@ from hypothesis import strategies as st
 from protee.constraints import (
     ArcData,
     Attribute,
-    ComputationView,
     Effect,
     EffectKind,
     Reason,
@@ -113,8 +114,16 @@ def test_arc_data_columns_and_scope() -> None:
     # An unknown element is never presumed out of scope.
     assert data.in_scope(frozenset({"bridge"})).tolist() == [True, True, False]
     assert data.element_labels() == ("bridge", None, "road")
+    assert data.scope_unknown(frozenset({"bridge"})).tolist() == [False, True, False]
+    assert data.scope_unknown(None).tolist() == [False, False, False]
+    with pytest.raises(ValueError, match=r"scope labels \['ferry'\]"):
+        data.in_scope(frozenset({"ferry"}))
+    with pytest.raises(ValueError, match="not elements"):
+        data.scope_unknown(frozenset({"ferry", "bridge"}))
+    # Without an element column, every element is unknown.
     plain = ArcData(3, (Attribute.numeric("len", [1, 2, 3]),))
     assert plain.in_scope(frozenset({"bridge"})).tolist() == [True, True, True]
+    assert plain.scope_unknown(frozenset({"bridge"})).tolist() == [True, True, True]
     assert plain.element_labels() == (None, None, None)
     with pytest.raises(ValueError, match="duplicate attribute"):
         ArcData(3, (element, element))
@@ -135,7 +144,7 @@ def test_routing_verdicts_match_the_oracle(seed: int) -> None:
     data = case.data()
     vals = resolved()
     effects = [evaluate(r, case.graph, data, vals) for r in VERDICT_REQUIREMENTS]
-    view = compose(case.graph, effects, unknown=UnknownPolicy.ADMIT_AND_COUNT)
+    view = compose(case.graph, effects, policy=UnknownPolicy.ADMIT_AND_COUNT)
     expected = [oracle_verdict(case, a) for a in range(case.graph.m)]
     assert view.verdict.tolist() == expected
     assert view.unknown_count == expected.count(Verdict.UNKNOWN)
@@ -234,6 +243,16 @@ def test_speed_cap_is_a_cost_term_in_scope() -> None:
         evaluate(SPEED, LINE, data, resolved(speed=0.0))
     with pytest.raises(TypeError, match="must be a number"):
         evaluate(SPEED, LINE, data, resolved(speed="fast"))
+    kinds = ArcData(
+        3,
+        (
+            Attribute.categorical("element", ["road"] * 3, ELEMENTS),
+            Attribute.categorical("length", ["road"] * 3, ELEMENTS),
+        ),
+        element="element",
+    )
+    with pytest.raises(ValueError, match="length must be a number"):
+        evaluate(SPEED, LINE, kinds, resolved())
 
 
 def occurrence_set(
@@ -248,7 +267,7 @@ def occurrence_set(
     reqs = RequirementSet((occ,), PARAMETERS, (REG,))
     vs = ValueSet(
         "reg-a",
-        "1",
+        "2006",
         {"occurrence_max": value(maximum), "occurrence_min": value(minimum)},
     )
     return reqs, resolve_values([vs], reqs)
@@ -326,23 +345,23 @@ def verdict_effect(rid: str, verdicts: list[int]) -> Effect:
 def test_policies_for_the_unknown() -> None:
     # A3: the unknown is declared, counted, and handled by a stated policy.
     effects = [verdict_effect("A", [2, 1, 0]), verdict_effect("B", [2, 2, 1])]
-    excl = compose(LINE, effects, unknown=UnknownPolicy.EXCLUDE)
+    excl = compose(LINE, effects, policy=UnknownPolicy.EXCLUDE)
     assert excl.excluded == (1, 2)
-    count = compose(LINE, effects, unknown="admit_and_count")
+    count = compose(LINE, effects, policy="admit_and_count")
     assert count.excluded == (2,)
     assert count.unknown_count == 1
-    pen = compose(LINE, effects, unknown=UnknownPolicy.PENALIZE, penalty=10.0)
+    pen = compose(LINE, effects, policy=UnknownPolicy.PENALIZE, penalty=10.0)
     assert pen.excluded == (2,)
     assert pen.weights([1, 1, 1]) == (1.0, 11.0, 1.0)
     assert count.weights([1, 1, 1]) == (1.0, 1.0, 1.0)
     with pytest.raises(ValueError, match="penalty"):
-        compose(LINE, effects, unknown=UnknownPolicy.PENALIZE)
+        compose(LINE, effects, policy=UnknownPolicy.PENALIZE)
     with pytest.raises(ValueError, match="penalty"):
-        compose(LINE, effects, unknown=UnknownPolicy.PENALIZE, penalty=math.inf)
+        compose(LINE, effects, policy=UnknownPolicy.PENALIZE, penalty=math.inf)
     with pytest.raises(ValueError, match="does not apply"):
-        compose(LINE, effects, unknown=UnknownPolicy.EXCLUDE, penalty=1.0)
+        compose(LINE, effects, policy=UnknownPolicy.EXCLUDE, penalty=1.0)
     with pytest.raises(ValueError, match="not a valid"):
-        compose(LINE, effects, unknown="ignore")
+        compose(LINE, effects, policy="ignore")
     with pytest.raises(ValueError, match="expected 3 base"):
         count.weights([1, 1])
 
@@ -358,9 +377,16 @@ def test_caps_compose_by_their_minimum() -> None:
         factor=[1, 2, 1],
         added=[0, 0, 5],
     )
-    view = compose(LINE, [a, b], unknown=UnknownPolicy.EXCLUDE)
+    view = compose(LINE, [a, b], policy=UnknownPolicy.EXCLUDE)
     assert view.cap.tolist() == [50, 30, 70]
-    assert view.weights([10, 10, 10]) == (10.0, 20.0, 15.0)
+    assert view.capped == (0, 1, 2)
+    # 10 km at 100 km/h, capped: 10/50, 10/30 * 2, 10/70 + 5 hours.
+    assert view.times([10, 10, 10], [100, 100, 100]) == pytest.approx(
+        (0.2, 2 / 3, 10 / 70 + 5)
+    )
+    assert view.times([10, 10, 10], [20, 20, 20]) == pytest.approx((0.5, 1.0, 5.5))
+    with pytest.raises(ValueError, match="use times"):
+        view.weights([10, 10, 10])
     assert view.requirements_on(0) == ("A", "B")
     assert view.requirements_on(1) == ("B",)
     with pytest.raises(ValueError, match="out of range"):
@@ -370,13 +396,13 @@ def test_caps_compose_by_their_minimum() -> None:
 def test_bounds_compose_and_conflicts_are_reported() -> None:
     a = effect("A", EffectKind.BOUND, 3, lower=[0, 1, 0], upper=[math.inf, 3, 2])
     b = effect("B", EffectKind.BOUND, 3, lower=[0, 2, 3], upper=[5, math.inf, math.inf])
-    view = compose(LINE, [a, b], unknown=UnknownPolicy.EXCLUDE)
+    view = compose(LINE, [a, b], policy=UnknownPolicy.EXCLUDE)
     assert view.flow_bounds() == ((0, 2, 3), (5, 3, 2))
     assert view.bound_conflicts == (2,)
     neutral = compose(
         LINE,
         [effect("C", EffectKind.BOUND, 3, not_applicable="to be set")],
-        unknown="exclude",
+        policy="exclude",
     )
     assert neutral.flow_bounds() == ((0, 0, 0), (None, None, None))
     assert neutral.requirements_on(0) == ()
@@ -384,17 +410,24 @@ def test_bounds_compose_and_conflicts_are_reported() -> None:
 
 def test_compose_refuses_duplicates_and_size_mismatch() -> None:
     with pytest.raises(ValueError, match="two effects"):
-        compose(LINE, [verdict_effect("A", [2, 2, 2])] * 2, unknown="exclude")
+        compose(LINE, [verdict_effect("A", [2, 2, 2])] * 2, policy="exclude")
     with pytest.raises(ValueError, match="for 2 arcs"):
-        compose(LINE, [verdict_effect("A", [2, 2])], unknown="exclude")
+        compose(LINE, [verdict_effect("A", [2, 2])], policy="exclude")
 
 
 def test_view_arrays_are_read_only() -> None:
-    view = compose(LINE, [], unknown="exclude")
+    view = compose(LINE, [], policy="exclude")
     assert view.excluded == ()
     for array in (view.verdict, view.admitted, view.cap, view.lower):
         with pytest.raises(ValueError, match="read-only"):
             array[0] = 0
+    # A view built directly keeps a copy of what it is given.
+    cap = np.full(3, math.inf)
+    direct = dataclasses.replace(view, cap=cap)
+    cap[0] = 1.0
+    assert direct.cap[0] == math.inf
+    with pytest.raises(ValueError, match="expected 3 values"):
+        dataclasses.replace(view, cap=np.ones(2))
 
 
 M = 4
@@ -422,7 +455,8 @@ def effects(draw: st.DrawFn) -> list[Effect]:
                 )
             )
         elif kind is EffectKind.OBJECTIVE:
-            out.append(effect(rid, kind, M, objective="length"))
+            criterion = draw(st.sampled_from(["length", "duration"]))
+            out.append(effect(rid, kind, M, objective=criterion))
         else:
             lo = draw(st.lists(st.integers(0, 3), min_size=M, max_size=M))
             hi = draw(
@@ -435,33 +469,67 @@ def effects(draw: st.DrawFn) -> list[Effect]:
 GRAPH = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0), (0, 2)])
 
 
-def same(a: ComputationView, b: ComputationView) -> bool:
-    fields = (
-        "verdict",
-        "admitted",
-        "unknown",
-        "cap",
-        "factor",
-        "added",
-        "lower",
-        "upper",
-    )
-    return all(np.array_equal(getattr(a, f), getattr(b, f)) for f in fields) and [
-        e.requirement for e in a.effects
-    ] == [e.requirement for e in b.effects]
+def reference(effects: list[Effect]) -> dict[str, list[float]]:
+    """The composition, element by element, in pure Python."""
+    out: dict[str, list[float]] = {
+        "verdict": [2.0] * M,
+        "cap": [math.inf] * M,
+        "factor": [1.0] * M,
+        "added": [0.0] * M,
+        "lower": [0.0] * M,
+        "upper": [math.inf] * M,
+    }
+    rules: dict[str, Callable[[float, float], float]] = {
+        "verdict": min,
+        "cap": min,
+        "factor": lambda x, y: x * y,
+        "added": lambda x, y: x + y,
+        "lower": max,
+        "upper": min,
+    }
+    for e in effects:
+        for name, rule in rules.items():
+            array = getattr(e, name)
+            if array is not None:
+                out[name] = [
+                    rule(x, float(y)) for x, y in zip(out[name], array, strict=True)
+                ]
+    return out
 
 
 @given(effects=effects(), data=st.data())
-def test_composition_does_not_depend_on_the_order(
+def test_composition_matches_a_reference_whatever_the_order(
     effects: list[Effect], data: st.DataObject
 ) -> None:
-    shuffled = data.draw(st.permutations(effects))
+    # compose sorts the effects by identifier: permuting the identifiers,
+    # not only the input order, changes the order of composition.
+    ids = data.draw(st.permutations([e.requirement for e in effects]))
+    renamed = [
+        dataclasses.replace(e, requirement=i) for e, i in zip(effects, ids, strict=True)
+    ]
+    shuffled = data.draw(st.permutations(renamed))
     policy = data.draw(st.sampled_from(list(UnknownPolicy)))
     penalty = 3.0 if policy is UnknownPolicy.PENALIZE else None
-    a = compose(GRAPH, effects, unknown=policy, penalty=penalty)
-    b = compose(GRAPH, shuffled, unknown=policy, penalty=penalty)
-    assert same(a, b)
-    assert a.weights([1.0] * M) == b.weights([1.0] * M)
+    objectives = {e.objective for e in effects if e.objective is not None}
+    if len(objectives) > 1:
+        with pytest.raises(ValueError, match="several objectives"):
+            compose(GRAPH, shuffled, policy=policy, penalty=penalty)
+        return
+    view = compose(GRAPH, shuffled, policy=policy, penalty=penalty)
+    expected = reference(effects)
+    for name in ("verdict", "cap", "lower", "upper"):
+        assert getattr(view, name).tolist() == expected[name]
+    for name in ("factor", "added"):
+        assert np.allclose(getattr(view, name), expected[name], rtol=1e-12)
+    unknown = [v == Verdict.UNKNOWN for v in expected["verdict"]]
+    assert view.unknown.tolist() == unknown
+    admitted = [
+        v != Verdict.FAIL and not (u and policy is UnknownPolicy.EXCLUDE)
+        for v, u in zip(expected["verdict"], unknown, strict=True)
+    ]
+    assert view.admitted.tolist() == admitted
+    assert view.objective == next(iter(objectives), None)
+    assert sorted(e.requirement for e in view.effects) == sorted(ids)
 
 
 def test_every_routing_requirement_gives_its_declared_kind() -> None:

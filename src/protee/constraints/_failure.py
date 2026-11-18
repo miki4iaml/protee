@@ -7,15 +7,16 @@ import itertools
 import math
 import operator
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from types import MappingProxyType
 
 import numpy as np
 
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData
-from protee.constraints._effects import Effect, Verdict, evaluate
+from protee.constraints._effects import Effect, evaluate
 from protee.constraints._model import RequirementSet, ResolvedValues
+from protee.constraints._verify import Verification, verify_flow, verify_route
 from protee.flow import FlowProblem, FlowResult, Status, methods, solve
 from protee.graph import Digraph
 from protee.paths import dijkstra, lexicographic_dijkstra
@@ -34,13 +35,11 @@ __all__ = [
     "relax_by_tiers",
 ]
 
-type Feasible = Callable[[frozenset[str]], bool]
-
 
 class _Counted:
     """A feasibility test with a memory and a deterministic call counter."""
 
-    def __init__(self, feasible: Feasible) -> None:
+    def __init__(self, feasible: Callable[[frozenset[str]], bool]) -> None:
         self._feasible = feasible
         self._seen: dict[frozenset[str], bool] = {}
 
@@ -55,8 +54,18 @@ class _Counted:
         return len(self._seen)
 
 
-def _ids(requirements: Iterable[str]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(requirements))
+def _ids(ids: Iterable[str]) -> tuple[str, ...]:
+    items = tuple(ids)
+    for x in items:
+        if not isinstance(x, str):
+            raise TypeError(f"expected requirement identifiers, got {type(x).__name__}")
+    return tuple(dict.fromkeys(items))
+
+
+def _cost(
+    cost: Callable[[frozenset[str]], float | None] | None, active: Iterable[str]
+) -> float | None:
+    return None if cost is None else cost(frozenset(active))
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,22 +98,26 @@ class Relaxation:
         possible.
     method : str
     evaluations : int
+    cost : float or None
+        Cost of the result under the requirements kept, when a cost
+        function is given (see :meth:`RouteSearch.cost`).
     """
 
     requirements: tuple[str, ...]
     method: str
     evaluations: int
+    cost: float | None = None
 
 
 def minimal_conflict(
-    requirements: Iterable[str], feasible: Feasible, *, method: str
+    ids: Iterable[str], feasible: Callable[[frozenset[str]], bool], *, method: str
 ) -> Conflict:
     """A minimal set of requirements that cannot hold together.
 
     Parameters
     ----------
-    requirements : iterable of str
-        Identifiers, infeasible together.
+    ids : iterable of str
+        Requirement identifiers, infeasible together.
     feasible : callable
         Whether a set of requirement identifiers holds together; adding a
         requirement never makes an infeasible set feasible.
@@ -124,38 +137,67 @@ def minimal_conflict(
     ------
     ValueError
         If the requirements hold together, or the method is unknown.
+    TypeError
+        If an identifier is not a string.
     """
-    ids = _ids(requirements)
+    names = _ids(ids)
     f = _Counted(feasible)
     if method not in ("enumeration", "deletion_filter"):
         raise ValueError(f"unknown method {method!r}")
-    if f(ids):
+    if f(names):
         raise ValueError("the requirements hold together: there is no conflict")
     if method == "enumeration":
         # The whole set is infeasible: the search always ends.
         smallest = next(
             subset
-            for k in range(len(ids) + 1)
-            for subset in itertools.combinations(ids, k)
+            for k in range(len(names) + 1)
+            for subset in itertools.combinations(names, k)
             if not f(subset)
         )
         return Conflict(smallest, method, f.calls)
-    kept = list(ids)
-    for r in ids:
+    kept = list(names)
+    for r in names:
         trial = [x for x in kept if x != r]
         if not f(trial):
             kept = trial
     return Conflict(tuple(kept), method, f.calls)
 
 
+def _relax(
+    names: tuple[str, ...], candidates: Sequence[str], f: _Counted, method: str
+) -> tuple[str, ...]:
+    """Requirements among ``candidates`` to relax so that the others hold,
+    knowing that relaxing every candidate is enough."""
+    if method == "enumeration":
+        return next(
+            subset
+            for k in range(len(candidates) + 1)
+            for subset in itertools.combinations(candidates, k)
+            if f(set(names) - set(subset))
+        )
+    relaxed = list(candidates)
+    for r in candidates:
+        trial = [x for x in relaxed if x != r]
+        if f(set(names) - set(trial)):
+            relaxed = trial
+    return tuple(relaxed)
+
+
+_RELAXATION_METHODS = ("enumeration", "greedy")
+
+
 def minimal_relaxation(
-    requirements: Iterable[str], feasible: Feasible, *, method: str
+    ids: Iterable[str],
+    feasible: Callable[[frozenset[str]], bool],
+    *,
+    method: str,
+    cost: Callable[[frozenset[str]], float | None] | None = None,
 ) -> Relaxation:
     """A minimal set of requirements to relax so that the others hold.
 
     Parameters
     ----------
-    requirements : iterable of str
+    ids : iterable of str
     feasible : callable
         As for :func:`minimal_conflict`.
     method : {"enumeration", "greedy"}
@@ -163,6 +205,9 @@ def minimal_relaxation(
         increasing size. ``greedy``: relax every requirement, then keep
         each one again, in the given order, when the problem stays
         feasible; no requirement of the result can be kept.
+    cost : callable, optional
+        The cost of the result under a set of requirements
+        (:meth:`RouteSearch.cost`, :meth:`FlowSearch.cost`).
 
     Returns
     -------
@@ -174,30 +219,19 @@ def minimal_relaxation(
     ValueError
         If the problem is infeasible even without any requirement, or the
         method is unknown.
+    TypeError
+        If an identifier is not a string.
     """
-    ids = _ids(requirements)
+    names = _ids(ids)
     f = _Counted(feasible)
-    if method not in ("enumeration", "greedy"):
+    if method not in _RELAXATION_METHODS:
         raise ValueError(f"unknown method {method!r}")
-    if f(ids):
-        return Relaxation((), method, f.calls)
+    if f(names):
+        return Relaxation((), method, f.calls, _cost(cost, names))
     if not f(()):
         raise ValueError("infeasible even without any requirement")
-    if method == "enumeration":
-        # Relaxing every requirement is feasible: the search always ends.
-        fewest = next(
-            subset
-            for k in range(1, len(ids) + 1)
-            for subset in itertools.combinations(ids, k)
-            if f(set(ids) - set(subset))
-        )
-        return Relaxation(fewest, method, f.calls)
-    relaxed = list(ids)
-    for r in ids:
-        trial = [x for x in relaxed if x != r]
-        if f(set(ids) - set(trial)):
-            relaxed = trial
-    return Relaxation(tuple(relaxed), method, f.calls)
+    relaxed = _relax(names, names, f, method)
+    return Relaxation(relaxed, method, f.calls, _cost(cost, set(names) - set(relaxed)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,16 +269,23 @@ class TieredRelaxation:
         never taken from a label of the data; ``None`` when no tier is
         feasible.
     relaxed : tuple of str
-        Requirements relaxed; none of them can be kept.
+        Requirements relaxed.
     tried : tuple of (int, bool)
-        Each tier tried, with its feasibility.
+        Each tier tried, with its feasibility; empty when the requirements
+        hold together.
+    method : str
     evaluations : int
+    cost : float or None
+        Cost of the result under the requirements kept, when a cost
+        function is given.
     """
 
     level: int | None
     relaxed: tuple[str, ...]
     tried: tuple[tuple[int, bool], ...]
+    method: str
     evaluations: int
+    cost: float | None = None
 
 
 def _level(relaxed: Iterable[str], tiers: Sequence[Tier]) -> int:
@@ -258,43 +299,76 @@ def _level(relaxed: Iterable[str], tiers: Sequence[Tier]) -> int:
 
 
 def relax_by_tiers(
-    requirements: Iterable[str], feasible: Feasible, tiers: Iterable[Tier]
+    ids: Iterable[str],
+    feasible: Callable[[frozenset[str]], bool],
+    tiers: Iterable[Tier],
+    *,
+    method: str,
+    cost: Callable[[frozenset[str]], float | None] | None = None,
 ) -> TieredRelaxation:
     """Try the declared tiers in order and keep the first feasible one.
 
     Each tier relaxes its requirements on top of the lower tiers'. In the
-    first feasible tier, the requirements that can be kept again (in the
-    given order) are kept; the level of the option is then computed from
-    the requirements it still relaxes.
+    first feasible tier, the requirements to relax are chosen by ``method``
+    among those the tier allows; the level of the option is then computed
+    from the requirements it relaxes.
+
+    Parameters
+    ----------
+    ids : iterable of str
+        Requirement identifiers.
+    feasible : callable
+        As for :func:`minimal_conflict`.
+    tiers : iterable of Tier
+        Distinct levels; every requirement they allow to relax is one of
+        ``ids``.
+    method : {"enumeration", "greedy"}
+        Within the first feasible tier, as for :func:`minimal_relaxation`.
+    cost : callable, optional
+        The cost of the result under a set of requirements.
+
+    Returns
+    -------
+    TieredRelaxation
 
     Raises
     ------
     ValueError
-        If two tiers share a level.
+        If two tiers share a level, a tier names an unknown requirement, or
+        the method is unknown.
+    TypeError
+        If an identifier is not a string.
     """
-    ids = _ids(requirements)
+    names = _ids(ids)
+    if method not in _RELAXATION_METHODS:
+        raise ValueError(f"unknown method {method!r}")
     ordered = sorted(tiers, key=lambda t: t.level)
     if len({t.level for t in ordered}) != len(ordered):
         raise ValueError("two tiers share a level")
+    for t in ordered:
+        if unknown := sorted(t.relaxable - set(names)):
+            raise ValueError(f"tier {t.level} names unknown requirements {unknown}")
     f = _Counted(feasible)
-    if f(ids):
-        return TieredRelaxation(0, (), ((0, True),), f.calls)
+    if f(names):
+        return TieredRelaxation(0, (), (), method, f.calls, _cost(cost, names))
     tried: list[tuple[int, bool]] = []
     allowed: set[str] = set()
     for tier in ordered:
         allowed |= tier.relaxable
-        relaxed = [r for r in ids if r in allowed]
-        ok = f(set(ids) - set(relaxed))
+        candidates = [r for r in names if r in allowed]
+        ok = f(set(names) - set(candidates))
         tried.append((tier.level, ok))
         if ok:
-            for r in list(relaxed):
-                trial = [x for x in relaxed if x != r]
-                if f(set(ids) - set(trial)):
-                    relaxed = trial
+            relaxed = _relax(names, candidates, f, method)
             return TieredRelaxation(
-                _level(relaxed, ordered), tuple(relaxed), tuple(tried), f.calls
+                _level(relaxed, ordered),
+                relaxed,
+                tuple(tried),
+                method,
+                f.calls,
+                _cost(cost, set(names) - set(relaxed)),
             )
-    return TieredRelaxation(None, (), tuple(tried), f.calls)
+    return TieredRelaxation(None, (), tuple(tried), method, f.calls)
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +383,8 @@ class Impact:
         Cost of the result, ``None`` when there is none (infeasible, or
         unbounded flow).
     arcs_removed : int or None
-        Arcs the requirement alone takes away from the solver (routes).
+        Arcs the solver may use without the requirement and not with it
+        (routes).
     """
 
     requirement: str
@@ -326,7 +401,7 @@ class Impact:
             return None
         return self.cost_with - self.cost_without
 
-    def as_dict(self) -> dict[str, float | bool | None]:
+    def to_dict(self) -> dict[str, float | bool | None]:
         """The impact as plain data."""
         return {
             "feasible_with": self.feasible_with,
@@ -348,12 +423,32 @@ def _active(all_ids: tuple[str, ...], active: Iterable[str] | None) -> frozenset
     return chosen
 
 
+def _without(all_ids: tuple[str, ...], requirement: str) -> frozenset[str]:
+    if requirement not in all_ids:
+        raise ValueError(f"unknown requirement {requirement!r}")
+    return frozenset(all_ids) - {requirement}
+
+
+def _evaluated(
+    requirements: RequirementSet, graph: Digraph, data: ArcData, values: ResolvedValues
+) -> Mapping[str, Effect]:
+    return MappingProxyType(
+        {r.id: evaluate(r, graph, data, values) for r in requirements}
+    )
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class RouteSearch:
     """Routes from ``source`` to ``target`` under subsets of the requirements.
 
     The effects are evaluated once; each query composes those of the
     active requirements and solves with the named method.
+
+    The weight of an arc is a travel time when the requirements include a
+    speed cap: its length divided by the least of its speed and the cap,
+    computed by the view (:meth:`ComputationView.times`) from the length
+    and speed attributes the caps bind, under every subset of the
+    requirements. Otherwise it comes from ``base``.
 
     Attributes
     ----------
@@ -362,14 +457,26 @@ class RouteSearch:
     data : ArcData
     values : ResolvedValues
     source, target : int
-    base : tuple of float
-        Base weight of each arc (length, time).
-    unknown : UnknownPolicy
     method : {"dijkstra", "lexicographic_dijkstra"}
-        ``lexicographic_dijkstra`` minimizes the number of unknown arcs
-        first, then the weight.
+        Keyword only, as all that follows. ``lexicographic_dijkstra``
+        minimizes the number of unknown arcs first, then the weight.
+    policy : UnknownPolicy
+        The policy for the unknown; no default.
+    base : tuple of float, optional
+        Base weight of each arc (a length, a time); required without a
+        speed cap, refused with one.
+    criterion : str, optional
+        What the weights measure (``"duration"``, ``"length"``), compared
+        with a declared objective by :meth:`verify`.
     penalty : float, optional
         For the ``penalize`` policy.
+
+    Raises
+    ------
+    ValueError
+        If the method is unknown, ``base`` is missing or refused, the speed
+        caps bind different attributes, or a length or a speed is absent or
+        unknown on an arc.
     """
 
     requirements: RequirementSet
@@ -378,22 +485,70 @@ class RouteSearch:
     values: ResolvedValues
     source: int
     target: int
-    base: tuple[float, ...]
-    unknown: UnknownPolicy
+    _: KW_ONLY
     method: str
+    policy: UnknownPolicy
+    base: tuple[float, ...] | None = None
+    criterion: str | None = None
     penalty: float | None = None
     _effects: Mapping[str, Effect] = field(init=False, repr=False)
+    _time: tuple[tuple[float, ...], tuple[float, ...]] | None = field(
+        init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
+        set_ = object.__setattr__
         if self.method not in ROUTE_METHODS:
             raise ValueError(f"unknown method {self.method!r}; one of {ROUTE_METHODS}")
-        object.__setattr__(self, "unknown", UnknownPolicy(self.unknown))
-        object.__setattr__(self, "base", tuple(float(x) for x in self.base))
-        effects = {
-            r.id: evaluate(r, self.graph, self.data, self.values)
+        set_(self, "policy", UnknownPolicy(self.policy))
+        bound = {
+            (r.attributes["length"], r.attributes["speed"])
             for r in self.requirements
+            if r.pattern == "speed_cap"
         }
-        object.__setattr__(self, "_effects", MappingProxyType(effects))
+        if len(bound) > 1:
+            raise ValueError(
+                f"the speed caps bind different length and speed attributes: "
+                f"{sorted(bound)}"
+            )
+        time = None
+        if bound:
+            if self.base is not None:
+                raise ValueError(
+                    "with a speed cap, the weights are travel times from the "
+                    "length and speed attributes: no base weights"
+                )
+            columns = []
+            for name in next(iter(bound)):
+                if name not in self.data:
+                    raise ValueError(f"the speed caps need the attribute {name!r}")
+                column = self.data[name]
+                if column.labels is not None or not column.known.all():
+                    raise ValueError(
+                        f"attribute {name!r}: a travel time needs a known number "
+                        "on every arc; derive the unknown ones explicitly"
+                    )
+                columns.append(tuple(float(x) for x in column.values))
+            time = (columns[0], columns[1])
+        elif self.base is None:
+            raise ValueError("base weights are required without a speed cap")
+        else:
+            base = tuple(float(x) for x in self.base)
+            if len(base) != self.graph.m:
+                raise ValueError(f"expected {self.graph.m} base weights")
+            set_(self, "base", base)
+        set_(self, "_time", time)
+        set_(
+            self,
+            "_effects",
+            _evaluated(self.requirements, self.graph, self.data, self.values),
+        )
+        self.view()
+
+    @staticmethod
+    def methods() -> tuple[str, ...]:
+        """The names of the route methods."""
+        return ROUTE_METHODS
 
     @property
     def ids(self) -> tuple[str, ...]:
@@ -406,56 +561,97 @@ class RouteSearch:
         return compose(
             self.graph,
             [e for rid, e in self._effects.items() if rid in chosen],
-            unknown=self.unknown,
+            policy=self.policy,
             penalty=self.penalty,
         )
+
+    def _scalar(self, view: ComputationView) -> tuple[float, ...]:
+        if self._time is not None:
+            return view.times(*self._time)
+        assert self.base is not None
+        return view.weights(self.base)
+
+    def weights(
+        self, active: Iterable[str] | None = None
+    ) -> tuple[float, ...] | tuple[tuple[int, float], ...]:
+        """The weights the method minimizes under the active requirements:
+        pairs (unknown arc, weight) for ``lexicographic_dijkstra``."""
+        view = self.view(active)
+        w = self._scalar(view)
+        if self.method == "dijkstra":
+            return w
+        return view.lexicographic_weights(w)
 
     def solve(self, active: Iterable[str] | None = None) -> Route | None:
         """The route under the active requirements, ``None`` if there is none.
 
-        Its cost is the sum of the weights of the view.
+        Its cost is the sum of the weights of its arcs (penalties
+        included).
         """
         view = self.view(active)
-        weights = view.weights(self.base)
+        w = self._scalar(view)
         path: tuple[int, ...] | None
         if self.method == "dijkstra":
             path = dijkstra(
-                self.graph, weights, self.source, self.target, excluded=view.excluded
+                self.graph, w, self.source, self.target, excluded=view.excluded
             ).path(self.target)
         else:
             path = lexicographic_dijkstra(
                 self.graph,
-                view.lexicographic_weights(self.base),
+                view.lexicographic_weights(w),
                 self.source,
                 self.target,
                 excluded=view.excluded,
             ).path(self.target)
         if path is None:
             return None
-        return Route(arcs=path, cost=math.fsum(weights[a] for a in path))
+        return Route(arcs=path, cost=math.fsum(w[a] for a in path))
+
+    def cost(self, active: Iterable[str]) -> float | None:
+        """The cost of the route under the active requirements, ``None``
+        if there is none."""
+        route = self.solve(active)
+        return None if route is None else float(route.cost)
 
     def feasible(self, active: Iterable[str]) -> bool:
         """Whether a route exists under the active requirements."""
         return self.solve(active) is not None
 
+    def verify(
+        self, route: Route | Sequence[int], active: Iterable[str] | None = None
+    ) -> Verification:
+        """Verify every requirement on ``route``, computed under the active
+        requirements: :func:`verify_route` with the view, the weights and
+        the criterion of the search."""
+        return verify_route(
+            route,
+            self.requirements,
+            self.graph,
+            self.data,
+            self.values,
+            view=self.view(active),
+            weights=self.weights(active),
+            criterion=self.criterion,
+        )
+
     def impact(self, requirement: str) -> Impact:
-        """The route with and without ``requirement``."""
-        with_ = self.solve()
-        without = self.solve(set(self.ids) - {requirement})
-        effect = self._effects[requirement]
-        removed = 0
-        if effect.verdict is not None:
-            out = effect.verdict == Verdict.FAIL
-            if self.unknown is UnknownPolicy.EXCLUDE:
-                out |= effect.verdict == Verdict.UNKNOWN
-            removed = int(out.sum())
+        """The route with and without ``requirement``.
+
+        Raises
+        ------
+        ValueError
+            If ``requirement`` is not one of :attr:`ids`.
+        """
+        without = _without(self.ids, requirement)
+        route_with, route_without = self.solve(), self.solve(without)
+        removed = set(self.view().excluded) - set(self.view(without).excluded)
         return Impact(
             requirement,
-            with_ is not None,
-            without is not None,
-            None if with_ is None else float(with_.cost),
-            None if without is None else float(without.cost),
-            removed,
+            route_with is not None,
+            route_without is not None,
+            None if route_with is None else float(route_with.cost),
+            None if route_without is None else float(route_without.cost),
+            len(removed),
         )
 
 
@@ -475,32 +671,38 @@ class FlowSearch:
     data : ArcData
     values : ResolvedValues
     method : str
-        A flow method of the registry (see :func:`protee.flow.methods`).
-    unknown : UnknownPolicy
-        ``exclude`` or ``admit_and_count`` (the default).
+        Keyword only, as all that follows. A flow method of the registry
+        (see :func:`protee.flow.methods`).
+    policy : UnknownPolicy
+        ``exclude`` or ``admit_and_count``; no default.
+    criterion : str, optional
+        What the costs of ``problem`` measure, compared with a declared
+        objective by :meth:`verify`.
     """
 
     requirements: RequirementSet
     problem: FlowProblem
     data: ArcData
     values: ResolvedValues
+    _: KW_ONLY
     method: str
-    unknown: UnknownPolicy = UnknownPolicy.ADMIT_AND_COUNT
+    policy: UnknownPolicy
+    criterion: str | None = None
     _effects: Mapping[str, Effect] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         names = [info.name for info in methods()]
         if self.method not in names:
             raise ValueError(f"unknown method {self.method!r}; one of {names}")
-        policy = UnknownPolicy(self.unknown)
+        policy = UnknownPolicy(self.policy)
         if policy is UnknownPolicy.PENALIZE:
             raise ValueError("a flow search excludes or admits unknown arcs")
-        object.__setattr__(self, "unknown", policy)
-        g = self.problem.graph
-        effects = {
-            r.id: evaluate(r, g, self.data, self.values) for r in self.requirements
-        }
-        object.__setattr__(self, "_effects", MappingProxyType(effects))
+        object.__setattr__(self, "policy", policy)
+        object.__setattr__(
+            self,
+            "_effects",
+            _evaluated(self.requirements, self.problem.graph, self.data, self.values),
+        )
 
     @property
     def ids(self) -> tuple[str, ...]:
@@ -515,7 +717,7 @@ class FlowSearch:
         view = compose(
             p.graph,
             [e for rid, e in self._effects.items() if rid in chosen],
-            unknown=self.unknown,
+            policy=self.policy,
         )
         base_upper = np.array([math.inf if u is None else u for u in p.upper])
         lower = np.maximum(np.asarray(p.lower, dtype=np.float64), view.lower)
@@ -538,13 +740,52 @@ class FlowSearch:
         problem = self.problem_for(active)
         return None if problem is None else solve(problem, method=self.method)
 
+    def cost(self, active: Iterable[str]) -> float | None:
+        """The optimal value under the active requirements, ``None`` when
+        there is none (conflicting bounds, infeasible or unbounded)."""
+        result = self.solve(active)
+        if result is None or result.objective is None:
+            return None
+        return float(result.objective)
+
     def feasible(self, active: Iterable[str]) -> bool:
         """Whether a feasible flow exists under the active requirements."""
         result = self.solve(active)
         return result is not None and result.status is not Status.INFEASIBLE
 
+    def verify(
+        self, flow: FlowResult | Sequence[int], active: Iterable[str] | None = None
+    ) -> Verification:
+        """Verify every requirement on ``flow``, computed under the active
+        requirements: :func:`verify_flow` with the problem they give and the
+        criterion of the search.
+
+        Raises
+        ------
+        ValueError
+            If the bounds of the active requirements conflict.
+        """
+        problem = self.problem_for(active)
+        if problem is None:
+            raise ValueError("the bounds of the active requirements conflict")
+        return verify_flow(
+            flow,
+            self.requirements,
+            problem,
+            self.data,
+            self.values,
+            criterion=self.criterion,
+        )
+
     def impact(self, requirement: str) -> Impact:
-        """The optimum with and without ``requirement``."""
+        """The optimum with and without ``requirement``.
+
+        Raises
+        ------
+        ValueError
+            If ``requirement`` is not one of :attr:`ids`.
+        """
+        without = _without(self.ids, requirement)
 
         def outcome(result: FlowResult | None) -> tuple[bool, float | None]:
             if result is None or result.status is Status.INFEASIBLE:
@@ -554,5 +795,5 @@ class FlowSearch:
             return True, float(result.objective)
 
         ok_with, cost_with = outcome(self.solve())
-        ok_without, cost_without = outcome(self.solve(set(self.ids) - {requirement}))
+        ok_without, cost_without = outcome(self.solve(without))
         return Impact(requirement, ok_with, ok_without, cost_with, cost_without)

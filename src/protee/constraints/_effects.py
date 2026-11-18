@@ -4,9 +4,10 @@
 """Evaluation of a requirement into an immutable effect on the arcs."""
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -71,7 +72,7 @@ class Effect:
     reasons : numpy.ndarray of uint8, optional
         :class:`Reason` codes (``verdict`` kind).
     cap : numpy.ndarray of float64, optional
-        Upper limit, ``inf`` for none (``cost_term`` kind).
+        Speed cap, ``inf`` for none (``cost_term`` kind).
     factor : numpy.ndarray of float64, optional
         Multiplier of the base cost (``cost_term`` kind).
     added : numpy.ndarray of float64, optional
@@ -201,8 +202,12 @@ def evaluate(
     Raises
     ------
     ValueError
-        If ``data`` does not match ``graph``, or a value or an attribute
-        does not fit the pattern.
+        If ``data`` does not match ``graph``, a scope label is not an
+        element of the data, or a value or an attribute does not fit the
+        pattern.
+    TypeError
+        If a value is text where the pattern needs a number, or a number
+        where it needs a name.
     """
     if data.m != graph.m:
         raise ValueError(f"data for {data.m} arcs, graph of {graph.m} arcs")
@@ -330,6 +335,8 @@ def _speed_cap(
     maximum = _number(requirement, "maximum", bound["maximum"])
     if not maximum > 0:
         raise ValueError(f"requirement {requirement.id}: a speed cap must be positive")
+    for role in ("length", "speed"):
+        _column(requirement, data, role, categorical=False)
     cap = np.where(scope, maximum, math.inf)
     return Effect(requirement.id, EffectKind.COST_TERM, data.m, cap=cap)
 
@@ -349,7 +356,10 @@ def _occurrences(
         raise ValueError(f"requirement {requirement.id}: minimum must be finite")
     if minimum > maximum:
         raise ValueError(f"requirement {requirement.id}: minimum exceeds maximum")
-    lower = np.where(scope, minimum, 0.0)
+    # The maximum restricts an arc of unknown element too; the minimum would
+    # force flow on a presumption, and is not imposed there.
+    imposed = scope & ~data.scope_unknown(requirement.scope)
+    lower = np.where(imposed, minimum, 0.0)
     upper = np.where(scope, maximum, math.inf)
     return Effect(requirement.id, EffectKind.BOUND, data.m, lower=lower, upper=upper)
 
@@ -366,11 +376,13 @@ def _objective(
     return Effect(requirement.id, EffectKind.OBJECTIVE, data.m, objective=criterion)
 
 
-_EVALUATORS: dict[str, _Evaluator] = {
-    "threshold_admissibility": _threshold,
-    "class_admissibility": _class,
-    "zone_exclusion": _zone,
-    "speed_cap": _speed_cap,
-    "occurrence_bounds": _occurrences,
-    "objective": _objective,
-}
+_EVALUATORS: Mapping[str, _Evaluator] = MappingProxyType(
+    {
+        "threshold_admissibility": _threshold,
+        "class_admissibility": _class,
+        "zone_exclusion": _zone,
+        "speed_cap": _speed_cap,
+        "occurrence_bounds": _occurrences,
+        "objective": _objective,
+    }
+)

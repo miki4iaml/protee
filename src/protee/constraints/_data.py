@@ -221,18 +221,51 @@ class ArcData:
 
         Every arc is in scope when ``scope`` is ``None``. Otherwise an arc
         is in scope when its element is one of ``scope`` or is unknown: an
-        unknown element is never presumed out of scope.
+        unknown element is never presumed out of scope. Without an
+        ``element`` column, every element is unknown.
+
+        Raises
+        ------
+        ValueError
+            If a label of ``scope`` is not a label of the ``element``
+            column: an unresolved name is refused, never read as an empty
+            scope.
+        """
+        if scope is None or self.element is None:
+            return np.ones(self.m, dtype=np.bool_)
+        codes = self[self.element].values
+        mask: npt.NDArray[np.bool_] = np.isin(codes, self._codes(scope)) | (
+            codes == UNKNOWN_CODE
+        )
+        return mask
+
+    def scope_unknown(self, scope: frozenset[str] | None) -> npt.NDArray[np.bool_]:
+        """Mask of the arcs presumed in ``scope`` because their element is
+        unknown (none when ``scope`` is ``None``).
+
+        Raises
+        ------
+        ValueError
+            As :meth:`in_scope`.
         """
         if scope is None:
-            return np.ones(self.m, dtype=np.bool_)
+            return np.zeros(self.m, dtype=np.bool_)
         if self.element is None:
             return np.ones(self.m, dtype=np.bool_)
-        column = self[self.element]
-        assert column.labels is not None
-        wanted = [k for k, label in enumerate(column.labels) if label in scope]
-        codes = column.values
-        mask: npt.NDArray[np.bool_] = np.isin(codes, wanted) | (codes == UNKNOWN_CODE)
+        self._codes(scope)
+        mask: npt.NDArray[np.bool_] = self[self.element].values == UNKNOWN_CODE
         return mask
+
+    def _codes(self, scope: frozenset[str]) -> list[int]:
+        assert self.element is not None
+        labels = self[self.element].labels
+        assert labels is not None
+        if unresolved := sorted(set(scope) - set(labels)):
+            raise ValueError(
+                f"scope labels {unresolved} are not elements of {self.element!r} "
+                f"({list(labels)})"
+            )
+        return [k for k, label in enumerate(labels) if label in scope]
 
     def element_labels(self) -> tuple[str | None, ...]:
         """The element of each arc, ``None`` when unknown or undeclared."""
