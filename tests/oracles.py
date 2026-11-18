@@ -5,8 +5,7 @@
 
 - :func:`brute_force`: every integer flow of a tiny problem;
 - :func:`networkx_oracle`: NetworkX's network simplex;
-- :func:`highs_oracle`: the linear program solved by HiGHS (skipped where
-  highspy is not installed, such as Python 3.15 for now);
+- :func:`highs_oracle`: the linear program solved by HiGHS;
 - :func:`problems`: a Hypothesis strategy of small flow problems, with
   parallel arcs, loops, lower bounds, missing upper bounds and supplies.
 """

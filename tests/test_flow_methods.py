@@ -3,8 +3,6 @@
 
 """Minimum and maximum cost flow methods, against independent oracles."""
 
-import sys
-
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -29,9 +27,6 @@ SIMPLEX_RULES = [
     ("network_simplex", {"pivot_rule": rule}) for rule in ("block_search", "dantzig")
 ]
 VARIANTS = [*SIMPLEX_RULES, ("cycle_canceling", {}), ("successive_shortest_paths", {})]
-needs_highs = pytest.mark.skipif(
-    sys.version_info >= (3, 15), reason="no highspy wheel for Python 3.15 yet"
-)
 
 
 def check_optimal(problem: FlowProblem, result: FlowResult) -> None:
@@ -88,7 +83,6 @@ def test_methods_agree_with_networkx(
         check_certificate(problem, result)
 
 
-@needs_highs
 @pytest.mark.parametrize("method", METHODS)
 @given(problem=problems(float_costs=True))
 @settings(max_examples=80)
