@@ -84,7 +84,8 @@ def ids(doc: dict[str, Any]) -> list[Any]:
 
 
 def marked(doc: dict[str, Any], mark: str) -> set[Any]:
-    return {n["id"] for n in doc["nodes"] if n.get(viz.DISPLAY) == mark}
+    attribute = viz.SELECTION if mark == viz.OUTSIDE else viz.DISPLAY
+    return {n["id"] for n in doc["nodes"] if n.get(attribute) == mark}
 
 
 def hidden(doc: dict[str, Any]) -> dict[Any, int]:
@@ -332,7 +333,8 @@ def test_labels_tooltips_links_and_marks() -> None:
         "the second\\nhttps://example.org/b",  # then the url, a line below
     )
     assert d.attr["label"].endswith("+1")
-    assert (d.attr["style"], d.attr["color"]) == ("dashed", "#7F7F7F")
+    assert (d.attr["color"], d.attr["class"]) == ("#7F7F7F", "protee_outside")
+    assert not d.attr["style"]  # its line stays its own
     assert g.get_edge("a", "b").attr["label"] == "first"
     assert "cluster_legend" not in dot
     grouped = document(
@@ -1146,6 +1148,69 @@ def test_the_legends_take_the_styles_of_the_caller() -> None:
     for part in (graph, legend):
         centre = (width - float(part.attrib["width"])) / 2
         assert float(part.attrib["x"]) == pytest.approx(centre, abs=0.01)
+
+
+def test_outside_nodes_keep_their_line_and_their_group_border() -> None:
+    vocabulary = {  # the type sets the shape, the role the fill and the line
+        "type": [{"id": "x:v", "on": "node", "label": "variable"}],
+        "role": [
+            {"id": "x:in", "on": "node", "label": "input"},
+            {"id": "x:out", "on": "node", "label": "output"},
+        ],
+    }
+    nodes = [
+        {"id": "a", "role": "x:in", "type": "x:v", "family": "f"},
+        {"id": "b", "role": "x:out", "type": "x:v", "family": "f"},
+        {"id": "c", "role": "x:out", "type": "x:v"},
+    ]
+    doc = document(nodes, [("a", "c"), ("b", "c")], vocabulary)
+    out = viz.select(viz.collapse(doc), ["c"], depth=0)
+    assert marked(out, viz.OUTSIDE) == {"family=f"}
+    assert marked(out, viz.GROUP) == {"family=f"}  # still a group
+    g = drawn(viz.to_dot(out, legend=False))
+    group, c = g.get_node("family=f"), g.get_node("c")
+    assert (group.attr["peripheries"], group.attr["class"]) == ("2", "protee_outside")
+    outside = viz.select(doc, ["c"], depth=0)
+    h = drawn(viz.to_dot(outside, legend=False))
+    assert h.get_node("b").attr["style"] == c.attr["style"] == "filled,bold"
+    assert h.get_node("b").attr["class"] == "protee_outside"
+    svg = viz.render_svg(outside)
+    assert ".protee_outside text { font-style: italic; }" in svg
+    found, _ = page_parts(viz.render_html(outside))
+    styles = {n["data"]["id"]: n.get("style", {}) for n in found}  # groups: none
+    assert styles["b"]["font-style"] == "italic"
+    assert "font-style" not in styles["c"]
+    again = viz.select(outside, ["b"], depth=0)  # selected now
+    assert marked(again, viz.OUTSIDE) == {"c"}
+
+
+def test_the_page_filters_declared_values_and_families() -> None:
+    data = load(KINDS)
+    page = viz.render_html(data, direction="RL")
+    boxes = re.findall(
+        r'<input type="checkbox" checked data-attribute="([^"]+)"'
+        r' data-on="(node|edge)" data-value="([^"]+)">',
+        page,
+    )
+    vocabulary = data["graph"]["vocabulary"]
+    declared = {
+        (a, v["on"], v["id"]) for a, values in vocabulary.items() for v in values
+    }
+    families = {
+        ("family", "node", n["family"]) for n in data["nodes"] if n.get("family")
+    }
+    assert set(boxes) == declared | families
+    assert len(boxes) == len(set(boxes))
+    assert '<input type="search" id="search"' in page
+    assert '<button id="all">Show all</button>' in page
+    found, links = page_parts(page)
+    by_id = {n["data"]["id"]: n["data"] for n in found}
+    for node in data["nodes"]:  # what the filters compare
+        carried = {k: node[k] for k in ("type", "origin", "family") if node.get(k)}
+        assert by_id[node["id"]].get("values", {}) == carried
+    assert {e["data"]["values"]["type"] for e in links} == {
+        e["type"] for e in data["edges"]
+    }
 
 
 def test_render_html_follows_its_direction_and_leaves_lone_members_alone() -> None:

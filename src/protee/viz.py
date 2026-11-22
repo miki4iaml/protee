@@ -11,7 +11,8 @@ the styles from a table given by the caller.
 
 - :func:`select`, :func:`collapse`, :func:`condense` and :func:`reduce`
   turn a document into a document that follows the format; the marks they
-  add are declared under the ``protee`` prefix (:data:`DISPLAY`);
+  add are declared under the ``protee`` prefix (:data:`DISPLAY`,
+  :data:`SELECTION`);
 - :func:`to_dot` writes the Graphviz DOT text of a document, without any
   dependency;
 - :func:`render_svg` lays it out and draws it in SVG through Graphviz,
@@ -50,6 +51,7 @@ __all__ = [
     "MERGED",
     "OKABE_ITO",
     "OUTSIDE",
+    "SELECTION",
     "Styles",
     "collapse",
     "condense",
@@ -61,11 +63,14 @@ __all__ = [
     "to_dot",
 ]
 
-#: Attribute of the marks protee adds, and its values.
+#: Attributes of the marks protee adds, and their values: a node shown for
+#: a group or a loop (DISPLAY), and a neighbour outside a selection
+#: (SELECTION); a group outside a selection carries both.
 DISPLAY = "protee:display"
-OUTSIDE = "protee:outside"
 GROUP = "protee:group"
 LOOP = "protee:loop"
+SELECTION = "protee:selection"
+OUTSIDE = "protee:outside"
 #: Metrics protee adds: the neighbours not shown, the members of a group,
 #: the edges merged into one.
 HIDDEN = "protee:hidden"
@@ -123,6 +128,10 @@ _MARKS: dict[str, dict[str, str]] = {
         "description": "nodes on a common cycle, shown as one",
     },
 }
+_MARK_ATTRIBUTE = {OUTSIDE: SELECTION, GROUP: DISPLAY, LOOP: DISPLAY}
+#: The class of the nodes outside a selection, whose labels are in italics.
+_OUTSIDE_CLASS = "protee_outside"
+_OUTSIDE_STYLE = f"<style>.{_OUTSIDE_CLASS} text {{ font-style: italic; }}</style>"
 
 
 def _document(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -154,10 +163,12 @@ def _declare(doc: dict[str, Any], *marks: str) -> None:
     prefixes.setdefault("protee", None)
     block["prefixes"] = prefixes
     vocabulary = dict(block.get("vocabulary") or {})
-    values = list(vocabulary.get(DISPLAY, []))
-    present = {(v["id"], v["on"]) for v in values}
-    values += [dict(_MARKS[m]) for m in marks if (m, "node") not in present]
-    vocabulary[DISPLAY] = values
+    for mark in marks:
+        attribute = _MARK_ATTRIBUTE[mark]
+        values = list(vocabulary.get(attribute) or [])
+        if (mark, "node") not in {(v["id"], v["on"]) for v in values}:
+            values.append(dict(_MARKS[mark]))
+        vocabulary[attribute] = values
     block["vocabulary"] = vocabulary
 
 
@@ -202,7 +213,8 @@ def select(
     dict
         A new document. It keeps the selected nodes and their direct
         neighbours outside the selection, marked :data:`OUTSIDE` under
-        :data:`DISPLAY`; a kept node with neighbours not kept counts them in
+        :data:`SELECTION` (a group keeps its own mark under
+        :data:`DISPLAY`); a kept node with neighbours not kept counts them in
         ``metrics[HIDDEN]``, added to the count it already had. It keeps the
         edges with a selected end.
 
@@ -268,7 +280,9 @@ def select(
     doc["nodes"] = [n for n in doc["nodes"] if n["id"] in kept]
     for node in doc["nodes"]:
         if node["id"] in outside:
-            node[DISPLAY] = OUTSIDE
+            node[SELECTION] = OUTSIDE
+        else:  # selected now, if outside an earlier selection
+            node.pop(SELECTION, None)
         if hidden := len(neighbours[node["id"]] - kept):
             # Added to the neighbours an earlier selection already hid.
             before = (node.get("metrics") or {}).get(HIDDEN)
@@ -576,7 +590,7 @@ def _defaults(
     attributes = [
         a
         for a, values in vocabulary.items()
-        if a != DISPLAY and any(v["on"] == on for v in values)
+        if a not in (DISPLAY, SELECTION) and any(v["on"] == on for v in values or ())
     ]
     styles: dict[tuple[str, Any], dict[str, str]] = {}
     for rank, attribute in enumerate(attributes[:2]):
@@ -649,7 +663,8 @@ def _style_tables(
         raise ValueError("two node identifiers write the same in DOT")
     vocabulary = doc["graph"].get("vocabulary") or {}
     node_defaults = _defaults(vocabulary, "node")
-    node_defaults[(DISPLAY, OUTSIDE)] = {"style": "dashed", "color": "#7F7F7F"}
+    # Grey, and the label in italics: the line of the node stays its own.
+    node_defaults[(SELECTION, OUTSIDE)] = {"color": "#7F7F7F", "class": _OUTSIDE_CLASS}
     node_defaults[(DISPLAY, GROUP)] = {"peripheries": "2"}
     node_defaults[(DISPLAY, LOOP)] = {"peripheries": "3"}
     return node_defaults, _defaults(vocabulary, "edge"), given
@@ -687,8 +702,10 @@ def to_dot(
     - edges: the first declared attribute sets the colour (yellow aside)
       and the arrowhead, the second the line (dashed, dotted, bold); a
       symmetric value draws its head at both ends;
-    - marks: :data:`OUTSIDE` is grey and dashed, :data:`GROUP` has a double
-      border, :data:`LOOP` a triple one.
+    - marks: :data:`OUTSIDE` has a grey border and its label in italics
+      (class ``protee_outside``, which :func:`render_svg` and
+      :func:`render_html` draw in italics), its line kept; :data:`GROUP`
+      has a double border, :data:`LOOP` a triple one.
 
     The distinctions hold without the colours up to 7 values of the first
     node attribute, 3 of the second, 8 heads for the first edge attribute
@@ -873,7 +890,12 @@ def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) 
 
 def _svg(graphviz: Any, dot: str) -> str:
     drawing: bytes = graphviz.AGraph(string=dot).draw(format="svg", prog="dot")
-    return _renumbered(drawing.decode("utf-8"))
+    svg = _renumbered(drawing.decode("utf-8"))
+    if _OUTSIDE_CLASS in svg:
+        root = _SVG_ROOT.search(svg)
+        assert root is not None, "Graphviz writes the root of its SVG so"
+        svg = f"{svg[: root.end()]}\n{_OUTSIDE_STYLE}{svg[root.end() :]}"
+    return svg
 
 
 #: The gradients of a fill or a colour list: Graphviz numbers them with a
@@ -972,7 +994,8 @@ header { position: absolute; top: 0; left: 0; right: 0; height: 2.6em;
 #cy { position: absolute; top: 2.6em; left: 0; right: 20em; bottom: 0; }
 aside { position: absolute; top: 2.6em; right: 0; width: 19em; bottom: 0;
   overflow: auto; padding: .5em; border-left: 1px solid #ccc; }
-aside ul { list-style: none; margin: .5em 0 0; padding: 0; }
+aside h2 { font-size: 1em; margin: .8em 0 .3em; }
+aside ul { list-style: none; margin: 0; padding: 0; }
 aside li { margin: .25em 0; }
 aside svg { max-width: 100%; height: auto; }
 .note { color: #555; font-size: .9em; }
@@ -1001,7 +1024,10 @@ _PAGE_SCRIPT = """
         "target-arrow-shape": "triangle", "target-arrow-color": "#000000",
         "label": "data(label)", "font-size": 9 } },
       { selector: "node.cy-expand-collapse-collapsed-node", style: {
-        "shape": "round-rectangle", "border-style": "double", "border-width": 4 } }
+        "shape": "round-rectangle", "border-style": "double", "border-width": 4 } },
+      { selector: "node.match", style: {
+        "overlay-color": "#D55E00", "overlay-opacity": 0.3, "overlay-padding": 6 } },
+      { selector: ".faded", style: { "opacity": 0.2 } }
     ]
   });
   var api = cy.expandCollapse({ layoutBy: null, fisheye: false, animate: false,
@@ -1023,6 +1049,42 @@ _PAGE_SCRIPT = """
     var url = event.target.data("url");
     if (url) { window.open(url, "_blank", "noopener"); }
   });
+  // Filters: an unchecked value hides the nodes or the edges that carry it
+  // (and the edges of a hidden node); the search marks the matching labels.
+  var boxes = Array.prototype.slice.call(
+    document.querySelectorAll("#filters input[type=checkbox]"));
+  var search = document.getElementById("search");
+  function hidden(element, on) {
+    var values = element.data("values") || {};
+    return boxes.some(function (box) {
+      return !box.checked && box.dataset.on === on &&
+        values[box.dataset.attribute] === box.dataset.value;
+    });
+  }
+  function apply() {
+    var text = search.value.trim().toLowerCase();
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) {
+        if (node.isParent()) { return; }
+        node.style("display", hidden(node, "node") ? "none" : "element");
+        var label = String(node.data("label") || "").toLowerCase();
+        var match = text !== "" && label.indexOf(text) >= 0;
+        node.toggleClass("match", match);
+        node.toggleClass("faded", text !== "" && !match);
+      });
+      cy.edges().forEach(function (edge) {
+        edge.style("display", hidden(edge, "edge") ? "none" : "element");
+        edge.toggleClass("faded", text !== "");
+      });
+    });
+  }
+  boxes.forEach(function (box) { box.onchange = apply; });
+  search.oninput = apply;
+  document.getElementById("all").onclick = function () {
+    boxes.forEach(function (box) { box.checked = true; });
+    search.value = "";
+    apply();
+  };
 })();
 """
 
@@ -1064,6 +1126,8 @@ def _cy_node(style: Mapping[str, str]) -> dict[str, object]:
         out["border-width"] = 2 * int(style["peripheries"])
     if "fontcolor" in style:
         out["color"] = style["fontcolor"]
+    if _OUTSIDE_CLASS in style.get("class", "").split():
+        out["font-style"] = "italic"
     return out
 
 
@@ -1113,8 +1177,12 @@ def render_html(
     group with the cue at its corner, or all of them with the buttons; a
     tooltip shows the description of a node, its ``iri`` and its ``url``,
     and a double click opens its ``url`` when it opens no script. The
-    legend of :func:`render_legend_svg` lists the declared values, with
-    their descriptions. Nothing is fetched.
+    legend of :func:`render_legend_svg` shows the declared values; below
+    it, a box for each declared value and each family, with its
+    description, hides the nodes or the edges that carry it when unchecked
+    (and the edges of a hidden node). A search marks the nodes whose label
+    holds a text; "Show all" undoes the filters and the search. Nothing is
+    fetched.
 
     Parameters
     ----------
@@ -1159,6 +1227,7 @@ def render_html(
     layout = graphviz.AGraph(string=dot[:end] + "\n".join(clusters) + "\n}\n")
     layout.layout(prog="dot")
     node_defaults, edge_defaults, given = _style_tables(doc, styles)
+    filters = _filters(doc)
     taken = {str(n["id"]) for n in doc["nodes"]}
     parent: dict[Any, str] = {}
     elements: list[dict[str, Any]] = []
@@ -1186,6 +1255,8 @@ def render_html(
             values["url"] = url
         if node["id"] in parent:
             values["parent"] = parent[node["id"]]
+        if filtered := _filtered(node, filters):
+            values["values"] = filtered
         style = _style(node, node_defaults, given["node"])
         elements.append(
             {"data": values, "position": {"x": x, "y": -y}, "style": _cy_node(style)}
@@ -1199,6 +1270,8 @@ def render_html(
         }
         if edge.get("label"):
             values["label"] = edge["label"]
+        if filtered := _filtered(edge, filters):
+            values["values"] = filtered
         style = _style(edge, edge_defaults, given["edge"])
         elements.append({"data": values, "style": _cy_edge(style)})
     block = doc["graph"]
@@ -1208,8 +1281,7 @@ def render_html(
     payload = payload.replace("<", "\\u003c")
     entries = _legend_entries(doc, node_defaults, edge_defaults, given)
     legend = _legend_html(
-        block.get("vocabulary") or {},
-        _svg(graphviz, _legend_dot(entries)) if entries else "",
+        filters, _svg(graphviz, _legend_dot(entries)) if entries else ""
     )
     notices = "\n".join(
         _asset(n)
@@ -1230,6 +1302,8 @@ def render_html(
             '<button id="collapse">Collapse all</button>',
             '<button id="expand">Expand all</button>',
             '<button id="fit">Fit</button>',
+            '<input type="search" id="search" placeholder="Find a label">',
+            '<button id="all">Show all</button>',
             "</header>",
             '<div id="cy"></div>',
             f"<aside>{legend}</aside>",
@@ -1246,21 +1320,63 @@ def render_html(
     )
 
 
-def _legend_html(vocabulary: Mapping[str, Any], drawing: str) -> str:
-    """The legend of the page: the drawing of :func:`render_legend_svg`,
-    then the descriptions of the declared values that have one."""
+#: A filter of the page: attribute, the kind of element it applies to, and
+#: its values, each with its label and description.
+type _Filter = tuple[str, str, list[tuple[str, str, str]]]
+
+
+def _filters(doc: Mapping[str, Any]) -> list[_Filter]:
+    """The filters of the page: each declared attribute, for nodes and for
+    edges, then the families."""
+    out: list[_Filter] = []
+    for attribute, declared in (doc["graph"].get("vocabulary") or {}).items():
+        for on in ("node", "edge"):
+            values = [
+                (str(v["id"]), str(v["label"]), str(v.get("description") or ""))
+                for v in declared or ()
+                if v["on"] == on
+            ]
+            if values:
+                out.append((attribute, on, values))
+    families = dict.fromkeys(
+        str(n["family"]) for n in doc["nodes"] if n.get("family") is not None
+    )
+    if families:
+        out.append(("family", "node", [(f, f, "") for f in families]))
+    return out
+
+
+def _filtered(item: Mapping[str, Any], filters: list[_Filter]) -> dict[str, str]:
+    """The values an element carries for the filters of the page."""
+    names = {attribute for attribute, _, _ in filters}
+    return {k: str(item[k]) for k in sorted(names) if item.get(k) is not None}
+
+
+def _legend_html(filters: list[_Filter], drawing: str) -> str:
+    """The panel of the page: the drawing of :func:`render_legend_svg`, then
+    a box for each value of each filter, with its description."""
     parts = []
     if drawing:
         parts.append(drawing[drawing.index("<svg") :])
-    notes = [
-        f"<li><strong>{html.escape(str(v['label']))}</strong> "
-        f'<span class="note">{html.escape(str(v["description"]))}</span></li>'
-        for values in vocabulary.values()
-        for v in values or ()
-        if v.get("description")
-    ]
-    if notes:
-        parts.append(f"<ul>{''.join(notes)}</ul>")
+    sections = []
+    for attribute, on, values in filters:
+        boxes = []
+        for value, label, description in values:
+            note = (
+                f' <span class="note">{html.escape(description)}</span>'
+                if description
+                else ""
+            )
+            boxes.append(
+                f'<li><label><input type="checkbox" checked'
+                f' data-attribute="{html.escape(attribute)}" data-on="{on}"'
+                f' data-value="{html.escape(value)}"> {html.escape(label)}</label>'
+                f"{note}</li>"
+            )
+        heading = f"{attribute} ({on}s)"
+        sections.append(f"<h2>{html.escape(heading)}</h2><ul>{''.join(boxes)}</ul>")
+    if sections:
+        parts.append(f'<div id="filters">{"".join(sections)}</div>')
     return "".join(parts)
 
 
@@ -1309,7 +1425,7 @@ def _legend_entries(
     ]
     entries: list[_Entry] = []
     for attribute, values in vocabulary.items():
-        for v in values:
+        for v in values or ():  # a null entry declares nothing
             item = {attribute: v["id"]}
             swatch = {"label": str(v["label"])}
             if v["on"] == "node":
