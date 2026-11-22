@@ -15,7 +15,9 @@ the styles from a table given by the caller.
 - :func:`to_dot` writes the Graphviz DOT text of a document, without any
   dependency;
 - :func:`render_svg` lays it out and draws it in SVG through Graphviz,
-  with the optional extra ``viz`` (pygraphviz, which bundles Graphviz).
+  with the optional extra ``viz`` (pygraphviz, which bundles Graphviz);
+- :func:`render_html` writes a page to explore it, which opens offline,
+  with the same layout and styles.
 
 Provisional API (until version 1.0).
 """
@@ -23,11 +25,14 @@ Provisional API (until version 1.0).
 from __future__ import annotations
 
 import copy
+import html
 import itertools
+import json
 import math
 import re
 from collections import deque
 from collections.abc import Iterable, Mapping
+from importlib.resources import files
 from typing import Any
 
 from protee.graph import Digraph
@@ -48,6 +53,7 @@ __all__ = [
     "collapse",
     "condense",
     "reduce",
+    "render_html",
     "render_svg",
     "select",
     "to_dot",
@@ -89,6 +95,8 @@ _SHAPES = ("ellipse", "box", "diamond", "hexagon", "octagon", "house", "trapeziu
 _NODE_LINES = ("solid", "bold", "dotted")
 _EDGE_LINES = ("dashed", "dotted", "bold")
 _ARROWS = ("normal", "empty", "dot", "odot", "diamond", "odiamond", "box", "obox")
+# Yellow is too light for a thin line on white: it only fills nodes.
+_LINE_COLOURS = tuple(c for c in OKABE_ITO if c != "#F0E442")
 _FONT = "Helvetica,Arial,sans-serif"
 _DIRECTIONS = ("TB", "LR", "BT", "RL")
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -492,13 +500,16 @@ def _defaults(
                 if _dark(fill):
                     style["fontcolor"] = "#FFFFFF"
             elif rank == 0:
-                colour = OKABE_ITO[i % len(OKABE_ITO)]
+                colour = _LINE_COLOURS[i % len(_LINE_COLOURS)]
                 style = {"color": colour, "fontcolor": colour}
                 style["arrowhead"] = _ARROWS[i % len(_ARROWS)]
             else:
                 style = {"style": _EDGE_LINES[i % len(_EDGE_LINES)]}
             if v.get("symmetric"):
-                style["dir"] = "none"
+                # The same head at both ends: symmetric, and still told
+                # apart by its shape.
+                style["dir"] = "both"
+                style["arrowtail"] = style.get("arrowhead", "normal")
             styles[(attribute, v["id"])] = style
     return styles
 
@@ -525,6 +536,42 @@ def _style(
     return style
 
 
+type _Table = dict[tuple[str, Any], dict[str, str]]
+
+
+def _style_tables(
+    doc: Mapping[str, Any], styles: Styles | None
+) -> tuple[_Table, _Table, dict[str, Mapping[tuple[str, Any], Mapping[str, str]]]]:
+    """The default styles of nodes and edges, and the caller's, checked."""
+    given: dict[str, Mapping[tuple[str, Any], Mapping[str, str]]] = {
+        "node": {},
+        "edge": {},
+        **(styles or {}),
+    }
+    for kind in given.values():
+        for attributes in kind.values():
+            if bad := [k for k in attributes if not _NAME.fullmatch(k)]:
+                raise ValueError(f"invalid Graphviz attribute names {bad!r}")
+    names = [str(n["id"]) for n in doc["nodes"]]
+    if len(set(names)) < len(names):
+        raise ValueError("two node identifiers write the same in DOT")
+    vocabulary = doc["graph"].get("vocabulary") or {}
+    node_defaults = _defaults(vocabulary, "node")
+    node_defaults[(DISPLAY, OUTSIDE)] = {"style": "dashed", "color": "#7F7F7F"}
+    node_defaults[(DISPLAY, GROUP)] = {"peripheries": "2"}
+    node_defaults[(DISPLAY, LOOP)] = {"peripheries": "3"}
+    return node_defaults, _defaults(vocabulary, "edge"), given
+
+
+def _texts(node: Mapping[str, Any]) -> tuple[str, str]:
+    """The label of a node (with ``+n`` hidden neighbours) and its tooltip."""
+    label = str(node.get("label") or node["id"])
+    hidden = (node.get("metrics") or {}).get(HIDDEN)
+    return (f"{label}\n+{hidden}" if hidden else label), (
+        node.get("description") or label
+    )
+
+
 def to_dot(
     data: Mapping[str, Any],
     *,
@@ -542,9 +589,9 @@ def to_dot(
 
     - nodes: the first declared attribute sets the shape, the second the
       fill colour (:data:`OKABE_ITO`) and the border line;
-    - edges: the first declared attribute sets the colour and the
-      arrowhead, the second the line (dashed, dotted, bold); a symmetric
-      value draws no arrow;
+    - edges: the first declared attribute sets the colour (yellow aside)
+      and the arrowhead, the second the line (dashed, dotted, bold); a
+      symmetric value draws its head at both ends;
     - marks: :data:`OUTSIDE` is grey and dashed, :data:`GROUP` has a double
       border, :data:`LOOP` a triple one.
 
@@ -584,21 +631,9 @@ def to_dot(
     doc = _document(data)
     if direction not in _DIRECTIONS:
         raise ValueError(f"direction must be one of {_DIRECTIONS}, got {direction!r}")
-    given = {"node": {}, "edge": {}, **(styles or {})}
-    for kind in given.values():
-        for attributes in kind.values():
-            if bad := [k for k in attributes if not _NAME.fullmatch(k)]:
-                raise ValueError(f"invalid Graphviz attribute names {bad!r}")
-    names = [str(n["id"]) for n in doc["nodes"]]
-    if len(set(names)) < len(names):
-        raise ValueError("two node identifiers write the same in DOT")
+    node_defaults, edge_defaults, given = _style_tables(doc, styles)
     block = doc["graph"]
     vocabulary = block.get("vocabulary") or {}
-    node_defaults = _defaults(vocabulary, "node")
-    node_defaults[(DISPLAY, OUTSIDE)] = {"style": "dashed", "color": "#7F7F7F"}
-    node_defaults[(DISPLAY, GROUP)] = {"peripheries": "2"}
-    node_defaults[(DISPLAY, LOOP)] = {"peripheries": "3"}
-    edge_defaults = _defaults(vocabulary, "edge")
     head = {"rankdir": direction, "fontname": _FONT}
     if block.get("label"):
         head.update(label=block["label"], labelloc="t")
@@ -611,12 +646,8 @@ def to_dot(
         f"  edge [{_attributes({'fontname': _FONT})}];",
     ]
     for node in doc["nodes"]:
-        label = str(node.get("label") or node["id"])
-        hidden = (node.get("metrics") or {}).get(HIDDEN)
-        values: dict[str, object] = {
-            "label": f"{label}\n+{hidden}" if hidden else label
-        }
-        values["tooltip"] = node.get("description") or label
+        label, tooltip = _texts(node)
+        values: dict[str, object] = {"label": label, "tooltip": tooltip}
         if node.get("url"):
             values["URL"] = node["url"]
         values.update(_style(node, node_defaults, given["node"]))
@@ -667,17 +698,347 @@ def render_svg(
     ValueError, TypeError
         As :func:`to_dot`.
     """
-    try:  # an optional extra, imported on use
-        import pygraphviz
-    except ImportError as err:
-        raise ImportError(
-            "render_svg needs pygraphviz: install the optional extra protee[viz]"
-        ) from err
+    graphviz = _pygraphviz("render_svg")
     dot = to_dot(
         data, styles=styles, order_by=order_by, direction=direction, legend=legend
     )
-    drawing: bytes = pygraphviz.AGraph(string=dot).draw(format="svg", prog="dot")
+    drawing: bytes = graphviz.AGraph(string=dot).draw(format="svg", prog="dot")
     return drawing.decode("utf-8")
+
+
+def _pygraphviz(function: str) -> Any:
+    """pygraphviz, imported on use: it comes with the optional extra."""
+    try:
+        import pygraphviz
+    except ImportError as err:
+        raise ImportError(
+            f"{function} needs pygraphviz: install the optional extra protee[viz]"
+        ) from err
+    return pygraphviz
+
+
+_GROUP_BY = ("family", "loop", None)
+_CY_SHAPES = {
+    "box": "rectangle",
+    "diamond": "diamond",
+    "hexagon": "hexagon",
+    "octagon": "octagon",
+    "house": "tag",
+    "trapezium": "rhomboid",
+}
+_CY_ARROWS = {
+    "normal": ("triangle", "filled"),
+    "empty": ("triangle", "hollow"),
+    "dot": ("circle", "filled"),
+    "odot": ("circle", "hollow"),
+    "diamond": ("diamond", "filled"),
+    "odiamond": ("diamond", "hollow"),
+    "box": ("square", "filled"),
+    "obox": ("square", "hollow"),
+}
+_PAGE_STYLE = """
+body { margin: 0; font-family: Helvetica, Arial, sans-serif; font-size: 14px; }
+header { position: absolute; top: 0; left: 0; right: 0; height: 2.6em;
+  display: flex; gap: .6em; align-items: center; padding: 0 .8em;
+  border-bottom: 1px solid #ccc; }
+#cy { position: absolute; top: 2.6em; left: 0; right: 20em; bottom: 0; }
+aside { position: absolute; top: 2.6em; right: 0; width: 19em; bottom: 0;
+  overflow: auto; padding: .5em; border-left: 1px solid #ccc; }
+aside h2 { font-size: 1em; margin: .8em 0 .3em; }
+aside ul { list-style: none; margin: 0; padding: 0; }
+aside li { margin: .25em 0; }
+.swatch { display: inline-block; width: 1.4em; height: .9em;
+  margin-right: .4em; vertical-align: middle; border: 2px solid #000; }
+.note { color: #555; font-size: .9em; }
+#tip { position: absolute; display: none; max-width: 24em; padding: .3em .5em;
+  background: #ffffe8; border: 1px solid #999; pointer-events: none; }
+"""
+_PAGE_SCRIPT = """
+(function () {
+  var elements = JSON.parse(document.getElementById("protee-elements").textContent);
+  var cy = cytoscape({
+    container: document.getElementById("cy"),
+    elements: elements,
+    layout: { name: "preset" },
+    wheelSensitivity: 0.2,
+    style: [
+      { selector: "node", style: {
+        "label": "data(label)", "text-wrap": "wrap", "text-valign": "center",
+        "text-halign": "center", "font-family": "Helvetica, Arial, sans-serif",
+        "font-size": 10, "width": "data(w)", "height": "data(h)",
+        "background-color": "#FFFFFF", "border-width": 1, "border-color": "#000000" } },
+      { selector: ":parent", style: {
+        "text-valign": "top", "background-opacity": 0.04, "border-style": "dashed",
+        "border-color": "#7F7F7F" } },
+      { selector: "edge", style: {
+        "curve-style": "bezier", "width": 1, "line-color": "#000000",
+        "target-arrow-shape": "triangle", "target-arrow-color": "#000000",
+        "label": "data(label)", "font-size": 9 } },
+      { selector: "node.cy-expand-collapse-collapsed-node", style: {
+        "shape": "round-rectangle", "border-style": "double", "border-width": 4 } }
+    ]
+  });
+  var api = cy.expandCollapse({ layoutBy: null, fisheye: false, animate: false,
+    undoable: false, cueEnabled: true });
+  document.getElementById("collapse").onclick = function () { api.collapseAll(); };
+  document.getElementById("expand").onclick = function () { api.expandAll(); };
+  document.getElementById("fit").onclick = function () { cy.fit(); };
+  var tip = document.getElementById("tip");
+  cy.on("mouseover", "node", function (event) {
+    var text = event.target.data("tooltip");
+    if (!text) { return; }
+    tip.textContent = text;
+    tip.style.left = (event.renderedPosition.x + 14) + "px";
+    tip.style.top = (event.renderedPosition.y + 44) + "px";
+    tip.style.display = "block";
+  });
+  cy.on("mouseout", "node", function () { tip.style.display = "none"; });
+  cy.on("dbltap", "node", function (event) {
+    var url = event.target.data("url");
+    if (url) { window.open(url, "_blank", "noopener"); }
+  });
+})();
+"""
+
+
+def _asset(name: str) -> str:
+    return files("protee").joinpath("_assets", name).read_text(encoding="utf-8")
+
+
+def _groups(doc: dict[str, Any], group_by: str | None) -> list[tuple[str, list[Any]]]:
+    """(label, members) of the groups shown as compound nodes."""
+    members: dict[Any, list[Any]] = {}
+    if group_by == "family":
+        for node in doc["nodes"]:
+            if node.get("family") is not None:
+                members.setdefault(node["family"], []).append(node["id"])
+        return [(str(v), ids) for v, ids in members.items() if len(ids) > 1]
+    if group_by == "loop":
+        component = strong_components(from_node_link(doc).graph)
+        for node, c in zip(doc["nodes"], component, strict=True):
+            members.setdefault(c, []).append(node["id"])
+        return [(f"⟳ {len(ids)}", ids) for ids in members.values() if len(ids) > 1]
+    return []
+
+
+def _cy_node(style: Mapping[str, str]) -> dict[str, object]:
+    """A cytoscape.js style from the Graphviz attributes of a node."""
+    out: dict[str, object] = {
+        "shape": _CY_SHAPES.get(style.get("shape", ""), "ellipse")
+    }
+    lines = style.get("style", "").split(",")
+    if "filled" in lines:
+        out["background-color"] = style.get("fillcolor", "#D3D3D3")
+    if "color" in style:
+        out["border-color"] = style["color"]
+    if "dashed" in lines or "dotted" in lines:
+        out["border-style"] = "dashed" if "dashed" in lines else "dotted"
+    if "bold" in lines:
+        out["border-width"] = 3
+    if style.get("peripheries") in ("2", "3"):
+        out["border-style"] = "double"
+        out["border-width"] = 2 * int(style["peripheries"])
+    if "fontcolor" in style:
+        out["color"] = style["fontcolor"]
+    return out
+
+
+def _cy_edge(style: Mapping[str, str]) -> dict[str, object]:
+    """A cytoscape.js style from the Graphviz attributes of an edge."""
+    out: dict[str, object] = {}
+    if "color" in style:
+        out["line-color"] = out["target-arrow-color"] = style["color"]
+    if "fontcolor" in style:
+        out["color"] = style["fontcolor"]
+    lines = style.get("style", "").split(",")
+    if "dashed" in lines or "dotted" in lines:
+        out["line-style"] = "dashed" if "dashed" in lines else "dotted"
+    if "bold" in lines:
+        out["width"] = 3
+    shape, fill = _CY_ARROWS.get(style.get("arrowhead", "normal"), _CY_ARROWS["normal"])
+    out["target-arrow-shape"] = "none" if style.get("dir") == "none" else shape
+    out["target-arrow-fill"] = fill
+    if style.get("dir") == "both":
+        tail, tail_fill = _CY_ARROWS.get(
+            style.get("arrowtail", "normal"), _CY_ARROWS["normal"]
+        )
+        out["source-arrow-shape"] = tail
+        out["source-arrow-fill"] = tail_fill
+        if "color" in style:
+            out["source-arrow-color"] = style["color"]
+    return out
+
+
+def render_html(
+    data: Mapping[str, Any],
+    *,
+    styles: Styles | None = None,
+    order_by: str | None = None,
+    direction: str = "TB",
+    group_by: str | None = "family",
+    title: str | None = None,
+) -> str:
+    """A page to explore a document, which opens offline by a double click.
+
+    The nodes keep the positions of the Graphviz layout of
+    :func:`render_svg`, with each group drawn together, and the styles of
+    :func:`to_dot`. The page embeds cytoscape.js and its expand-collapse
+    extension, with their MIT notices: the reader collapses or expands a
+    group with the cue at its corner, or all of them with the buttons; a
+    tooltip shows the description of a node, and a double click opens its
+    ``url``. A legend lists the declared values. Nothing is fetched.
+
+    Parameters
+    ----------
+    data, styles, order_by, direction
+        As :func:`to_dot`.
+    group_by : {"family", "loop", None}
+        The groups shown as compound nodes: the nodes sharing a ``family``,
+        the loops (strongly connected components), or none.
+    title : str, optional
+        The title of the page; the label of the graph without one.
+
+    Returns
+    -------
+    str
+        The HTML page.
+
+    Raises
+    ------
+    ImportError
+        If pygraphviz is not installed (the optional extra ``viz``).
+    ValueError, TypeError
+        As :func:`to_dot`, or if ``group_by`` is unknown.
+    """
+    if group_by not in _GROUP_BY:
+        raise ValueError(f"group_by must be one of {_GROUP_BY}, got {group_by!r}")
+    graphviz = _pygraphviz("render_html")
+    doc = _document(data)
+    dot = to_dot(
+        doc, styles=styles, order_by=order_by, direction=direction, legend=False
+    )
+    groups = _groups(doc, group_by)
+    clusters = [
+        f"  subgraph {_quote(f'cluster_{k}')} {{ "
+        + " ".join(_quote(i) for i in ids)
+        + " }"
+        for k, (_, ids) in enumerate(groups)
+    ]
+    end = dot.rstrip().rfind("}")
+    layout = graphviz.AGraph(string=dot[:end] + "\n".join(clusters) + "\n}\n")
+    layout.layout(prog="dot")
+    node_defaults, edge_defaults, given = _style_tables(doc, styles)
+    taken = {str(n["id"]) for n in doc["nodes"]}
+    parent: dict[Any, str] = {}
+    elements: list[dict[str, Any]] = []
+    for k, (label, ids) in enumerate(groups):
+        gid, n = f"protee:group:{k}", 1
+        while gid in taken:
+            n += 1
+            gid = f"protee:group:{k}#{n}"
+        taken.add(gid)
+        parent.update(dict.fromkeys(ids, gid))
+        elements.append({"data": {"id": gid, "label": label}})
+    for node in doc["nodes"]:
+        drawn = layout.get_node(str(node["id"]))
+        x, y = (float(v) for v in drawn.attr["pos"].split(","))
+        label, tooltip = _texts(node)
+        values: dict[str, Any] = {
+            "id": str(node["id"]),
+            "label": label,
+            "tooltip": tooltip,
+            "w": round(float(drawn.attr["width"]) * 72, 2),
+            "h": round(float(drawn.attr["height"]) * 72, 2),
+        }
+        if node.get("url"):
+            values["url"] = node["url"]
+        if node["id"] in parent:
+            values["parent"] = parent[node["id"]]
+        style = _style(node, node_defaults, given["node"])
+        elements.append(
+            {"data": values, "position": {"x": x, "y": -y}, "style": _cy_node(style)}
+        )
+    for k, edge in enumerate(doc["edges"]):
+        values = {
+            "id": f"protee:edge:{k}",
+            "source": str(edge["source"]),
+            "target": str(edge["target"]),
+        }
+        if edge.get("label"):
+            values["label"] = edge["label"]
+        style = _style(edge, edge_defaults, given["edge"])
+        elements.append({"data": values, "style": _cy_edge(style)})
+    block = doc["graph"]
+    heading = title or block.get("label") or "graph"
+    payload = json.dumps(elements, ensure_ascii=False, separators=(",", ":"))
+    payload = payload.replace("</", "<\\/")
+    legend = _legend_html(
+        block.get("vocabulary") or {}, node_defaults, edge_defaults, given
+    )
+    notices = "\n".join(
+        _asset(n)
+        for n in ("cytoscape.LICENSE.txt", "cytoscape-expand-collapse.LICENSE.md")
+    ).replace("--", "- -")
+    return "\n".join(
+        [
+            "<!doctype html>",
+            f'<html lang="{html.escape(str(block.get("language") or "en"))}">',
+            "<head>",
+            '<meta charset="utf-8">',
+            f"<title>{html.escape(str(heading))}</title>",
+            f"<style>{_PAGE_STYLE}</style>",
+            "</head>",
+            "<body>",
+            "<header>",
+            f"<strong>{html.escape(str(heading))}</strong>",
+            '<button id="collapse">Collapse all</button>',
+            '<button id="expand">Expand all</button>',
+            '<button id="fit">Fit</button>',
+            "</header>",
+            '<div id="cy"></div>',
+            f"<aside>{legend}</aside>",
+            '<div id="tip"></div>',
+            f"<!-- Third-party code embedded below, under the MIT licence:\n{notices}\n-->",
+            f"<script>{_asset('cytoscape.min.js')}</script>",
+            f"<script>{_asset('cytoscape-expand-collapse.js')}</script>",
+            f'<script type="application/json" id="protee-elements">{payload}</script>',
+            f"<script>{_PAGE_SCRIPT}</script>",
+            "</body>",
+            "</html>",
+            "",
+        ]
+    )
+
+
+def _legend_html(
+    vocabulary: Mapping[str, Any],
+    node_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
+    edge_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
+    given: Mapping[str, Mapping[tuple[str, Any], Mapping[str, str]]],
+) -> str:
+    """The declared values, each with a swatch of its colour and line."""
+    parts = []
+    for attribute, values in vocabulary.items():
+        items = []
+        for v in values:
+            on = v["on"]
+            defaults = node_defaults if on == "node" else edge_defaults
+            style = _style({attribute: v["id"]}, defaults, given[on])
+            fill = style.get("fillcolor", "#FFFFFF") if on == "node" else "#FFFFFF"
+            line = "dashed" if "dashed" in style.get("style", "") else "solid"
+            swatch = (
+                f'<span class="swatch" style="background:{html.escape(fill)};'
+                f"border-color:{html.escape(style.get('color', '#000000'))};"
+                f'border-style:{line}"></span>'
+            )
+            note = (
+                f' <span class="note">{html.escape(v["description"])}</span>'
+                if v.get("description")
+                else ""
+            )
+            items.append(f"<li>{swatch}{html.escape(v['label'])}{note}</li>")
+        parts.append(f"<h2>{html.escape(attribute)}</h2><ul>{''.join(items)}</ul>")
+    return "".join(parts)
 
 
 def _ordering(nodes: list[dict[str, Any]], attribute: str) -> list[str]:

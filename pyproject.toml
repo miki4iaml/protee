@@ -7,8 +7,9 @@ authors = [
     { name = "miki4ia", email = "miki4ia@gmail.com" }
 ]
 requires-python = ">=3.12"
-license = "BSD-3-Clause"
-license-files = ["LICENSE"]
+# The drawing page embeds third-party JavaScript under the MIT licence.
+license = "BSD-3-Clause AND MIT"
+license-files = ["LICENSE", "src/protee/_assets/*.LICENSE.*"]
 keywords = [
     "operations research",
     "optimization",
@@ -124,7 +125,7 @@ required-imports = ["from __future__ import annotations"]
 "scripts/**" = ["T20", "I002"]
 
 [tool.codespell]
-skip = "*.fr.md,uv.lock"
+skip = "*.fr.md,uv.lock,src/protee/_assets/*.js"
 # Format terms: the Flate filter of PDF, the ALPH chunk of WebP.
 ignore-words-list = "flate,alph"
 
