@@ -1,0 +1,763 @@
+{
+  "directed": true,
+  "multigraph": true,
+  "graph": {
+    "format": "protee-node-link/0",
+    "producer": {
+      "name": "nomogram",
+      "version": "0.8.0"
+    },
+    "language": "en",
+    "label": "Surface-layer scales of COARE 3.6, solved together (COARE 3.6 code)",
+    "description": "The loop of the code (lines 480 to 595) over the formulations of the catalog, in the order of the code: the Obukhov length from the scales of the previous pass, the roughness lengths, the scales, the gustiness, the wind with it, the neutral wind at 10 m and the Charnock coefficient. Its unknowns, read before they are computed in a pass, are the three scales, the Charnock coefficient and the wind with gustiness. The code runs 10 passes without a test of convergence (line 473); Newton's method solves the equations themselves. The first guess is simpler than the code's (lines 380 to 477, which take psiu_40 and a relation from the bulk Richardson number, not in the catalog): the scales of a neutral profile, k / ln(17 m / 1e-4 m) = 0.033 times the differences between air and surface (for the temperature with the lapse g z_t / c_pa, as dT of line 383), a gustiness of 0.5 m/s, and a Charnock coefficient of 0.011, which the code sets at line 452 and replaces by a1 u10 + a2 at line 457. Left out: the cool skin, which the code computes in the loop, and the warm layer, which a separate function computes before calling it (line 35), the surface temperature and humidity being inputs (the skin temperature and Qs of the output of the code, in its test data); the Charnock coefficient from the waves where they are given (lines 463 to 477 and 592 to 595), the system being the code run without them; and, where its first guess gives zeta_u > 50 (line 431), the scales of the first pass and the Obukhov length it started from, which the code keeps (lines 578 to 586 and 600 to 607), where the system gives the solution of its equations. Over ice, the code takes z_0 = 5e-4 m (line 484): not here. Below 2.94 m/s the Charnock coefficient is negative, beyond the bounds of its kind; the code takes it, its smooth-flow term keeping the roughness length positive (outside = ignore for both).",
+    "reference": "references.coare36",
+    "prefixes": {
+      "nomogram": null
+    },
+    "vocabulary": {
+      "type": [
+        {
+          "id": "nomogram:equation",
+          "on": "node",
+          "label": "equation",
+          "description": "a formulation of the catalog, giving one variable"
+        },
+        {
+          "id": "nomogram:variable",
+          "on": "node",
+          "label": "variable"
+        },
+        {
+          "id": "nomogram:gives",
+          "on": "edge",
+          "label": "gives",
+          "description": "from an equation to the variable it gives"
+        },
+        {
+          "id": "nomogram:reads",
+          "on": "edge",
+          "label": "reads",
+          "description": "from a variable to an equation that takes it"
+        }
+      ],
+      "role": [
+        {
+          "id": "nomogram:input",
+          "on": "node",
+          "label": "input",
+          "description": "a variable no equation gives"
+        },
+        {
+          "id": "nomogram:unknown",
+          "on": "node",
+          "label": "unknown",
+          "description": "a variable read before the equation that gives it: what the source iterates on"
+        },
+        {
+          "id": "nomogram:intermediate",
+          "on": "node",
+          "label": "intermediate",
+          "description": "a variable given by an equation and read only after it"
+        },
+        {
+          "id": "nomogram:closing",
+          "on": "edge",
+          "label": "closes a loop",
+          "description": "a read of a variable by an equation that comes before the equation giving it, or is that equation: what the source iterates on"
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "equations.L",
+      "label": "Obukhov length from the scales of the surface layer (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 1,
+      "formulation": "formulations.coare36_obukhov_length"
+    },
+    {
+      "id": "equations.z_0M",
+      "label": "Roughness length for momentum over sea, smooth and rough flow (Edson et al. 2013)",
+      "type": "nomogram:equation",
+      "rank": 2,
+      "formulation": "formulations.edson2013_roughness_length_momentum",
+      "outside": "ignore"
+    },
+    {
+      "id": "equations.R_r",
+      "label": "Roughness Reynolds number, by its definition",
+      "type": "nomogram:equation",
+      "rank": 3,
+      "formulation": "formulations.roughness_reynolds_number"
+    },
+    {
+      "id": "equations.z_0Q",
+      "label": "Roughness length for humidity over sea from the roughness Reynolds number (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 4,
+      "formulation": "formulations.coare36_roughness_length_humidity"
+    },
+    {
+      "id": "equations.z_0T",
+      "label": "Roughness length for temperature over sea from the roughness Reynolds number (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 5,
+      "formulation": "formulations.coare36_roughness_length_heat"
+    },
+    {
+      "id": "equations.u_s",
+      "label": "Friction velocity from the wind at a height, gustiness included (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 6,
+      "formulation": "formulations.coare36_friction_velocity"
+    },
+    {
+      "id": "equations.q_s",
+      "label": "Scale of specific humidity from the air-sea difference (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 7,
+      "formulation": "formulations.coare36_humidity_scale"
+    },
+    {
+      "id": "equations.T_s",
+      "label": "Scale of potential temperature from the air-sea difference (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 8,
+      "formulation": "formulations.coare36_temperature_scale"
+    },
+    {
+      "id": "equations.Q_0v",
+      "label": "Virtual temperature flux from the scales of the surface layer (COARE 3.6 code)",
+      "type": "nomogram:equation",
+      "rank": 9,
+      "formulation": "formulations.coare36_virtual_temperature_flux"
+    },
+    {
+      "id": "equations.u_g",
+      "label": "Convective gustiness from the virtual temperature flux (COARE 3.6 code)",
+      "type": "nomogram:equation",
+      "rank": 10,
+      "formulation": "formulations.coare36_convective_gust"
+    },
+    {
+      "id": "equations.S",
+      "label": "Wind speed with the convective gustiness (COARE 3.6 code)",
+      "type": "nomogram:equation",
+      "rank": 11,
+      "formulation": "formulations.coare36_wind_speed_with_gust"
+    },
+    {
+      "id": "equations.U_10N",
+      "label": "Equivalent neutral wind at 10 m from the friction velocity and the roughness length (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 12,
+      "formulation": "formulations.coare36_equivalent_neutral_wind_10m"
+    },
+    {
+      "id": "equations.alpha",
+      "label": "Charnock coefficient from the equivalent neutral wind at 10 m (COARE 3.6)",
+      "type": "nomogram:equation",
+      "rank": 13,
+      "formulation": "formulations.coare36_charnock_coefficient",
+      "outside": "ignore"
+    },
+    {
+      "id": "variables.T",
+      "label": "T",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.ThermodynamicTemperature",
+      "unit": "K",
+      "unit_symbol": "K",
+      "description": "Air temperature"
+    },
+    {
+      "id": "variables.u_s",
+      "label": "u_s",
+      "type": "nomogram:variable",
+      "role": "nomogram:unknown",
+      "kind": "kinds.FrictionVelocity",
+      "unit": "M-PER-SEC",
+      "unit_symbol": "m/s",
+      "description": "Friction velocity, gustiness included"
+    },
+    {
+      "id": "variables.T_s",
+      "label": "T_s",
+      "type": "nomogram:variable",
+      "role": "nomogram:unknown",
+      "kind": "kinds.SurfaceLayerProfileScaleOfPotentialTemperature",
+      "unit": "K",
+      "unit_symbol": "K",
+      "description": "Scale of potential temperature of the surface layer"
+    },
+    {
+      "id": "variables.q_s",
+      "label": "q_s",
+      "type": "nomogram:variable",
+      "role": "nomogram:unknown",
+      "kind": "kinds.SurfaceLayerProfileScaleOfSpecificHumidity",
+      "unit": "KiloGM-PER-KiloGM",
+      "unit_symbol": "kg/kg",
+      "description": "Scale of specific humidity of the surface layer"
+    },
+    {
+      "id": "variables.g",
+      "label": "g",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.AccelerationOfGravity",
+      "unit": "M-PER-SEC2",
+      "unit_symbol": "m/sÂ²",
+      "description": "Acceleration of gravity at the latitude"
+    },
+    {
+      "id": "variables.L",
+      "label": "L",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.ObukhovLength",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Obukhov length"
+    },
+    {
+      "id": "variables.alpha",
+      "label": "alpha",
+      "type": "nomogram:variable",
+      "role": "nomogram:unknown",
+      "kind": "kinds.CharnockCoefficient",
+      "unit": "UNITLESS",
+      "unit_symbol": "1",
+      "description": "Charnock coefficient"
+    },
+    {
+      "id": "variables.nu",
+      "label": "nu",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.KinematicViscosity",
+      "unit": "M2-PER-SEC",
+      "unit_symbol": "mÂ²/s",
+      "description": "Kinematic viscosity of the air"
+    },
+    {
+      "id": "variables.z_0M",
+      "label": "z_0M",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.RoughnessLengthForMomentum",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Roughness length for momentum"
+    },
+    {
+      "id": "variables.R_r",
+      "label": "R_r",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.RoughnessReynoldsNumber",
+      "unit": "UNITLESS",
+      "unit_symbol": "1",
+      "description": "Roughness Reynolds number"
+    },
+    {
+      "id": "variables.z_0Q",
+      "label": "z_0Q",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.RoughnessLengthForHumidity",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Roughness length for humidity"
+    },
+    {
+      "id": "variables.z_0T",
+      "label": "z_0T",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.RoughnessLengthForHeat",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Roughness length for temperature"
+    },
+    {
+      "id": "variables.S",
+      "label": "S",
+      "type": "nomogram:variable",
+      "role": "nomogram:unknown",
+      "kind": "kinds.Speed",
+      "unit": "M-PER-SEC",
+      "unit_symbol": "m/s",
+      "description": "Mean wind speed relative to the sea surface, gustiness included"
+    },
+    {
+      "id": "variables.z_u",
+      "label": "z_u",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.Height",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Height of the wind"
+    },
+    {
+      "id": "variables.q_surf",
+      "label": "q_surf",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.SpecificHumidity",
+      "unit": "KiloGM-PER-KiloGM",
+      "unit_symbol": "kg/kg",
+      "description": "Saturation specific humidity at the sea surface"
+    },
+    {
+      "id": "variables.q",
+      "label": "q",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.SpecificHumidity",
+      "unit": "KiloGM-PER-KiloGM",
+      "unit_symbol": "kg/kg",
+      "description": "Specific humidity of the air at z_q"
+    },
+    {
+      "id": "variables.z_q",
+      "label": "z_q",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.Height",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Height of the humidity"
+    },
+    {
+      "id": "variables.T_surf",
+      "label": "T_surf",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.ThermodynamicTemperature",
+      "unit": "K",
+      "unit_symbol": "K",
+      "description": "Temperature of the sea surface (of the skin)"
+    },
+    {
+      "id": "variables.z_t",
+      "label": "z_t",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.Height",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Height of the air temperature"
+    },
+    {
+      "id": "variables.Q_0v",
+      "label": "Q_0v",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.KinematicHeatFlux",
+      "unit": "K-M-PER-SEC",
+      "unit_symbol": "KÂ·m/s",
+      "description": "Virtual temperature flux, positive upward"
+    },
+    {
+      "id": "variables.z_i",
+      "label": "z_i",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.Height",
+      "unit": "M",
+      "unit_symbol": "m",
+      "description": "Height of the boundary layer"
+    },
+    {
+      "id": "variables.u_g",
+      "label": "u_g",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.GustinessVelocity",
+      "unit": "M-PER-SEC",
+      "unit_symbol": "m/s",
+      "description": "Gustiness velocity"
+    },
+    {
+      "id": "variables.U",
+      "label": "U",
+      "type": "nomogram:variable",
+      "role": "nomogram:input",
+      "kind": "kinds.Speed",
+      "unit": "M-PER-SEC",
+      "unit_symbol": "m/s",
+      "description": "Mean wind speed relative to the sea surface"
+    },
+    {
+      "id": "variables.U_10N",
+      "label": "U_10N",
+      "type": "nomogram:variable",
+      "role": "nomogram:intermediate",
+      "kind": "kinds.EquivalentNeutralWindSpeed",
+      "unit": "M-PER-SEC",
+      "unit_symbol": "m/s",
+      "description": "Equivalent neutral wind speed at 10 m"
+    }
+  ],
+  "edges": [
+    {
+      "source": "equations.L",
+      "target": "variables.L",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.z_0M",
+      "target": "variables.z_0M",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.R_r",
+      "target": "variables.R_r",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.z_0Q",
+      "target": "variables.z_0Q",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.z_0T",
+      "target": "variables.z_0T",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.u_s",
+      "target": "variables.u_s",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.q_s",
+      "target": "variables.q_s",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.T_s",
+      "target": "variables.T_s",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.Q_0v",
+      "target": "variables.Q_0v",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.u_g",
+      "target": "variables.u_g",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.S",
+      "target": "variables.S",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.U_10N",
+      "target": "variables.U_10N",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "equations.alpha",
+      "target": "variables.alpha",
+      "key": 0,
+      "type": "nomogram:gives"
+    },
+    {
+      "source": "variables.T",
+      "target": "equations.L",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.T",
+      "target": "equations.T_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.T",
+      "target": "equations.Q_0v",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.T",
+      "target": "equations.u_g",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.u_s",
+      "target": "equations.L",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.u_s",
+      "target": "equations.z_0M",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.u_s",
+      "target": "equations.R_r",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.u_s",
+      "target": "equations.Q_0v",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.u_s",
+      "target": "equations.U_10N",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.T_s",
+      "target": "equations.L",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.T_s",
+      "target": "equations.Q_0v",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.q_s",
+      "target": "equations.L",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.q_s",
+      "target": "equations.Q_0v",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.g",
+      "target": "equations.L",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.g",
+      "target": "equations.z_0M",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.g",
+      "target": "equations.T_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.g",
+      "target": "equations.u_g",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.L",
+      "target": "equations.u_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.L",
+      "target": "equations.q_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.L",
+      "target": "equations.T_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.alpha",
+      "target": "equations.z_0M",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.nu",
+      "target": "equations.z_0M",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.nu",
+      "target": "equations.R_r",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_0M",
+      "target": "equations.R_r",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_0M",
+      "target": "equations.u_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_0M",
+      "target": "equations.U_10N",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.R_r",
+      "target": "equations.z_0Q",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.R_r",
+      "target": "equations.z_0T",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_0Q",
+      "target": "equations.q_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_0T",
+      "target": "equations.T_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.S",
+      "target": "equations.u_s",
+      "key": 0,
+      "type": "nomogram:reads",
+      "role": "nomogram:closing"
+    },
+    {
+      "source": "variables.S",
+      "target": "equations.U_10N",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_u",
+      "target": "equations.u_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.q_surf",
+      "target": "equations.q_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.q",
+      "target": "equations.q_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.q",
+      "target": "equations.Q_0v",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_q",
+      "target": "equations.q_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.T_surf",
+      "target": "equations.T_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_t",
+      "target": "equations.T_s",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.Q_0v",
+      "target": "equations.u_g",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.z_i",
+      "target": "equations.u_g",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.u_g",
+      "target": "equations.S",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.U",
+      "target": "equations.S",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.U",
+      "target": "equations.U_10N",
+      "key": 0,
+      "type": "nomogram:reads"
+    },
+    {
+      "source": "variables.U_10N",
+      "target": "equations.alpha",
+      "key": 0,
+      "type": "nomogram:reads"
+    }
+  ]
+}

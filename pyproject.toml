@@ -60,6 +60,7 @@ dev = [
     "mypy>=2.4.0",
     "networkx>=3.7",
     "pre-commit>=4.6.2",
+    "pygraphviz>=2.0",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
     "zizmor>=1.30.1",
@@ -73,8 +74,8 @@ warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 [[tool.mypy.overrides]]
-# networkx ships no type hints; it only serves as a test oracle.
-module = ["networkx", "networkx.*"]
+# networkx and pygraphviz ship no type hints; they only serve the tests.
+module = ["networkx", "networkx.*", "pygraphviz", "pygraphviz.*"]
 ignore_missing_imports = true
 
 [tool.pytest]
