@@ -148,6 +148,9 @@ and this project adheres to
   and `to_dot` (Graphviz DOT text, with default styles drawn from the
   declared vocabulary and told apart without colours, a style table given
   by the caller, `order_by` for a numeric attribute, and a legend).
+- `protee.viz.condense` (one node per loop: the strongly connected
+  components of `protee.structure`) and `protee.viz.reduce` (the
+  transitive reduction of one relation), without dependency.
 - `protee.viz.render_svg`: SVG drawing laid out by Graphviz, with the
   optional extra `viz` (pygraphviz, which bundles Graphviz); labels stay
   text in system fonts, nothing is fetched, and the same document gives
