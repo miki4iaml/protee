@@ -169,6 +169,73 @@ Then add the public key to GitHub as a *Signing key*
 (Settings → SSH and GPG keys). Your commits should show the
 "Verified" badge. A GPG key works too.
 
+## Releasing
+
+Versions are `0.x` until 1.0; the version is declared in
+`pyproject.toml` only, and read through `importlib.metadata`. Follow
+these steps in order.
+
+### Before the first release
+
+- PyPI and TestPyPI: declare the release workflow as a trusted
+  publisher (environments `pypi` and `testpypi`). A pending publisher
+  does not reserve the name: the first upload does.
+- Zenodo: enable the repository from the account of the publishing
+  identity. `.zenodo.json` names the creator: without a name, the
+  archive fails without an error message.
+
+### Each version
+
+1. A pull request against `develop` (squash), titled
+   `chore: release x.y.z`:
+   - the version in `pyproject.toml`, in `CITATION.cff` (with
+     `date-released`) and in `uv.lock`, where only the `version` line of
+     `protee` changes (`uv lock` may rewrite the whole file), checked by
+     `uv lock --check`;
+   - the `[Unreleased]` section of `CHANGELOG.md` turned into
+     `[x.y.z] - date`, opening with what the version brings: it becomes
+     the notes of the release;
+   - `README.md` and `README.fr.md` updated for the version
+     (installation from PyPI, extras).
+2. A pull request `develop` → `main`, merged with a merge commit: the
+   only exception to squash, so that `main` holds the exact history of
+   `develop`.
+3. Before tagging:
+   - `uv build`, then `uvx --from twine twine check --strict dist/*`;
+   - no advisory in the GitHub Advisory Database for the JavaScript
+     embedded in the package (`src/protee/_assets/NOTICE.md`), which
+     Dependabot does not watch.
+4. A signed tag `vx.y.z` on `main`, then a GitHub release from it, its
+   notes the `CHANGELOG.md` section of the version, with links made
+   absolute: `python scripts/absolute_links.py rewrite --repo
+   miki4iaml/protee --ref vx.y.z notes.md`. The release workflow
+   (`.github/workflows/release.yml`) checks that the tag matches the
+   project version, makes the links of the README absolute at the tag
+   (PyPI shows it outside the repository), builds once, checks that no
+   relative link is left, attests the build provenance and the CycloneDX
+   SBOM, and publishes exactly those files to PyPI through Trusted
+   Publishing (OIDC, no stored token), after approval of the protected
+   `pypi` environment.
+
+### After publication
+
+- The PyPI page shows the README and its images; an address at the tag
+  answers only once the tag is pushed.
+- The Zenodo DOI of the version is published.
+- The published wheel is downloaded (`pip download protee==x.y.z
+  --no-deps`, or `curl -L`: without `-L`, the redirection of PyPI gives
+  an empty file) and verified:
+  `gh attestation verify <wheel> --repo miki4iaml/protee`.
+- Conclude from PyPI, not from the state GitHub shows: a job may still
+  show as pending when PyPI has the files.
+
+### Rehearsal
+
+Run the release workflow by hand (`workflow_dispatch`): it publishes a
+unique `x.y.z.devN` version to TestPyPI, without a release. Never
+publish a GitHub release to test: each published release also archives
+a permanent Zenodo DOI.
+
 ## Security
 
 Never report a vulnerability in a public issue: follow the

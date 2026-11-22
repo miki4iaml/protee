@@ -43,6 +43,11 @@ jobs:
 
       - run: uv sync --frozen --all-extras
 
+      # The lock file holds the version of protee too, which the SBOM of a
+      # release names: it must match pyproject.toml.
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
+
       # no-commit-to-branch would fail on a push to develop or main; the
       # repository rulesets already provide this protection.
       - name: pre-commit (pre-commit stage)
