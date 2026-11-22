@@ -148,3 +148,7 @@ and this project adheres to
   and `to_dot` (Graphviz DOT text, with default styles drawn from the
   declared vocabulary and told apart without colours, a style table given
   by the caller, `order_by` for a numeric attribute, and a legend).
+- `protee.viz.render_svg`: SVG drawing laid out by Graphviz, with the
+  optional extra `viz` (pygraphviz, which bundles Graphviz); labels stay
+  text in system fonts, nothing is fetched, and the same document gives
+  the same SVG.

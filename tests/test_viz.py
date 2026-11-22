@@ -12,6 +12,8 @@ from __future__ import annotations
 import inspect
 import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -396,3 +398,27 @@ def test_to_dot_refuses_bad_requests() -> None:
 
 def test_protee_names_no_producer() -> None:
     assert "nomogram" not in inspect.getsource(viz)
+
+
+# SVG ----------------------------------------------------------------------
+
+
+def test_render_svg_keeps_text_in_system_fonts_and_fetches_nothing() -> None:
+    svg = viz.render_svg(load(COARE), styles=CLOSING, order_by="rank")
+    assert svg.startswith("<?xml")
+    assert svg.count("<text") >= 37  # one label per node, at least
+    assert 'font-family="Helvetica,Arial,sans-serif"' in svg
+    assert "@font-face" not in svg
+    assert "<image" not in svg
+    assert svg == viz.render_svg(load(COARE), styles=CLOSING, order_by="rank")
+
+
+def test_render_svg_needs_the_viz_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "pygraphviz", None)
+    with pytest.raises(ImportError, match=r"protee\[viz\]"):
+        viz.render_svg(chain())
+
+
+def test_importing_viz_does_not_import_graphviz() -> None:
+    code = "import sys, protee.viz; assert 'pygraphviz' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True)
