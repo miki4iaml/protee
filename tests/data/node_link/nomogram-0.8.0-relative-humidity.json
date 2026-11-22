@@ -1,0 +1,130 @@
+{
+  "directed": true,
+  "multigraph": true,
+  "graph": {
+    "format": "protee-node-link/0",
+    "producer": {
+      "name": "nomogram",
+      "version": "0.8.0"
+    },
+    "language": "en",
+    "prefixes": {
+      "qudt": "http://qudt.org/schema/qudt/",
+      "skos": "http://www.w3.org/2004/02/skos/core#",
+      "wikibase": "http://wikiba.se/ontology#",
+      "nomogram": null
+    },
+    "vocabulary": {
+      "type": [
+        {
+          "id": "qudt:QuantityKind",
+          "on": "node",
+          "label": "quantity kind"
+        },
+        {
+          "id": "nomogram:cfStandardName",
+          "on": "node",
+          "label": "CF standard name"
+        },
+        {
+          "id": "wikibase:Item",
+          "on": "node",
+          "label": "Wikidata item"
+        },
+        {
+          "id": "qudt:specializationOf",
+          "on": "edge",
+          "label": "specializes"
+        },
+        {
+          "id": "skos:closeMatch",
+          "on": "edge",
+          "label": "close match",
+          "symmetric": true
+        },
+        {
+          "id": "skos:exactMatch",
+          "on": "edge",
+          "label": "exact match",
+          "symmetric": true
+        }
+      ],
+      "origin": [
+        {
+          "id": "qudt",
+          "on": "node",
+          "label": "QUDT kind"
+        },
+        {
+          "id": "nomogram",
+          "on": "node",
+          "label": "nomogram kind",
+          "description": "a kind QUDT lacks, declared by nomogram as a specialization of a QUDT kind"
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "kinds.RelativePartialPressure",
+      "label": "Relative Partial Pressure",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/RelativePartialPressure"
+    },
+    {
+      "id": "kinds.RelativeHumidity",
+      "label": "Relative Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/RelativeHumidity"
+    },
+    {
+      "id": "kinds.RelativeHumidityWithRespectToIce",
+      "label": "Relative Humidity with respect to Ice",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q2499617",
+      "label": "Q2499617",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q2499617"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/relative_humidity/",
+      "label": "relative_humidity",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/relative_humidity/"
+    }
+  ],
+  "edges": [
+    {
+      "source": "kinds.RelativeHumidity",
+      "target": "kinds.RelativePartialPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.RelativeHumidity",
+      "target": "http://www.wikidata.org/entity/Q2499617",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.RelativeHumidity",
+      "target": "http://vocab.nerc.ac.uk/standard_name/relative_humidity/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.RelativeHumidityWithRespectToIce",
+      "target": "kinds.RelativePartialPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    }
+  ]
+}

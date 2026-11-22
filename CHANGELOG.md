@@ -129,3 +129,15 @@ and this project adheres to
   hand-built reference life-cycle profiles, with edge cases (non-zero
   minimum, zero or infinite maxima, unattainable or non-binding maxima,
   overconstrained system, multiple optima).
+- Node-link exchange format `protee-node-link/0` (`protee.io`), for
+  typed graphs shared with other projects: a `graph` block with the
+  format, the producer, an optional label, description and language tag,
+  prefixes (an IRI, or null) and a declared vocabulary (the values of
+  `type`, `status`, `role`… for nodes or for edges, a value used on both
+  declared once for each); opaque node identifiers (an IRI is
+  allowed) with an optional `iri`; integer edge keys. The format is
+  written by `to_node_link` and `write_node_link` (with `attributes` and
+  `multigraph`), read without loss by `from_node_link`, which keeps the
+  `graph` block, the `multigraph` flag and the edge keys in a read-only
+  `Table`, and checked by `check_node_link`, which lists every departure
+  from the format.
