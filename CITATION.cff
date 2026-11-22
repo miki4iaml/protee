@@ -3,11 +3,13 @@ message: "If you use this software, please cite it as below."
 type: software
 title: protee
 abstract: >-
-  Proteus: operations research and adaptive solving of life-cycle
-  profile graphs.
+  Proteus: graph and operations research algorithms whose methods are
+  chosen explicitly, compared, and backed by certificates and
+  diagnostics.
 authors:
   - alias: Miki
 version: 0.1.0
+date-released: "2026-11-22"
 license: BSD-3-Clause
 repository-code: "https://github.com/miki4iaml/protee"
 keywords:
@@ -16,4 +18,5 @@ keywords:
   - graphs
   - life cycle
   - life-cycle profile
-  - adaptive solving
+  - network flows
+  - shortest paths

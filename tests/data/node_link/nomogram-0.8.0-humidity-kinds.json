@@ -1,0 +1,791 @@
+{
+  "directed": true,
+  "multigraph": true,
+  "graph": {
+    "format": "protee-node-link/0",
+    "producer": {
+      "name": "nomogram",
+      "version": "0.8.0"
+    },
+    "language": "en",
+    "prefixes": {
+      "qudt": "http://qudt.org/schema/qudt/",
+      "skos": "http://www.w3.org/2004/02/skos/core#",
+      "wikibase": "http://wikiba.se/ontology#",
+      "nomogram": null
+    },
+    "vocabulary": {
+      "type": [
+        {
+          "id": "qudt:QuantityKind",
+          "on": "node",
+          "label": "quantity kind"
+        },
+        {
+          "id": "nomogram:cfStandardName",
+          "on": "node",
+          "label": "CF standard name",
+          "description": "a standard name of the CF conventions"
+        },
+        {
+          "id": "wikibase:Item",
+          "on": "node",
+          "label": "Wikidata item"
+        },
+        {
+          "id": "qudt:specializationOf",
+          "on": "edge",
+          "label": "specializes"
+        },
+        {
+          "id": "skos:exactMatch",
+          "on": "edge",
+          "label": "exact match",
+          "symmetric": true
+        },
+        {
+          "id": "skos:closeMatch",
+          "on": "edge",
+          "label": "close match",
+          "symmetric": true
+        },
+        {
+          "id": "skos:broadMatch",
+          "on": "edge",
+          "label": "broad match"
+        },
+        {
+          "id": "skos:narrowMatch",
+          "on": "edge",
+          "label": "narrow match"
+        }
+      ],
+      "origin": [
+        {
+          "id": "qudt",
+          "on": "node",
+          "label": "QUDT kind"
+        },
+        {
+          "id": "nomogram",
+          "on": "node",
+          "label": "nomogram kind",
+          "description": "a kind QUDT lacks, declared by nomogram as a specialization of a QUDT kind"
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "kinds.AbsoluteHumidity",
+      "label": "Absolute Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/AbsoluteHumidity"
+    },
+    {
+      "id": "kinds.Density",
+      "label": "Density",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/Density"
+    },
+    {
+      "id": "kinds.DewPointTemperature",
+      "label": "Dew Point Temperature",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/DewPointTemperature"
+    },
+    {
+      "id": "kinds.DimensionlessRatio",
+      "label": "Dimensionless Ratio",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/DimensionlessRatio"
+    },
+    {
+      "id": "kinds.Length",
+      "label": "Length",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/Length"
+    },
+    {
+      "id": "kinds.MassConcentrationOfWaterVapour",
+      "label": "Mass Concentration of Water Vapour",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/MassConcentrationOfWaterVapour"
+    },
+    {
+      "id": "kinds.MassPerAreaTime",
+      "label": "Mass per Area Time",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/MassPerAreaTime"
+    },
+    {
+      "id": "kinds.MassRatio",
+      "label": "Mass Ratio",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/MassRatio"
+    },
+    {
+      "id": "kinds.MassRatioOfWaterVapourToDryGas",
+      "label": "Mass Ratio of Water Vapour to Dry Gas",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/MassRatioOfWaterVapourToDryGas"
+    },
+    {
+      "id": "kinds.MoleFraction",
+      "label": "Mole Fraction",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/MoleFraction"
+    },
+    {
+      "id": "kinds.Pressure",
+      "label": "Pressure",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/Pressure"
+    },
+    {
+      "id": "kinds.RelativeHumidity",
+      "label": "Relative Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/RelativeHumidity"
+    },
+    {
+      "id": "kinds.RelativeMassRatioOfVapour",
+      "label": "Relative Mass Ratio of Vapour",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/RelativeMassRatioOfVapour"
+    },
+    {
+      "id": "kinds.RelativePartialPressure",
+      "label": "Relative Partial Pressure",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/RelativePartialPressure"
+    },
+    {
+      "id": "kinds.SpecificHumidity",
+      "label": "Specific Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/SpecificHumidity"
+    },
+    {
+      "id": "kinds.Temperature",
+      "label": "Temperature",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/Temperature"
+    },
+    {
+      "id": "kinds.VapourPressure",
+      "label": "Vapour Pressure",
+      "type": "qudt:QuantityKind",
+      "origin": "qudt",
+      "iri": "http://qudt.org/vocab/quantitykind/VapourPressure"
+    },
+    {
+      "id": "kinds.SurfaceLayerScaleOfSpecificHumidity",
+      "label": "Surface-Layer Scale of Specific Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.SurfaceLayerProfileScaleOfMixingRatio",
+      "label": "Surface-Layer Profile Scale of Mixing Ratio",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.SurfaceLayerProfileScaleOfSpecificHumidity",
+      "label": "Surface-Layer Profile Scale of Specific Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.RoughnessLengthForHumidity",
+      "label": "Roughness Length for Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.NeutralSurfaceDragCoefficientForHumidity",
+      "label": "Neutral Surface Drag Coefficient for Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.SurfaceDragCoefficientForHumidity",
+      "label": "Surface Drag Coefficient for Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.SurfaceDownwardWaterVapourFlux",
+      "label": "Surface Downward Water Vapour Flux",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "boundary-layer"
+    },
+    {
+      "id": "kinds.SaturationVapourPressureInMoistAir",
+      "label": "Saturation Vapour Pressure in Moist Air",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.SaturationSpecificHumidity",
+      "label": "Saturation Specific Humidity",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.RelativeHumidityWithRespectToIce",
+      "label": "Relative Humidity with respect to Ice",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.MoleFractionOfWaterVapour",
+      "label": "Mole Fraction of Water Vapour",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.SaturationMixingRatioOverWater",
+      "label": "Saturation Mixing Ratio over Water",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.SaturationMixingRatioOverIce",
+      "label": "Saturation Mixing Ratio over Ice",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.FrostPointTemperature",
+      "label": "Frost Point Temperature",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.SaturationVapourPressureOverSeaWater",
+      "label": "Saturation Vapour Pressure over Sea Water",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "sea-water"
+    },
+    {
+      "id": "kinds.RelativeVapourPressureOfSeaWater",
+      "label": "Relative Vapour Pressure of Sea Water",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "sea-water"
+    },
+    {
+      "id": "kinds.SaturationVapourPressure",
+      "label": "Saturation Vapour Pressure",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "water-vapour"
+    },
+    {
+      "id": "kinds.SaturationVapourPressureOverWaterInMoistAir",
+      "label": "Saturation Vapour Pressure over Water in Moist Air",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.SaturationVapourPressureOverIceInMoistAir",
+      "label": "Saturation Vapour Pressure over Ice in Moist Air",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "moist-air"
+    },
+    {
+      "id": "kinds.SaturationSpecificHumidityOverSeaWater",
+      "label": "Saturation Specific Humidity over Sea Water",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "sea-water"
+    },
+    {
+      "id": "kinds.SaturationVapourPressureOverWater",
+      "label": "Saturation Vapour Pressure over Water",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "water-vapour"
+    },
+    {
+      "id": "kinds.SaturationVapourPressureOverIce",
+      "label": "Saturation Vapour Pressure over Ice",
+      "type": "qudt:QuantityKind",
+      "origin": "nomogram",
+      "family": "water-vapour"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q29539",
+      "label": "Q29539",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q29539"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/dew_point_temperature/",
+      "label": "dew_point_temperature",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/dew_point_temperature/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q36253",
+      "label": "Q36253",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q36253"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q76378808",
+      "label": "Q76378808",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q76378808"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/mass_concentration_of_water_vapor_in_air/",
+      "label": "mass_concentration_of_water_vapor_in_air",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/mass_concentration_of_water_vapor_in_air/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q1563068",
+      "label": "Q1563068",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q1563068"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q17232415",
+      "label": "Q17232415",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q17232415"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/humidity_mixing_ratio/",
+      "label": "humidity_mixing_ratio",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/humidity_mixing_ratio/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q125264",
+      "label": "Q125264",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q125264"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q39552",
+      "label": "Q39552",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q39552"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/air_pressure/",
+      "label": "air_pressure",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/air_pressure/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q2499617",
+      "label": "Q2499617",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q2499617"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/relative_humidity/",
+      "label": "relative_humidity",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/relative_humidity/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q76379414",
+      "label": "Q76379414",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q76379414"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/specific_humidity/",
+      "label": "specific_humidity",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/specific_humidity/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q11466",
+      "label": "Q11466",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q11466"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/water_vapor_partial_pressure_in_air/",
+      "label": "water_vapor_partial_pressure_in_air",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/water_vapor_partial_pressure_in_air/"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/surface_roughness_length_for_humidity_in_air/",
+      "label": "surface_roughness_length_for_humidity_in_air",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/surface_roughness_length_for_humidity_in_air/"
+    },
+    {
+      "id": "http://vocab.nerc.ac.uk/standard_name/mole_fraction_of_water_vapor_in_air/",
+      "label": "mole_fraction_of_water_vapor_in_air",
+      "type": "nomogram:cfStandardName",
+      "iri": "http://vocab.nerc.ac.uk/standard_name/mole_fraction_of_water_vapor_in_air/"
+    },
+    {
+      "id": "http://www.wikidata.org/entity/Q2387102",
+      "label": "Q2387102",
+      "type": "wikibase:Item",
+      "iri": "http://www.wikidata.org/entity/Q2387102"
+    }
+  ],
+  "edges": [
+    {
+      "source": "kinds.AbsoluteHumidity",
+      "target": "kinds.Density",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.Density",
+      "target": "http://www.wikidata.org/entity/Q29539",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.DewPointTemperature",
+      "target": "kinds.Temperature",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.DewPointTemperature",
+      "target": "http://vocab.nerc.ac.uk/standard_name/dew_point_temperature/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.Length",
+      "target": "http://www.wikidata.org/entity/Q36253",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.MassConcentrationOfWaterVapour",
+      "target": "http://www.wikidata.org/entity/Q76378808",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.MassConcentrationOfWaterVapour",
+      "target": "http://vocab.nerc.ac.uk/standard_name/mass_concentration_of_water_vapor_in_air/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.MassRatio",
+      "target": "http://www.wikidata.org/entity/Q1563068",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.MassRatioOfWaterVapourToDryGas",
+      "target": "http://www.wikidata.org/entity/Q17232415",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.MassRatioOfWaterVapourToDryGas",
+      "target": "http://vocab.nerc.ac.uk/standard_name/humidity_mixing_ratio/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.MoleFraction",
+      "target": "http://www.wikidata.org/entity/Q125264",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.Pressure",
+      "target": "http://www.wikidata.org/entity/Q39552",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.Pressure",
+      "target": "http://vocab.nerc.ac.uk/standard_name/air_pressure/",
+      "key": 0,
+      "type": "skos:narrowMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.RelativeHumidity",
+      "target": "kinds.RelativePartialPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.RelativeHumidity",
+      "target": "http://www.wikidata.org/entity/Q2499617",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.RelativeHumidity",
+      "target": "http://vocab.nerc.ac.uk/standard_name/relative_humidity/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.RelativeMassRatioOfVapour",
+      "target": "http://www.wikidata.org/entity/Q76379414",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.SpecificHumidity",
+      "target": "kinds.MassRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SpecificHumidity",
+      "target": "http://vocab.nerc.ac.uk/standard_name/specific_humidity/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.Temperature",
+      "target": "http://www.wikidata.org/entity/Q11466",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.VapourPressure",
+      "target": "kinds.Pressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.VapourPressure",
+      "target": "http://vocab.nerc.ac.uk/standard_name/water_vapor_partial_pressure_in_air/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.SurfaceLayerScaleOfSpecificHumidity",
+      "target": "kinds.DimensionlessRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SurfaceLayerProfileScaleOfMixingRatio",
+      "target": "kinds.DimensionlessRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SurfaceLayerProfileScaleOfSpecificHumidity",
+      "target": "kinds.DimensionlessRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.RoughnessLengthForHumidity",
+      "target": "kinds.Length",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.RoughnessLengthForHumidity",
+      "target": "http://vocab.nerc.ac.uk/standard_name/surface_roughness_length_for_humidity_in_air/",
+      "key": 0,
+      "type": "skos:exactMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.NeutralSurfaceDragCoefficientForHumidity",
+      "target": "kinds.DimensionlessRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SurfaceDragCoefficientForHumidity",
+      "target": "kinds.DimensionlessRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SurfaceDownwardWaterVapourFlux",
+      "target": "kinds.MassPerAreaTime",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureInMoistAir",
+      "target": "kinds.VapourPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationSpecificHumidity",
+      "target": "kinds.SpecificHumidity",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.RelativeHumidityWithRespectToIce",
+      "target": "kinds.RelativePartialPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.MoleFractionOfWaterVapour",
+      "target": "kinds.MoleFraction",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.MoleFractionOfWaterVapour",
+      "target": "http://vocab.nerc.ac.uk/standard_name/mole_fraction_of_water_vapor_in_air/",
+      "key": 0,
+      "type": "skos:narrowMatch",
+      "verified": "2026-11-04"
+    },
+    {
+      "source": "kinds.SaturationMixingRatioOverWater",
+      "target": "kinds.MassRatioOfWaterVapourToDryGas",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationMixingRatioOverIce",
+      "target": "kinds.MassRatioOfWaterVapourToDryGas",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.FrostPointTemperature",
+      "target": "kinds.Temperature",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverSeaWater",
+      "target": "kinds.VapourPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.RelativeVapourPressureOfSeaWater",
+      "target": "kinds.DimensionlessRatio",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressure",
+      "target": "kinds.VapourPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressure",
+      "target": "http://www.wikidata.org/entity/Q2387102",
+      "key": 0,
+      "type": "skos:closeMatch",
+      "verified": "2026-10-24"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverWaterInMoistAir",
+      "target": "kinds.SaturationVapourPressureInMoistAir",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverIceInMoistAir",
+      "target": "kinds.SaturationVapourPressureInMoistAir",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationSpecificHumidityOverSeaWater",
+      "target": "kinds.SaturationSpecificHumidity",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverWater",
+      "target": "kinds.SaturationVapourPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverWater",
+      "target": "http://www.wikidata.org/entity/Q2387102",
+      "key": 0,
+      "type": "skos:broadMatch",
+      "verified": "2026-10-14"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverIce",
+      "target": "kinds.SaturationVapourPressure",
+      "key": 0,
+      "type": "qudt:specializationOf"
+    },
+    {
+      "source": "kinds.SaturationVapourPressureOverIce",
+      "target": "http://www.wikidata.org/entity/Q2387102",
+      "key": 0,
+      "type": "skos:broadMatch",
+      "verified": "2026-10-14"
+    }
+  ]
+}

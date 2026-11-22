@@ -3,6 +3,8 @@
 
 """The version comes from the installed distribution, declared in pyproject.toml."""
 
+from __future__ import annotations
+
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
@@ -19,4 +21,15 @@ def test_version_is_the_one_declared_in_pyproject() -> None:
 
 
 def test_the_public_api_is_explicit() -> None:
-    assert protee.__all__ == ["__version__"]
+    assert protee.__all__ == [
+        "__version__",
+        "constraints",
+        "flow",
+        "graph",
+        "io",
+        "paths",
+        "routes",
+        "structure",
+        "transforms",
+        "viz",
+    ]

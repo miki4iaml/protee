@@ -3,6 +3,8 @@
 
 """Tests for the image metadata hook ``scripts/check_image_metadata.py``."""
 
+from __future__ import annotations
+
 import importlib.util
 import struct
 import zlib

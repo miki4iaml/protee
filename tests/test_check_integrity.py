@@ -3,6 +3,8 @@
 
 """Tests for the integrity hook ``scripts/check_integrity.py``."""
 
+from __future__ import annotations
+
 import importlib.util
 from pathlib import Path
 

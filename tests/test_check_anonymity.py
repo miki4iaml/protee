@@ -3,6 +3,8 @@
 
 """Tests for the anonymity hook ``scripts/check_anonymity.py``."""
 
+from __future__ import annotations
+
 import importlib.util
 import os
 import sys
@@ -185,6 +187,22 @@ def test_pdf_metadata_is_checked(
     assert status == 1
     assert "PDF" in out
     assert SECRET not in out.lower()
+
+
+@pytest.mark.parametrize(("escape", "status"), [(b"\\8", 1), (b"\\9", 0)])
+def test_pdf_strings_with_a_backslash_before_8_or_9_are_read(
+    tmp_path: Path,
+    patterns_file: Path,
+    capsys: pytest.CaptureFixture[str],
+    escape: bytes,
+    status: int,
+) -> None:
+    # Not an octal escape: the backslash is dropped, and the string is still
+    # searched.
+    author = b" /Author (Zorglub)" if status else b""
+    f = tmp_path / "reference.pdf"
+    f.write_bytes(pdf(b"<< /Title (Chapter " + escape + b")" + author + b" >>"))
+    assert run(capsys, f)[0] == status
 
 
 def test_pdf_keeps_its_official_authors(

@@ -20,7 +20,7 @@ conception.
 
 ## Prérequis
 
-- Python 3.14 ou plus récent.
+- Python 3.12 ou plus récent.
 - [uv](https://docs.astral.sh/uv/). Il est indispensable : les hooks
   ruff, mypy et pytest passent par `uv run --frozen`, pour utiliser
   exactement les versions figées dans `uv.lock` (une seule source de
@@ -37,6 +37,10 @@ uv run pre-commit install
 La première commande installe aussi les extras optionnels, s'il y en
 a, couverts par les tests. La seconde commande installe les hooks aux
 trois stades (pre-commit, commit-msg, pre-push).
+
+Sous Windows sans compilateur C : PyYAML, dont pre-commit a besoin,
+n'a pas encore de roue pour Python 3.15. La variable d'environnement
+`PYYAML_FORCE_LIBYAML=0` le fait construire en pur Python.
 
 ## Contrôles locaux
 
@@ -157,7 +161,7 @@ personnels, qui restent sur votre poste par conception.
    devient le message du commit à la fusion par squash.
 4. La CI doit être verte. Contrôles exigés :
    - `quality` : les hooks ci-dessus, sur tout le dépôt ;
-   - `tests` : Ubuntu et Windows × Python 3.14 et 3.15, avec un plancher
+   - `tests` : Ubuntu et Windows × Python 3.12, 3.13 et 3.14, avec un plancher
      de couverture des branches à 80 % ;
    - `signatures` : chaque commit de la PR est signé et vérifié.
 5. La branche doit être à jour avec `develop` avant fusion.
@@ -175,6 +179,75 @@ git config commit.gpgsign true
 Puis enregistrer la clé publique sur GitHub comme *Signing key*
 (Settings → SSH and GPG keys). Le badge « Verified » doit apparaître
 sur vos commits. Une clé GPG convient aussi.
+
+## Publier une version
+
+Les versions sont en `0.x` jusqu'à la 1.0 ; la version n'est déclarée
+que dans `pyproject.toml`, et lue par `importlib.metadata`. Suivre ces
+étapes dans l'ordre.
+
+### Avant la première version
+
+- PyPI et TestPyPI : déclarer le workflow de publication comme
+  publieur de confiance (environnements `pypi` et `testpypi`). Une
+  déclaration à l'avance ne réserve pas le nom : c'est le premier envoi
+  qui le réserve.
+- Zenodo : activer le dépôt depuis le compte de l'identité de
+  publication. `.zenodo.json` nomme le créateur : sans nom, l'archivage
+  échoue sans message d'erreur.
+
+### À chaque version
+
+1. Une pull request vers `develop` (squash), intitulée
+   `chore: release x.y.z` :
+   - la version dans `pyproject.toml`, dans `CITATION.cff` (avec
+     `date-released`) et dans `uv.lock`, où seule change la ligne
+     `version` de `protee` (`uv lock` peut réécrire tout le fichier),
+     contrôlée par `uv lock --check` ;
+   - la section `[Unreleased]` de `CHANGELOG.md` devenue
+     `[x.y.z] - date`, qui commence par ce qu'apporte la version : elle
+     devient les notes de la release ;
+   - `README.md` et `README.fr.md` mis à jour pour la version
+     (installation depuis PyPI, extras).
+2. Une pull request `develop` → `main`, fusionnée par un commit de
+   fusion : la seule exception au squash, pour que `main` garde
+   l'historique exact de `develop`.
+3. Avant le tag :
+   - `uv build`, puis `uvx --from twine twine check --strict dist/*` ;
+   - aucun avis dans la GitHub Advisory Database pour le JavaScript
+     embarqué dans le paquet (`src/protee/_assets/NOTICE.md`), que
+     Dependabot ne surveille pas.
+4. Un tag signé `vx.y.z` sur `main`, puis une release GitHub à partir de
+   lui, dont les notes sont la section de la version dans
+   `CHANGELOG.md`, avec des liens rendus absolus :
+   `python scripts/absolute_links.py rewrite --repo miki4iaml/protee
+   --ref vx.y.z notes.md`. Le workflow de publication
+   (`.github/workflows/release.yml`) vérifie que le tag correspond à la
+   version du projet, rend absolus les liens du README au tag (PyPI
+   l'affiche hors du dépôt), construit une fois, vérifie qu'il ne reste
+   aucun lien relatif, atteste la provenance du build et le SBOM
+   CycloneDX, et publie exactement ces fichiers sur PyPI par Trusted
+   Publishing (OIDC, sans jeton stocké), après l'approbation de
+   l'environnement protégé `pypi`.
+
+### Après la publication
+
+- La page PyPI affiche le README et ses images ; une adresse au tag ne
+  répond qu'une fois le tag poussé.
+- Le DOI Zenodo de la version est publié.
+- La roue publiée est téléchargée (`pip download protee==x.y.z
+  --no-deps`, ou `curl -L` : sans `-L`, la redirection de PyPI donne un
+  fichier vide) et vérifiée :
+  `gh attestation verify <roue> --repo miki4iaml/protee`.
+- Conclure d'après PyPI, pas d'après l'état qu'affiche GitHub : un job
+  peut sembler encore en attente quand PyPI a déjà les fichiers.
+
+### Répétition
+
+Lancer le workflow de publication à la main (`workflow_dispatch`) : il
+publie une version unique `x.y.z.devN` sur TestPyPI, sans release. Ne
+jamais publier de release GitHub pour essayer : chaque release publiée
+archive aussi un DOI Zenodo permanent.
 
 ## Sécurité
 

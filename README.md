@@ -11,23 +11,77 @@
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196)](https://www.conventionalcommits.org/en/v1.0.0/)
 
-**Proteus: operations research and adaptive solving of life-cycle
-profile graphs.**
+**Proteus: graph and operations research algorithms whose methods are
+chosen explicitly, compared, and backed by certificates and
+diagnostics.**
 
-Pure Python; it works on an offline workstation (no online solver,
-service or engine).
+Pure Python package, depending only on NumPy and SciPy (wheels for
+every supported platform); it works on an offline workstation (no
+online solver, service or engine).
 
-> Project at its very beginning (pre-alpha): its model and its solvers
-> are being designed.
+> Pre-alpha: a first set of graph and flow algorithms is available
+> (`protee.graph`, `protee.paths`, `protee.routes`, `protee.flow`,
+> `protee.structure`, `protee.transforms`, `protee.io`), with
+> requirements turned into traceable constraints on graphs
+> (`protee.constraints`); their API is provisional until version 1.0,
+> and the model of life-cycle profiles is being designed.
+
+Typed graphs are exchanged with other projects in the node-link format
+[`protee-node-link/0`](docs/node-link-format.md) (`protee.io`), and
+drawn by `protee.viz`: selection, groups and loops without dependency,
+SVG and a page to explore offline with the optional extra `viz` (see the
+[gallery](docs/gallery/README.md)).
+
+## Why protee
+
+Many graph problems start from requirements written by people: a
+client's specification, a regulation, a doctrine, a standard. "The
+mass of the vehicle stays within the load limit of each bridge", or
+"this situation occurs at most twice in the life of the equipment",
+becomes a constraint on a graph, and a method returns a route or a
+flow. To trust that result, each requirement must be traceable from its
+source to its proof.
+
+protee implements this chain of six links:
+
+1. **source**: the document, its edition and paragraph, or the
+   client's statement;
+2. **normalized requirement**: an identified statement, in English and
+   in other languages if needed;
+3. **constraint pattern**: a generic, named form (arc admissibility,
+   speed cap, occurrence bounds…), without values;
+4. **values**: from value sets, each value with its source, edition and
+   precedence; missing data stay unknown, never presumed compatible;
+5. **named method**: chosen explicitly by the caller;
+6. **proof**: each requirement verified on the result, independently of
+   the method (`applied`, `partial`, `not_applied`, `no_data`,
+   `not_applicable`), with its impact (the result with and without it)
+   and the provenance of the result.
+
+Each link has precedents; we did not find the complete chain in the
+sources we reviewed. Two reference applications guide and validate it:
+life-cycle profiles (the graph of the situations an equipment goes
+through, from manufacture to use) and route planning on large road
+networks. protee provides a value set taken from a public text, for
+testing and illustration.
 
 ## Installation
 
-The package is not published yet. From a clone of the repository, with
-[uv](https://docs.astral.sh/uv/) and Python 3.14 or later:
+From PyPI, with Python 3.12 or later:
 
 ```
-uv sync
+pip install protee
 ```
+
+The drawing in SVG and in a page to explore (`protee.viz.render_svg`,
+`protee.viz.render_html`) needs the optional extra `viz`:
+
+```
+pip install "protee[viz]"
+```
+
+To work on protee itself, see the
+[contributing guide](.github/CONTRIBUTING.md).
 
 ## Contributing
 
@@ -37,4 +91,6 @@ and the rules shared by contributors and coding agents in
 
 ## License
 
-[BSD-3-Clause](LICENSE).
+[BSD-3-Clause](LICENSE). The page written by `protee.viz.render_html`
+embeds cytoscape.js and cytoscape-expand-collapse, under the MIT licence
+([notice](src/protee/_assets/NOTICE.md)).

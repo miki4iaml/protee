@@ -309,12 +309,16 @@ def _pdf_string(raw: bytes) -> str:
 
 
 def _pdf_literal(body: bytes) -> bytes:
-    """The bytes of a literal string, escapes resolved."""
+    """The bytes of a literal string, escapes resolved.
+
+    An octal escape has one to three digits from 0 to 7; a backslash before
+    any other character, 8 and 9 included, is dropped (PDF 1.7, 7.3.4.2).
+    """
     return re.sub(
         rb"\\([0-7]{1,3}|.)",
         lambda m: (
             bytes([int(m.group(1), 8) & 0xFF])
-            if m.group(1)[:1].isdigit()
+            if m.group(1)[:1] in b"01234567"
             else _PDF_ESCAPES.get(m.group(1), m.group(1))
         ),
         body,

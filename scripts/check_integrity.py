@@ -142,7 +142,7 @@ def check_file(name: str) -> list[str]:
     findings = check_path(name)
     try:
         text = Path(name).read_bytes().decode("utf-8")
-    except OSError, UnicodeDecodeError:
+    except (OSError, UnicodeDecodeError):
         return findings
     return findings + check_text(Path(name).as_posix(), text)
 

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "protee-node-link/0",
+  "description": "The structure of a protee-node-link/0 document: required keys, types and allowed values. It does not check the rules that cross parts of a document: every value used declared in graph.vocabulary for nodes or for edges, every prefix used declared in graph.prefixes, unique node identifiers, edges between existing nodes, keys unique between the same two nodes, at most one edge per pair when multigraph is false. protee.io.check_node_link checks them all. An optional key that is absent and one that is null mean the same, except in graph.prefixes and metrics, where null is a value.",
+  "type": "object",
+  "required": ["directed", "multigraph", "graph", "nodes"],
+  "anyOf": [{"required": ["edges"]}, {"required": ["links"]}],
+  "properties": {
+    "directed": {"const": true},
+    "multigraph": {"type": "boolean"},
+    "graph": {"$ref": "#/$defs/graph"},
+    "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+  },
+  "if": {"not": {"required": ["edges"]}},
+  "then": {
+    "description": "links is read in place of edges when edges is absent; next to edges, it is a free key.",
+    "properties": {"links": {"type": "array", "items": {"$ref": "#/$defs/edge"}}}
+  },
+  "$defs": {
+    "text": {"type": ["string", "null"]},
+    "iri": {
+      "description": "An absolute IRI: a scheme, then a colon.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:"
+    },
+    "nodeId": {
+      "description": "An opaque text, or an integer; never expanded.",
+      "type": ["string", "integer"]
+    },
+    "metrics": {
+      "type": ["object", "null"],
+      "additionalProperties": {
+        "anyOf": [
+          {"type": "number"},
+          {"enum": ["inf", "-inf"]},
+          {"type": "null"}
+        ]
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["format"],
+      "properties": {
+        "format": {"const": "protee-node-link/0"},
+        "producer": {
+          "type": ["object", "null"],
+          "required": ["name"],
+          "properties": {
+            "name": {"type": "string"},
+            "version": {"$ref": "#/$defs/text"}
+          }
+        },
+        "language": {
+          "description": "A BCP 47 language tag, such as en or fr-FR.",
+          "type": ["string", "null"],
+          "pattern": "^([A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*|[xXiI](-[A-Za-z0-9]{1,8})+)$"
+        },
+        "label": {"$ref": "#/$defs/text"},
+        "description": {"$ref": "#/$defs/text"},
+        "prefixes": {
+          "description": "Prefix to IRI, or null for a producer without a published namespace.",
+          "type": ["object", "null"],
+          "propertyNames": {"pattern": "^[^:]+$"},
+          "additionalProperties": {
+            "anyOf": [{"$ref": "#/$defs/iri"}, {"type": "null"}]
+          }
+        },
+        "vocabulary": {
+          "description": "Attribute to its declared values; the structural keys are not attributes.",
+          "type": ["object", "null"],
+          "propertyNames": {"not": {"enum": ["id", "source", "target", "key"]}},
+          "additionalProperties": {
+            "type": ["array", "null"],
+            "items": {"$ref": "#/$defs/declaration"}
+          }
+        }
+      }
+    },
+    "declaration": {
+      "type": "object",
+      "required": ["id", "on", "label"],
+      "properties": {
+        "id": {
+          "description": "prefix:name with a declared prefix, or a plain name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "on": {"enum": ["node", "edge"]},
+        "label": {"type": "string"},
+        "description": {"$ref": "#/$defs/text"},
+        "symmetric": {"type": ["boolean", "null"]}
+      },
+      "if": {"properties": {"on": {"const": "node"}}},
+      "then": {
+        "description": "symmetric applies to edges only.",
+        "properties": {"symmetric": {"type": "null"}}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nodeId"},
+        "label": {"$ref": "#/$defs/text"},
+        "description": {"$ref": "#/$defs/text"},
+        "family": {"$ref": "#/$defs/text"},
+        "url": {"$ref": "#/$defs/text"},
+        "iri": {"anyOf": [{"$ref": "#/$defs/iri"}, {"type": "null"}]},
+        "metrics": {"$ref": "#/$defs/metrics"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source", "target"],
+      "properties": {
+        "source": {"$ref": "#/$defs/nodeId"},
+        "target": {"$ref": "#/$defs/nodeId"},
+        "key": {"type": ["integer", "null"]},
+        "label": {"$ref": "#/$defs/text"},
+        "metrics": {"$ref": "#/$defs/metrics"}
+      }
+    }
+  }
+}
