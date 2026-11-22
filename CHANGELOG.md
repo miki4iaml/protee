@@ -137,23 +137,30 @@ and this project adheres to
   declared once for each); opaque node identifiers (an IRI is
   allowed) with an optional `iri`; integer edge keys. The format is
   written by `to_node_link` and `write_node_link` (with `attributes` and
-  `multigraph`), read without loss by `from_node_link`, which keeps the
+  `multigraph`), read by `from_node_link`, which keeps the
   `graph` block, the `multigraph` flag and the edge keys in a read-only
   `Table`, and checked by `check_node_link`, which lists every departure
-  from the format.
+  from the format. Writing gives an edge without a key the smallest key
+  free between its two nodes, writes no optional null, writes an infinite
+  metric `"inf"` or `"-inf"`, refuses the columns that would replace `id`,
+  `source` or `target`, and writes strict JSON with LF line ends;
+  `read_node_link` refuses `NaN` and `Infinity`, which are not JSON.
 - `protee.viz`, drawing of node-link documents, without dependency:
   `select` (the nodes reached from starting nodes up to a depth, filtered
   by type, family or metric, their neighbours outside the selection marked
   and the neighbours not shown counted), `collapse` (one node per family)
   and `to_dot` (Graphviz DOT text, with default styles drawn from the
-  declared vocabulary and told apart without colours, a style table given
+  declared vocabulary and told apart without colours up to a few values
+  of each attribute, a style table given
   by the caller, `order_by` for a numeric attribute, and a legend).
 - `protee.viz.condense` (one node per loop: the strongly connected
   components of `protee.structure`) and `protee.viz.reduce` (the
   transitive reduction of one relation), without dependency.
 - `protee.viz.render_html`: a page to explore a document, which opens
   offline: the layout and styles of `render_svg`, groups (families or
-  loops) collapsed and expanded, tooltips, links and a legend. It embeds
+  loops) collapsed and expanded, tooltips (description, `iri`, `url`),
+  links that open no script, and the legend of `render_legend_svg`. It
+  embeds
   cytoscape.js 3.35.0 and cytoscape-expand-collapse 4.1.1, under the MIT
   licence (`src/protee/_assets/NOTICE.md`); the distribution's licence
   expression is `BSD-3-Clause AND MIT`.
@@ -161,14 +168,16 @@ and this project adheres to
   its head at both ends, so that symmetric relations are told apart
   without colours.
 - `protee.viz.render_svg`: SVG drawing laid out by Graphviz, with the
-  optional extra `viz` (pygraphviz, which bundles Graphviz); labels stay
-  text in system fonts, nothing is fetched, and the same document gives
-  the same SVG.
+  optional extra `viz` (pygraphviz, whose wheels bundle Graphviz); labels
+  stay text in system fonts, links open no script, nothing is fetched,
+  and the same document gives the same SVG with the same versions and
+  fonts.
 - Legend of the drawings: a node value that sets no shape is shown with
   the shape of the nodes that carry it, or as a rounded box when they have
-  several; `render_svg` takes `legend="right"`, `"below"` (laid out apart
+  several or none carries it; `render_svg` takes `legend="right"`, `"below"` (laid out apart
   and drawn under the graph) or `None`; `protee.viz.render_legend_svg`
-  draws the legend alone, one column per attribute. The labels of the
+  draws the legend alone, one column per attribute and per kind of
+  element. The labels of the
   edge swatches are set apart from their line.
 - Public page of the format `protee-node-link/0`
   (`docs/node-link-format.md`), its JSON Schema (2020-12) shipped in the

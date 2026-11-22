@@ -62,7 +62,7 @@ Each link has precedents; we did not find the complete chain in the
 sources we reviewed. Two reference applications guide and validate it:
 life-cycle profiles (the graph of the situations an equipment goes
 through, from manufacture to use) and route planning on large road
-networks. protee provides a few value sets taken from public texts, for
+networks. protee provides a value set taken from a public text, for
 testing and illustration.
 
 ## Installation
@@ -82,4 +82,6 @@ and the rules shared by contributors and coding agents in
 
 ## License
 
-[BSD-3-Clause](LICENSE).
+[BSD-3-Clause](LICENSE). The page written by `protee.viz.render_html`
+embeds cytoscape.js and cytoscape-expand-collapse, under the MIT licence
+([notice](src/protee/_assets/NOTICE.md)).

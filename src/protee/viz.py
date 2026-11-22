@@ -37,7 +37,7 @@ from importlib.resources import files
 from typing import Any
 
 from protee.graph import Digraph
-from protee.io import check_node_link, from_node_link
+from protee.io import check_node_link
 from protee.structure import strong_components
 
 __all__ = [
@@ -132,10 +132,19 @@ def _document(data: Mapping[str, Any]) -> dict[str, Any]:
         shown = "; ".join(problems[:3])
         more = f" (and {len(problems) - 3} more)" if len(problems) > 3 else ""
         raise ValueError(f"not a protee-node-link/0 document: {shown}{more}")
-    doc = copy.deepcopy(dict(data))
+    doc: dict[str, Any] = _plain(data)
     if "edges" not in doc:
         doc["edges"] = doc.pop("links")
     return doc
+
+
+def _plain(x: Any) -> Any:
+    """An independent copy as plain JSON data, read-only mappings included."""
+    if isinstance(x, Mapping):
+        return {k: _plain(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_plain(v) for v in x]
+    return copy.deepcopy(x)
 
 
 def _declare(doc: dict[str, Any], *marks: str) -> None:
@@ -185,7 +194,8 @@ def select(
         Only nodes of these types, of these families, are selected and
         crossed (starting nodes included).
     threshold : (str, float), optional
-        Only nodes whose metric is at least the value are selected.
+        Only nodes whose metric is at least the value are selected; the
+        metric ``"inf"`` is at least any value, ``"-inf"`` at most.
 
     Returns
     -------
@@ -193,7 +203,8 @@ def select(
         A new document. It keeps the selected nodes and their direct
         neighbours outside the selection, marked :data:`OUTSIDE` under
         :data:`DISPLAY`; a kept node with neighbours not kept counts them in
-        ``metrics[HIDDEN]``. It keeps the edges with a selected end.
+        ``metrics[HIDDEN]``, added to the count it already had. It keeps the
+        edges with a selected end.
 
     Raises
     ------
@@ -227,7 +238,13 @@ def select(
         if threshold is None:
             return True
         value = (node.get("metrics") or {}).get(threshold[0])
-        return isinstance(value, (int, float)) and value >= threshold[1]
+        if value in ("inf", "-inf"):
+            value = math.inf if value == "inf" else -math.inf
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= threshold[1]
+        )
 
     def steps(ident: Any) -> list[Any]:
         return (
@@ -253,7 +270,9 @@ def select(
         if node["id"] in outside:
             node[DISPLAY] = OUTSIDE
         if hidden := len(neighbours[node["id"]] - kept):
-            _with_metric(node, HIDDEN, hidden)
+            # Added to the neighbours an earlier selection already hid.
+            before = (node.get("metrics") or {}).get(HIDDEN)
+            _with_metric(node, HIDDEN, hidden + (before or 0))
     doc["edges"] = [
         e
         for e in doc["edges"]
@@ -275,19 +294,39 @@ def collapse(data: Mapping[str, Any], *, by: str = "family") -> dict[str, Any]:
     ``metrics[MEMBERS]``. It keeps ``by``, and the ``type`` its members
     share, if any. The edges inside a group disappear; the edges of a
     group to the same node, with the same type, merge into one edge that
-    counts them in ``metrics[MERGED]`` and keeps the attributes they share.
-    A node alone in its group, or without ``by``, stays as it is.
+    counts them in ``metrics[MERGED]`` and keeps the attributes and metrics
+    they share; an edge redirected alone keeps its attributes and metrics.
+    A merged or redirected edge takes the smallest key free between its two
+    nodes. A node alone in its group, or without ``by``, stays as it is.
+
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+    by : str
+        The node attribute that makes the groups; its values are texts or
+        numbers.
+
+    Returns
+    -------
+    dict
+        A new document.
 
     Raises
     ------
     ValueError
         If the document does not follow the format.
+    TypeError
+        If a value of ``by`` is neither a text nor a number.
     """
     doc = _document(data)
     members: dict[Any, list[Any]] = {}
     for node in doc["nodes"]:
-        if node.get(by) is not None:
-            members.setdefault(node[by], []).append(node["id"])
+        value = node.get(by)
+        if isinstance(value, (dict, list)):
+            raise TypeError(f"collapse by {by!r}: {value!r} is not a text or a number")
+        if value is not None:
+            members.setdefault(value, []).append(node["id"])
     groups = [
         (f"{by}={value}", str(value), ids, {by: value})
         for value, ids in members.items()
@@ -308,23 +347,36 @@ def condense(data: Mapping[str, Any]) -> dict[str, Any]:
 
     The components are those of :func:`protee.structure.strong_components`.
 
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+
+    Returns
+    -------
+    dict
+        A new document.
+
     Raises
     ------
     ValueError
         If the document does not follow the format.
     """
     doc = _document(data)
-    component = strong_components(from_node_link(doc).graph)
-    members: dict[int, list[Any]] = {}
-    for node, c in zip(doc["nodes"], component, strict=True):
-        members.setdefault(c, []).append(node["id"])
     # In the order of their first member, as the nodes are read.
     groups: list[tuple[str, str, list[Any], dict[str, Any]]] = [
         (f"loop:{ids[0]}", f"⟳ {len(ids)}", ids, {})
-        for ids in members.values()
+        for ids in _components(doc, _successors(doc["edges"]))
         if len(ids) > 1
     ]
     return _merge(doc, groups, LOOP)
+
+
+def _successors(edges: Iterable[Mapping[str, Any]]) -> dict[Any, list[Any]]:
+    successors: dict[Any, list[Any]] = {}
+    for e in edges:
+        successors.setdefault(e["source"], []).append(e["target"])
+    return successors
 
 
 def reduce(data: Mapping[str, Any], *, edge_type: str) -> dict[str, Any]:
@@ -336,6 +388,18 @@ def reduce(data: Mapping[str, Any], *, edge_type: str) -> dict[str, Any]:
     second edge of that type between the same two nodes is left out too.
     Edges of other types stay.
 
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+    edge_type : str
+        The ``type`` of the edges of the relation.
+
+    Returns
+    -------
+    dict
+        A new document.
+
     Raises
     ------
     ValueError
@@ -343,10 +407,7 @@ def reduce(data: Mapping[str, Any], *, edge_type: str) -> dict[str, Any]:
         type form a cycle.
     """
     doc = _document(data)
-    relation = [e for e in doc["edges"] if e.get("type") == edge_type]
-    successors: dict[Any, list[Any]] = {}
-    for e in relation:
-        successors.setdefault(e["source"], []).append(e["target"])
+    successors = _successors(e for e in doc["edges"] if e.get("type") == edge_type)
     if any(
         len(ids) > 1 or ids[0] in successors.get(ids[0], [])
         for ids in _components(doc, successors)
@@ -454,8 +515,16 @@ def _merge(
             and all(o.get(k) == v for o in originals)
         }
         edge.update(common)
+        measured = [o.get("metrics") or {} for o in originals]
+        metrics = {
+            k: v
+            for k, v in measured[0].items()
+            if all(k in m and m[k] == v for m in measured)
+        }
         if len(originals) > 1:
-            edge["metrics"] = {MERGED: len(originals)}
+            metrics[MERGED] = len(originals)
+        if metrics:
+            edge["metrics"] = metrics
         keys = used.setdefault((s, t), set())
         edge["key"] = next(k for k in range(len(keys) + 1) if k not in keys)
         keys.add(edge["key"])
@@ -467,8 +536,28 @@ def _merge(
 
 
 def _quote(text: object) -> str:
-    escaped = str(text).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    raw = str(text)
+    if "\x00" in raw:
+        raise ValueError(f"{raw!r} holds a NUL character, which Graphviz cannot read")
+    escaped = raw.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'"{escaped}"'
+
+
+#: Characters a browser ignores around or inside a URL.
+_URL_IGNORED = re.compile(r"^[\x00-\x20]+|[\t\n\r]")
+_URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*):")
+_URL_SCHEMES = frozenset({"http", "https", "mailto"})
+
+
+def _safe_url(url: object) -> str | None:
+    """A link that opens no script: http, https, mailto, or relative."""
+    if not isinstance(url, str) or not url:
+        return None
+    cleaned = _URL_IGNORED.sub("", url)
+    scheme = _URL_SCHEME.match(cleaned)
+    if scheme is not None and scheme.group(1).lower() not in _URL_SCHEMES:
+        return None
+    return cleaned or None
 
 
 def _attributes(values: Mapping[str, object]) -> str:
@@ -567,12 +656,13 @@ def _style_tables(
 
 
 def _texts(node: Mapping[str, Any]) -> tuple[str, str]:
-    """The label of a node (with ``+n`` hidden neighbours) and its tooltip."""
+    """The label of a node (with ``+n`` hidden neighbours) and its tooltip:
+    its description (its label without one), then its ``iri`` and ``url``."""
     label = str(node.get("label") or node["id"])
     hidden = (node.get("metrics") or {}).get(HIDDEN)
-    return (f"{label}\n+{hidden}" if hidden else label), (
-        node.get("description") or label
-    )
+    tooltip = [str(node.get("description") or label)]
+    tooltip += [str(node[k]) for k in ("iri", "url") if node.get(k)]
+    return (f"{label}\n+{hidden}" if hidden else label), "\n".join(tooltip)
 
 
 def to_dot(
@@ -587,8 +677,10 @@ def to_dot(
 
     A node shows its ``label`` (its ``id`` without one), followed by
     ``+n`` when ``n`` of its neighbours are not shown; its tooltip is its
-    ``description``, its link its ``url``. The default styles come from the
-    declared vocabulary, in the order of declaration:
+    ``description``, then its ``iri`` and ``url``; its link is its ``url``
+    when it opens no script (http, https, mailto, or a relative link). The
+    default styles come from the declared vocabulary, in the order of
+    declaration:
 
     - nodes: the first declared attribute sets the shape, the second the
       fill colour (:data:`OKABE_ITO`) and the border line;
@@ -598,8 +690,11 @@ def to_dot(
     - marks: :data:`OUTSIDE` is grey and dashed, :data:`GROUP` has a double
       border, :data:`LOOP` a triple one.
 
-    Every distinction holds without the colours. The caller's styles
-    complete and override the defaults.
+    The distinctions hold without the colours up to 7 values of the first
+    node attribute, 3 of the second, 8 heads for the first edge attribute
+    and 3 lines for the second; beyond, the cues repeat and only the colours
+    tell the values apart. The caller's styles complete and override the
+    defaults.
 
     Parameters
     ----------
@@ -614,6 +709,8 @@ def to_dot(
         A numeric node attribute: the nodes that carry it are drawn in
         increasing order along ``direction``, the others placed by Graphviz.
     direction : {"TB", "LR", "BT", "RL"}
+        The direction of the edges: top to bottom, left to right, bottom to
+        top, right to left.
     legend : bool
         A cluster, placed by Graphviz, that shows each declared value with
         its style and label. A node value that sets no shape is shown with
@@ -653,8 +750,8 @@ def to_dot(
     for node in doc["nodes"]:
         label, tooltip = _texts(node)
         values: dict[str, object] = {"label": label, "tooltip": tooltip}
-        if node.get("url"):
-            values["URL"] = node["url"]
+        if url := _safe_url(node.get("url")):
+            values["URL"] = url
         values.update(_style(node, node_defaults, given["node"]))
         lines.append(f"  {_quote(node['id'])} [{_attributes(values)}];")
     for edge in doc["edges"]:
@@ -670,7 +767,8 @@ def to_dot(
     if order_by is not None:
         lines += _ordering(doc["nodes"], order_by)
     if legend:
-        lines += _legend(_legend_entries(doc, node_defaults, edge_defaults, given))
+        entries = _legend_entries(doc, node_defaults, edge_defaults, given)
+        lines += _legend(entries, {str(n["id"]) for n in doc["nodes"]})
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -686,10 +784,11 @@ def render_svg(
     """An SVG drawing of a document, laid out by Graphviz (``dot``).
 
     The text of :func:`to_dot`, with the same parameters, laid out and
-    drawn by the Graphviz that pygraphviz bundles: nothing else is
-    installed on the workstation, and nothing is fetched. Labels stay text,
-    in system fonts. With the same document and the same versions, the SVG
-    is the same, byte for byte.
+    drawn by the Graphviz that pygraphviz bundles in its wheels (Windows,
+    Linux and macOS, on x86-64 and ARM 64; elsewhere, pygraphviz builds
+    against a Graphviz installed on the workstation). Nothing is fetched.
+    Labels stay text, in system fonts. With the same document, the same
+    versions and the same fonts, the SVG is the same, byte for byte.
 
     Parameters
     ----------
@@ -699,8 +798,8 @@ def render_svg(
         ``"right"``: the cluster of :func:`to_dot`, placed by Graphviz
         beside the graph. ``"below"``: the legend of
         :func:`render_legend_svg`, laid out apart and drawn under the
-        graph, centred, so that it does not widen the figure. ``None``: no
-        legend.
+        graph, centred; it widens the figure only when it is wider than the
+        graph. ``None``: no legend.
 
     Returns
     -------
@@ -737,10 +836,18 @@ def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) 
     """The legend of a document alone, in SVG, laid out by Graphviz.
 
     Each declared value with the style it takes in :func:`render_svg` with
-    the same ``styles``, one column per attribute in the order of
-    declaration, so that a figure can carry its legend apart. A node value
-    that sets no shape is shown with the shape of the nodes that carry it
-    when they share one, and as a rounded box otherwise.
+    the same ``styles``, so that a figure can carry its legend apart: one
+    column per attribute and per kind of element (nodes, edges), in the
+    order of declaration. A node value that sets no shape is shown with the
+    shape of the nodes that carry it when they share one, and as a rounded
+    box when they have several or none carries it.
+
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+    styles : mapping, optional
+        As :func:`to_dot`.
 
     Returns
     -------
@@ -753,7 +860,8 @@ def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) 
         If pygraphviz is not installed (the optional extra ``viz``).
     ValueError
         If the document does not follow the format or declares no value,
-        or a style names an invalid Graphviz attribute.
+        two node identifiers write the same, or a style names an invalid
+        Graphviz attribute.
     """
     graphviz = _pygraphviz("render_legend_svg")
     doc = _document(data)
@@ -765,7 +873,27 @@ def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) 
 
 def _svg(graphviz: Any, dot: str) -> str:
     drawing: bytes = graphviz.AGraph(string=dot).draw(format="svg", prog="dot")
-    return drawing.decode("utf-8")
+    return _renumbered(drawing.decode("utf-8"))
+
+
+#: The gradients of a fill or a colour list: Graphviz numbers them with a
+#: counter of its process, ``<element>_l_<n>`` or ``<element>_r_<n>``.
+_GRADIENT = re.compile(
+    r'(?<=id=")((?:\w+_)?[lr]_)(\d+)(?=")|(?<=url\(#)((?:\w+_)?[lr]_)(\d+)(?=\))'
+)
+
+
+def _renumbered(svg: str) -> str:
+    """The SVG with its gradients numbered in their order, from 0: the same
+    document gives the same SVG, whatever Graphviz drew before."""
+    numbers: dict[str, int] = {}
+
+    def number(match: re.Match[str]) -> str:
+        stem = match.group(1) or match.group(3)
+        old = stem + (match.group(2) or match.group(4))
+        return stem + str(numbers.setdefault(old, len(numbers)))
+
+    return _GRADIENT.sub(number, svg)
 
 
 _SVG_ROOT = re.compile(r'<svg width="[^"]*" height="[^"]*"\s+viewBox="([^"]*)"([^>]*)>')
@@ -774,7 +902,8 @@ _SVG_ROOT = re.compile(r'<svg width="[^"]*" height="[^"]*"\s+viewBox="([^"]*)"([
 def _stack(top: str, bottom: str) -> str:
     """One SVG: the drawing ``top`` above ``bottom``, both centred.
 
-    The identifiers of ``bottom`` are prefixed, so that none is repeated.
+    The identifiers of ``bottom``, and the references to them, are
+    prefixed, so that none is repeated.
     """
     parts = []
     for svg in (top, bottom):
@@ -794,7 +923,8 @@ def _stack(top: str, bottom: str) -> str:
     y = 0.0
     for k, (root, w, h, inner) in enumerate(parts):
         if k:
-            inner = inner.replace(' id="', ' id="protee-legend-')
+            for mark in (' id="', "url(#", 'href="#'):
+                inner = inner.replace(mark, mark + "protee-legend-")
         lines.append(
             f'<svg x="{(width - w) / 2:.2f}" y="{y:.2f}" width="{w:.2f}"'
             f' height="{h:.2f}" viewBox="{root.group(1)}">{inner}</svg>'
@@ -842,11 +972,9 @@ header { position: absolute; top: 0; left: 0; right: 0; height: 2.6em;
 #cy { position: absolute; top: 2.6em; left: 0; right: 20em; bottom: 0; }
 aside { position: absolute; top: 2.6em; right: 0; width: 19em; bottom: 0;
   overflow: auto; padding: .5em; border-left: 1px solid #ccc; }
-aside h2 { font-size: 1em; margin: .8em 0 .3em; }
-aside ul { list-style: none; margin: 0; padding: 0; }
+aside ul { list-style: none; margin: .5em 0 0; padding: 0; }
 aside li { margin: .25em 0; }
-.swatch { display: inline-block; width: 1.4em; height: .9em;
-  margin-right: .4em; vertical-align: middle; border: 2px solid #000; }
+aside svg { max-width: 100%; height: auto; }
 .note { color: #555; font-size: .9em; }
 #tip { position: absolute; display: none; max-width: 24em; padding: .3em .5em;
   background: #ffffe8; border: 1px solid #999; pointer-events: none; }
@@ -912,10 +1040,8 @@ def _groups(doc: dict[str, Any], group_by: str | None) -> list[tuple[str, list[A
                 members.setdefault(node["family"], []).append(node["id"])
         return [(str(v), ids) for v, ids in members.items() if len(ids) > 1]
     if group_by == "loop":
-        component = strong_components(from_node_link(doc).graph)
-        for node, c in zip(doc["nodes"], component, strict=True):
-            members.setdefault(c, []).append(node["id"])
-        return [(f"⟳ {len(ids)}", ids) for ids in members.values() if len(ids) > 1]
+        loops = _components(doc, _successors(doc["edges"]))
+        return [(f"⟳ {len(ids)}", ids) for ids in loops if len(ids) > 1]
     return []
 
 
@@ -979,12 +1105,16 @@ def render_html(
     """A page to explore a document, which opens offline by a double click.
 
     The nodes keep the positions of the Graphviz layout of
-    :func:`render_svg`, with each group drawn together, and the styles of
-    :func:`to_dot`. The page embeds cytoscape.js and its expand-collapse
+    :func:`render_svg`, with each group drawn together. They keep the
+    shapes, fills, colours, lines and heads of :func:`to_dot` that
+    cytoscape.js can draw: an unknown shape is an ellipse, an unknown head
+    a triangle. The page embeds cytoscape.js and its expand-collapse
     extension, with their MIT notices: the reader collapses or expands a
     group with the cue at its corner, or all of them with the buttons; a
-    tooltip shows the description of a node, and a double click opens its
-    ``url``. A legend lists the declared values. Nothing is fetched.
+    tooltip shows the description of a node, its ``iri`` and its ``url``,
+    and a double click opens its ``url`` when it opens no script. The
+    legend of :func:`render_legend_svg` lists the declared values, with
+    their descriptions. Nothing is fetched.
 
     Parameters
     ----------
@@ -1022,6 +1152,9 @@ def render_html(
         + " }"
         for k, (_, ids) in enumerate(groups)
     ]
+    if clusters and order_by is not None:
+        # The ranks of order_by span the clusters, which stay whole.
+        clusters.insert(0, '  graph [newrank="true"];')
     end = dot.rstrip().rfind("}")
     layout = graphviz.AGraph(string=dot[:end] + "\n".join(clusters) + "\n}\n")
     layout.layout(prog="dot")
@@ -1037,8 +1170,9 @@ def render_html(
         taken.add(gid)
         parent.update(dict.fromkeys(ids, gid))
         elements.append({"data": {"id": gid, "label": label}})
-    for node in doc["nodes"]:
-        drawn = layout.get_node(str(node["id"]))
+    # The nodes of the layout come in the order of the document: they are
+    # matched by place, as a name may be written otherwise in DOT.
+    for node, drawn in zip(doc["nodes"], layout.nodes(), strict=False):
         x, y = (float(v) for v in drawn.attr["pos"].split(","))
         label, tooltip = _texts(node)
         values: dict[str, Any] = {
@@ -1048,17 +1182,18 @@ def render_html(
             "w": round(float(drawn.attr["width"]) * 72, 2),
             "h": round(float(drawn.attr["height"]) * 72, 2),
         }
-        if node.get("url"):
-            values["url"] = node["url"]
+        if url := _safe_url(node.get("url")):
+            values["url"] = url
         if node["id"] in parent:
             values["parent"] = parent[node["id"]]
         style = _style(node, node_defaults, given["node"])
         elements.append(
             {"data": values, "position": {"x": x, "y": -y}, "style": _cy_node(style)}
         )
+    edge_prefix = _free("protee:edge:", taken)
     for k, edge in enumerate(doc["edges"]):
         values = {
-            "id": f"protee:edge:{k}",
+            "id": f"{edge_prefix}{k}",
             "source": str(edge["source"]),
             "target": str(edge["target"]),
         }
@@ -1069,9 +1204,12 @@ def render_html(
     block = doc["graph"]
     heading = title or block.get("label") or "graph"
     payload = json.dumps(elements, ensure_ascii=False, separators=(",", ":"))
-    payload = payload.replace("</", "<\\/")
+    # No "<" at all, so that no text can close or comment out the element.
+    payload = payload.replace("<", "\\u003c")
+    entries = _legend_entries(doc, node_defaults, edge_defaults, given)
     legend = _legend_html(
-        block.get("vocabulary") or {}, node_defaults, edge_defaults, given
+        block.get("vocabulary") or {},
+        _svg(graphviz, _legend_dot(entries)) if entries else "",
     )
     notices = "\n".join(
         _asset(n)
@@ -1108,34 +1246,21 @@ def render_html(
     )
 
 
-def _legend_html(
-    vocabulary: Mapping[str, Any],
-    node_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
-    edge_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
-    given: Mapping[str, Mapping[tuple[str, Any], Mapping[str, str]]],
-) -> str:
-    """The declared values, each with a swatch of its colour and line."""
+def _legend_html(vocabulary: Mapping[str, Any], drawing: str) -> str:
+    """The legend of the page: the drawing of :func:`render_legend_svg`,
+    then the descriptions of the declared values that have one."""
     parts = []
-    for attribute, values in vocabulary.items():
-        items = []
-        for v in values:
-            on = v["on"]
-            defaults = node_defaults if on == "node" else edge_defaults
-            style = _style({attribute: v["id"]}, defaults, given[on])
-            fill = style.get("fillcolor", "#FFFFFF") if on == "node" else "#FFFFFF"
-            line = "dashed" if "dashed" in style.get("style", "") else "solid"
-            swatch = (
-                f'<span class="swatch" style="background:{html.escape(fill)};'
-                f"border-color:{html.escape(style.get('color', '#000000'))};"
-                f'border-style:{line}"></span>'
-            )
-            note = (
-                f' <span class="note">{html.escape(v["description"])}</span>'
-                if v.get("description")
-                else ""
-            )
-            items.append(f"<li>{swatch}{html.escape(v['label'])}{note}</li>")
-        parts.append(f"<h2>{html.escape(attribute)}</h2><ul>{''.join(items)}</ul>")
+    if drawing:
+        parts.append(drawing[drawing.index("<svg") :])
+    notes = [
+        f"<li><strong>{html.escape(str(v['label']))}</strong> "
+        f'<span class="note">{html.escape(str(v["description"]))}</span></li>'
+        for values in vocabulary.values()
+        for v in values or ()
+        if v.get("description")
+    ]
+    if notes:
+        parts.append(f"<ul>{''.join(notes)}</ul>")
     return "".join(parts)
 
 
@@ -1207,9 +1332,20 @@ _POINT = 'shape="point", width="0.05", label=""'
 _LAYOUT_ONLY = ("constraint", "weight", "minlen")
 
 
-def _swatch(k: int, on: str, swatch: Mapping[str, str]) -> tuple[list[str], str, str]:
+def _free(prefix: str, taken: set[str]) -> str:
+    """A prefix of names that no taken name starts with."""
+    free, k = prefix, 1
+    while any(name.startswith(free) for name in taken):
+        k += 1
+        free = f"{prefix.rstrip(':')}#{k}:"
+    return free
+
+
+def _swatch(
+    k: int, on: str, swatch: Mapping[str, str], prefix: str = "protee:legend:"
+) -> tuple[list[str], str, str]:
     """The DOT lines of one swatch, and its first and last node."""
-    name = f"protee:legend:{k}"
+    name = f"{prefix}{k}"
     if on == "node":
         return [f"    {_quote(name)} [{_attributes(swatch)}];"], name, name
     a, b = f"{name}:a", f"{name}:b"
@@ -1226,13 +1362,15 @@ def _swatch(k: int, on: str, swatch: Mapping[str, str]) -> tuple[list[str], str,
     )
 
 
-def _legend(entries: list[_Entry]) -> list[str]:
-    """The legend as a cluster of the drawing, placed by Graphviz."""
+def _legend(entries: list[_Entry], taken: set[str]) -> list[str]:
+    """The legend as a cluster of the drawing, placed by Graphviz; its names
+    are free among the ``taken`` names of the nodes."""
     if not entries:
         return []
+    prefix = _free("protee:legend:", taken)
     lines = ["  subgraph cluster_legend {", '    label=""; style="dashed";']
     for k, (_, on, swatch) in enumerate(entries):
-        lines += _swatch(k, on, swatch)[0]
+        lines += _swatch(k, on, swatch, prefix)[0]
     lines.append("  }")
     return lines
 

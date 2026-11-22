@@ -69,9 +69,8 @@ Chaque maillon a des précédents ; nous n'avons pas trouvé la chaîne
 complète dans les sources consultées. Deux applications de référence
 la guident et la valident : les profils de cycle de vie (le graphe des
 situations que traverse un matériel, de sa fabrication à son usage) et
-le routage sur de grands réseaux routiers. protee propose quelques jeux
-de valeurs tirés de textes publics, à des fins de test et
-d'illustration.
+le routage sur de grands réseaux routiers. protee propose un jeu de
+valeurs tiré d'un texte public, à des fins de test et d'illustration.
 
 ## Installation
 
@@ -90,4 +89,6 @@ et les règles communes aux contributeurs et aux agents de codage dans
 
 ## Licence
 
-[BSD-3-Clause](LICENSE).
+[BSD-3-Clause](LICENSE). La page écrite par `protee.viz.render_html`
+embarque cytoscape.js et cytoscape-expand-collapse, sous licence MIT
+([notice](src/protee/_assets/NOTICE.md)).
