@@ -7,6 +7,8 @@
 and no example database is written to the working tree.
 """
 
+from __future__ import annotations
+
 from hypothesis import HealthCheck, settings
 
 settings.register_profile(

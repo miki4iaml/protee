@@ -3,6 +3,8 @@
 
 """Named minimum (or maximum) cost flow methods: registry, solve, prepare."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace

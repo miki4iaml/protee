@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Route-level algorithms, against exhaustive enumeration on small graphs."""
 
+from __future__ import annotations
+
 import itertools
 import math
 

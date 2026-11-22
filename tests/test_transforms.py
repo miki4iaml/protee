@@ -4,6 +4,8 @@
 """Reversible transformations: solve the transformed problem, restore,
 and find the optimum of the original problem."""
 
+from __future__ import annotations
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st

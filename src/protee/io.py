@@ -16,6 +16,8 @@ Files are read and written in UTF-8.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 import csv
 import json
 import math

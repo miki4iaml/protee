@@ -4,6 +4,8 @@
 """From a public text to a verified route: embedded values, TOML,
 declared objective and provenance."""
 
+from __future__ import annotations
+
 import enum
 import json
 import math

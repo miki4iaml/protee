@@ -42,6 +42,8 @@ NumPy and are read-only.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData, Attribute
 from protee.constraints._effects import Effect, Reason, Verdict, evaluate

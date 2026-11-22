@@ -3,6 +3,8 @@
 
 """Shortest paths, against NetworkX."""
 
+from __future__ import annotations
+
 import math
 
 import networkx as nx

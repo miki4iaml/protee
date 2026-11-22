@@ -168,7 +168,8 @@ and the resulting schedule.
 - Versions: `0.x` until a `1.0.0` whose scope is still to be defined.
   Version declared only in `pyproject.toml`, read through
   `importlib.metadata`. Git tags prefixed with `v`.
-- `requires-python = ">=3.14"`. Development on 3.14.
+- `requires-python = ">=3.12"`. Development on 3.14. Every module
+  starts with `from __future__ import annotations` (enforced by ruff).
 - Documentation: Sphinx, NumPy-style docstrings. A strict build will
   be a blocking CI check.
 - License BSD-3-Clause. Every source file starts with:
@@ -258,13 +259,12 @@ No safety rule is bypassed, including during project bootstrap.
 ## Settled decisions
 
 - **CI matrix**: complete and blocking, Ubuntu and Windows × Python
-  3.14 and 3.15: the minimum, on which development happens, and the
-  next version as a canary, which shows breakages before users meet
-  them. Portability and `requires-python >=3.14` are promises made to
-  the package's users; a non-blocking cell ends up ignored and the
-  promise stops being checked. The minimum is confirmed with the first
-  dependencies: NumPy and SciPy publish wheels for 3.14 and 3.15 on
-  both systems.
+  3.12, 3.13 and 3.14: the minimum, the intermediate version, and the
+  one development happens on. Portability and `requires-python >=3.12`
+  are promises made to the package's users; a non-blocking cell ends up
+  ignored and the promise stops being checked. Python 3.15 is not in
+  the matrix for now. NumPy and SciPy publish wheels for 3.12 to 3.14
+  on both systems.
 - **Contributor signatures**: a squash merge produces a commit signed
   by GitHub, which hides the commits of the pull request; the
   `signatures` CI job therefore requires each of them to be signed and
@@ -294,7 +294,7 @@ uv run pytest                              # tests
 uv run coverage run -m pytest && uv run coverage report   # coverage
 uv run ruff check --fix && uv run ruff format
 uv run mypy                                # strict typing
-uv run --isolated --python 3.15 --all-extras pytest   # reproduce CI
+uv run --isolated --python 3.12 --all-extras pytest   # reproduce CI
 uv run --isolated --resolution lowest-direct --all-extras pytest   # lower bounds
 ```
 

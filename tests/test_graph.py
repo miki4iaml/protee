@@ -3,6 +3,8 @@
 
 """The immutable directed multigraph, and the lazy package."""
 
+from __future__ import annotations
+
 import subprocess
 import sys
 

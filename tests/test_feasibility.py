@@ -3,6 +3,8 @@
 
 """Maximum flow, minimum cut and feasibility certificates."""
 
+from __future__ import annotations
+
 import networkx as nx
 import pytest
 from hypothesis import given, settings

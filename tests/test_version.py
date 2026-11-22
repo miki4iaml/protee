@@ -3,6 +3,8 @@
 
 """The version comes from the installed distribution, declared in pyproject.toml."""
 
+from __future__ import annotations
+
 import tomllib
 from importlib.metadata import version
 from pathlib import Path

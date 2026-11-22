@@ -11,13 +11,13 @@ and this project adheres to
 ### Added
 
 - Project skeleton: the `protee` package (typed, version read from the
-  installed distribution), Python 3.14 or later, BSD-3-Clause.
+  installed distribution), Python 3.12 or later, BSD-3-Clause.
 - Rules shared by contributors and coding agents (`AGENTS.md`), the
   contributing guide in English and French, and the security policy.
 - Local checks (pre-commit hooks: formatting, lint, typing, tests,
   secrets, anonymity, image metadata, hidden characters and local-only
-  files), replayed by CI on Ubuntu and Windows with Python 3.14 and
-  3.15, with an 80 % branch coverage floor.
+  files), replayed by CI on Ubuntu and Windows with Python 3.12, 3.13
+  and 3.14, with an 80 % branch coverage floor.
 - Release workflow: build checked, provenance and SBOM attested,
   publication through Trusted Publishing.
 - First algorithms, pure Python, provisional API until version 1.0
@@ -55,7 +55,7 @@ and this project adheres to
   reproducible property-based tests (Hypothesis).
 - Runtime dependencies NumPy and SciPy (wheels for every supported
   platform). Lower bounds are the first releases with wheels for each
-  Python version: NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14, NumPy
+  Python version: NumPy 2.3.2 and SciPy 1.16.1 up to Python 3.14, NumPy
   2.5.2 and SciPy 1.18.1 on Python 3.15. `import protee` does not import
   them.
 - `protee.constraints`: requirements (normalized statements taken from a

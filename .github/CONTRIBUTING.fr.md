@@ -20,7 +20,7 @@ conception.
 
 ## Prérequis
 
-- Python 3.14 ou plus récent.
+- Python 3.12 ou plus récent.
 - [uv](https://docs.astral.sh/uv/). Il est indispensable : les hooks
   ruff, mypy et pytest passent par `uv run --frozen`, pour utiliser
   exactement les versions figées dans `uv.lock` (une seule source de
@@ -40,8 +40,7 @@ trois stades (pre-commit, commit-msg, pre-push).
 
 Sous Windows sans compilateur C : PyYAML, dont pre-commit a besoin,
 n'a pas encore de roue pour Python 3.15. La variable d'environnement
-`PYYAML_FORCE_LIBYAML=0` le fait construire en pur Python, pour les
-commandes Python 3.15 d'`AGENTS.md`.
+`PYYAML_FORCE_LIBYAML=0` le fait construire en pur Python.
 
 ## Contrôles locaux
 
@@ -162,7 +161,7 @@ personnels, qui restent sur votre poste par conception.
    devient le message du commit à la fusion par squash.
 4. La CI doit être verte. Contrôles exigés :
    - `quality` : les hooks ci-dessus, sur tout le dépôt ;
-   - `tests` : Ubuntu et Windows × Python 3.14 et 3.15, avec un plancher
+   - `tests` : Ubuntu et Windows × Python 3.12, 3.13 et 3.14, avec un plancher
      de couverture des branches à 80 % ;
    - `signatures` : chaque commit de la PR est signé et vérifié.
 5. La branche doit être à jour avec `develop` avant fusion.

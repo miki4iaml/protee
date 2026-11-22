@@ -11,6 +11,8 @@ cases included: non-zero minimum, zero or infinite maxima, unattainable or
 non-binding maxima, an overconstrained system and multiple optima.
 """
 
+from __future__ import annotations
+
 import json
 import math
 from collections.abc import Mapping

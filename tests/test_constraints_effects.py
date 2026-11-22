@@ -3,6 +3,8 @@
 
 """Arc data, evaluation of requirements into effects, and composition."""
 
+from __future__ import annotations
+
 import dataclasses
 import math
 from collections.abc import Callable

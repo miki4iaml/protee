@@ -12,6 +12,8 @@ can serve many metrics.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 

@@ -27,6 +27,8 @@ The whole API is provisional until version 1.0: the formalization of the
 problems is refined with the feedback of the 0.x versions.
 """
 
+from __future__ import annotations
+
 import importlib
 from importlib.metadata import version
 from types import ModuleType

@@ -3,6 +3,8 @@
 
 """What the inputs allow to prove, before any solving."""
 
+from __future__ import annotations
+
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace

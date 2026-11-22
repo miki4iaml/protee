@@ -14,6 +14,8 @@ than 2; the interior nodes of a *degree-2 path* have degree 2.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field

@@ -8,6 +8,8 @@ forward residual edge while ``y[a] < cap[a]`` (cost ``cost[a]``) and a
 backward one while ``y[a] > 0`` (cost ``-cost[a]``).
 """
 
+from __future__ import annotations
+
 import heapq
 import math
 from collections.abc import Sequence

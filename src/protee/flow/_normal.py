@@ -9,6 +9,8 @@ upper bound get a capacity ``big`` that no optimal flow needs to reach,
 once cycles of negative cost and unbounded capacity are ruled out.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 
