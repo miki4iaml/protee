@@ -31,4 +31,5 @@ def test_the_public_api_is_explicit() -> None:
         "routes",
         "structure",
         "transforms",
+        "viz",
     ]

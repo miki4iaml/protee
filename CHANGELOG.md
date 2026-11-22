@@ -141,3 +141,10 @@ and this project adheres to
   `graph` block, the `multigraph` flag and the edge keys in a read-only
   `Table`, and checked by `check_node_link`, which lists every departure
   from the format.
+- `protee.viz`, drawing of node-link documents, without dependency:
+  `select` (the nodes reached from starting nodes up to a depth, filtered
+  by type, family or metric, their neighbours outside the selection marked
+  and the neighbours not shown counted), `collapse` (one node per family)
+  and `to_dot` (Graphviz DOT text, with default styles drawn from the
+  declared vocabulary and told apart without colours, a style table given
+  by the caller, `order_by` for a numeric attribute, and a legend).

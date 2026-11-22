@@ -202,14 +202,15 @@ def test_examples_round_trip_without_loss(name: str, tmp_path: Path) -> None:
 
 
 #: Written by nomogram 0.8.0 from its catalogue, kept verbatim: the branch
-#: of relative humidity, with node identifiers that are IRIs.
+#: of relative humidity (node identifiers that are IRIs), the tree of the
+#: humidity kinds, and the surface layer loop of COARE 3.6.
 NOMOGRAM = Path(__file__).parent / "data" / "node_link"
+NOMOGRAM_FILES = sorted(p.name for p in NOMOGRAM.glob("nomogram-*.json"))
 
 
-def test_nomogram_extract_follows_the_format_and_round_trips() -> None:
-    data = json.loads(
-        (NOMOGRAM / "nomogram-0.8.0-relative-humidity.json").read_text(encoding="utf-8")
-    )
+@pytest.mark.parametrize("name", NOMOGRAM_FILES)
+def test_nomogram_files_follow_the_format_and_round_trip(name: str) -> None:
+    data = json.loads((NOMOGRAM / name).read_text(encoding="utf-8"))
     assert io.check_node_link(data) == ()
     assert rewritten(io.from_node_link(data)) == data
     g = nx.node_link_graph(data, edges="edges")

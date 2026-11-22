@@ -21,7 +21,9 @@ light:
 - :mod:`protee.transforms`: reversible graph transformations;
 - :mod:`protee.constraints`: requirements (exigences) turned into
   traceable constraints on graphs, composed, verified on results and
-  reported in a table.
+  reported in a table;
+- :mod:`protee.viz`: drawing of node-link documents (selection, groups,
+  Graphviz DOT text).
 
 The whole API is provisional until version 1.0: the formalization of the
 problems is refined with the feedback of the 0.x versions.
@@ -43,6 +45,7 @@ __all__ = [
     "routes",
     "structure",
     "transforms",
+    "viz",
 ]
 
 #: Version of the installed distribution, declared only in pyproject.toml.
