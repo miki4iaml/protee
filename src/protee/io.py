@@ -24,6 +24,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -37,6 +38,7 @@ __all__ = [
     "Table",
     "check_node_link",
     "from_node_link",
+    "node_link_schema",
     "read_arcs_csv",
     "read_dimacs_min",
     "read_node_link",
@@ -255,6 +257,11 @@ def _node_id(value: object) -> bool:
     return isinstance(value, (str, int)) and not isinstance(value, bool)
 
 
+def _text_or_null(value: object) -> bool:
+    """An optional text: absent and null mean the same."""
+    return value is None or isinstance(value, str)
+
+
 class _Checker:
     """The rules of :func:`check_node_link`, one method per part."""
 
@@ -299,13 +306,15 @@ class _Checker:
         if producer is not None and not (
             isinstance(producer, Mapping)
             and isinstance(producer.get("name"), str)
-            and isinstance(producer.get("version", ""), str)
+            and _text_or_null(producer.get("version"))
         ):
             self.bad("graph.producer", "an object with a text 'name' and 'version'")
         return block
 
     def prefix_table(self, block: Mapping[str, Any]) -> None:
-        prefixes = block.get("prefixes", {})
+        prefixes = block.get("prefixes")
+        if prefixes is None:  # absent or null: the same
+            prefixes = {}
         if not isinstance(prefixes, Mapping):
             self.bad("graph.prefixes", "must be an object")
             return
@@ -318,7 +327,9 @@ class _Checker:
                 self.bad(where, "must be an absolute IRI, or null")
 
     def vocabulary(self, block: Mapping[str, Any]) -> None:
-        vocabulary = block.get("vocabulary", {})
+        vocabulary = block.get("vocabulary")
+        if vocabulary is None:  # absent or null: the same
+            vocabulary = {}
         if not isinstance(vocabulary, Mapping):
             self.bad("graph.vocabulary", "must be an object")
             return
@@ -344,9 +355,9 @@ class _Checker:
             return
         if not isinstance(entry.get("label"), str):
             self.bad(where, "needs a text 'label'")
-        if not isinstance(entry.get("description", ""), str):
+        if not _text_or_null(entry.get("description")):
             self.bad(where, "'description' must be a text")
-        if "symmetric" in entry and (
+        if entry.get("symmetric") is not None and (
             on != "edge" or not isinstance(entry["symmetric"], bool)
         ):
             self.bad(where, "'symmetric' is a boolean, for edges only")
@@ -476,6 +487,27 @@ def check_node_link(data: object) -> tuple[str, ...]:
     ids = checker.nodes(data.get("nodes"))
     checker.edges(data.get("edges", data.get("links")), ids, data.get("multigraph"))
     return tuple(checker.problems)
+
+
+def node_link_schema() -> dict[str, Any]:
+    """The JSON Schema (2020-12) of the structure of ``protee-node-link/0``.
+
+    The schema is shipped in the package
+    (``protee/schemas/protee-node-link-0.schema.json``), for the consumers
+    that check a document without protee. It checks the required keys, the
+    types and the allowed values. The rules that cross parts of a document
+    (declared values and prefixes, unique node identifiers, edges between
+    existing nodes, unique keys) are checked by :func:`check_node_link`
+    only: a document that it accepts passes the schema.
+
+    Returns
+    -------
+    dict
+        The decoded schema, a new object at each call.
+    """
+    path = files("protee").joinpath("schemas", "protee-node-link-0.schema.json")
+    schema: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return schema
 
 
 def write_arcs_csv(

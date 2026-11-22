@@ -10,6 +10,7 @@ oracle of the syntax and of the order of the nodes.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import inspect
 import json
 import math
@@ -445,9 +446,9 @@ def svg_tree(svg: str) -> ET.Element:
 
 
 def texts(element: ET.Element) -> dict[str, tuple[float, float]]:
-    """Each text of a drawing, with its position."""
+    """Each text of a drawing, with its position (labels of links are spaced)."""
     return {
-        str(t.text): (float(t.attrib["x"]), float(t.attrib["y"]))
+        str(t.text).strip(): (float(t.attrib["x"]), float(t.attrib["y"]))
         for t in element.iter(f"{SVG}text")
     }
 
@@ -543,6 +544,27 @@ def test_render_legend_svg_draws_one_column_per_attribute_in_order() -> None:
     assert xs == sorted(xs)  # the attributes from left to right
     with pytest.raises(ValueError, match="declares no value"):
         viz.render_legend_svg(chain())
+
+
+def test_the_gallery_is_the_one_its_script_writes(tmp_path: Path) -> None:
+    folder = Path(__file__).parents[1] / "docs" / "gallery"
+    spec = importlib.util.spec_from_file_location(
+        "make_gallery", folder / "make_gallery.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    gallery = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gallery)
+    gallery.write(tmp_path)
+    written = sorted(p.name for p in tmp_path.iterdir())
+    kept = sorted(p.name for p in folder.iterdir() if p.suffix in {".md", ".svg"})
+    assert written == kept
+    page = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert page == (folder / "README.md").read_text(encoding="utf-8")
+    for name in written:
+        if name.endswith(".svg"):
+            assert f"]({name})" in page
+            svg_tree((tmp_path / name).read_text(encoding="utf-8"))  # well formed
 
 
 def test_importing_viz_does_not_import_graphviz() -> None:

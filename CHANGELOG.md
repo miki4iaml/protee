@@ -168,4 +168,15 @@ and this project adheres to
   the shape of the nodes that carry it, or as a rounded box when they have
   several; `render_svg` takes `legend="right"`, `"below"` (laid out apart
   and drawn under the graph) or `None`; `protee.viz.render_legend_svg`
-  draws the legend alone, one column per attribute.
+  draws the legend alone, one column per attribute. The labels of the
+  edge swatches are set apart from their line.
+- Public page of the format `protee-node-link/0`
+  (`docs/node-link-format.md`), its JSON Schema (2020-12) shipped in the
+  package and returned by `protee.io.node_link_schema()` (the structure
+  of a document; `check_node_link` also checks the rules that cross its
+  parts; tested against `jsonschema`, a development dependency), and a
+  gallery of drawings written by a script
+  (`docs/gallery/`). `check_node_link` takes a null optional key as an
+  absent one, as the format states, in `graph.prefixes`,
+  `graph.vocabulary`, `producer.version` and the `description` and
+  `symmetric` of a declared value.

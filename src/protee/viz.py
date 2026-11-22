@@ -1213,10 +1213,13 @@ def _swatch(k: int, on: str, swatch: Mapping[str, str]) -> tuple[list[str], str,
     if on == "node":
         return [f"    {_quote(name)} [{_attributes(swatch)}];"], name, name
     a, b = f"{name}:a", f"{name}:b"
+    # Graphviz draws the label of an edge against its line: spaces and an
+    # empty line keep them apart.
+    spaced = {**swatch, "label": f" {swatch['label']} \n"}
     return (
         [
             f"    {_quote(a)} [{_POINT}]; {_quote(b)} [{_POINT}];",
-            f"    {_quote(a)} -> {_quote(b)} [{_attributes(swatch)}];",
+            f"    {_quote(a)} -> {_quote(b)} [{_attributes(spaced)}];",
         ],
         a,
         b,

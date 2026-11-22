@@ -63,6 +63,7 @@ dev = [
     # 1.16.0 is the first release with CPython 3.15 wheels.
     "highspy>=1.16.0",
     "hypothesis>=6.170.14",
+    "jsonschema>=4.26.0",
     "mypy>=2.4.0",
     "networkx>=3.7",
     "pre-commit>=4.6.2",
@@ -75,13 +76,21 @@ dev = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests", "scripts"]
+files = ["src", "tests", "scripts", "docs"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 [[tool.mypy.overrides]]
-# networkx and pygraphviz ship no type hints; they only serve the tests.
-module = ["networkx", "networkx.*", "pygraphviz", "pygraphviz.*"]
+# networkx, pygraphviz and jsonschema ship no type hints; in the tests,
+# they are oracles (pygraphviz is also the optional extra viz).
+module = [
+    "jsonschema",
+    "jsonschema.*",
+    "networkx",
+    "networkx.*",
+    "pygraphviz",
+    "pygraphviz.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest]
