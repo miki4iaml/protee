@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-22
+
+First version. Graph and flow algorithms whose methods are named and
+chosen by the caller, share one result (status, solution, certificates,
+deterministic counters) and are tested against independent oracles;
+requirements turned into traceable constraints on graphs, from their
+source to a verified result and its provenance, on both reference
+applications (life-cycle profiles, route planning); a node-link exchange
+format, `protee-node-link/0`, with its JSON Schema, drawn in SVG and in a
+page to explore offline with the optional extra `viz`.
+
 ### Added
 
 - Project skeleton: the `protee` package (typed, version read from the

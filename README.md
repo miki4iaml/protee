@@ -67,12 +67,21 @@ testing and illustration.
 
 ## Installation
 
-The package is not published yet. From a clone of the repository, with
-[uv](https://docs.astral.sh/uv/) and Python 3.12 or later:
+From PyPI, with Python 3.12 or later:
 
 ```
-uv sync
+pip install protee
 ```
+
+The drawing in SVG and in a page to explore (`protee.viz.render_svg`,
+`protee.viz.render_html`) needs the optional extra `viz`:
+
+```
+pip install "protee[viz]"
+```
+
+To work on protee itself, see the
+[contributing guide](.github/CONTRIBUTING.md).
 
 ## Contributing
 
