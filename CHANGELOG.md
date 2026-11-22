@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `docs/security-and-compliance.md`: how protee runs, is developed and
+  published, what it ships and under which licences, the regulatory
+  landmarks, the known limits and a checklist, for those who assess its
+  use on a network without Internet access.
+
+### Changed
+
+- The licence expression of the distribution declares the Licence Ouverte
+  2.0 of the embedded value set (`BSD-3-Clause AND MIT AND etalab-2.0`),
+  credited in its notice.
+
 ## [0.1.0] - 2026-11-22
 
 First version. Graph and flow algorithms whose methods are named and

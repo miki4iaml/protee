@@ -7,8 +7,10 @@ authors = [
     { name = "miki4ia", email = "miki4ia@gmail.com" }
 ]
 requires-python = ">=3.12"
-# The drawing page embeds third-party JavaScript under the MIT licence.
-license = "BSD-3-Clause AND MIT"
+# The drawing page embeds third-party JavaScript under the MIT licence; the
+# embedded value set reuses a public text under the Licence Ouverte 2.0,
+# credited in its notice.
+license = "BSD-3-Clause AND MIT AND etalab-2.0"
 license-files = ["LICENSE", "src/protee/_assets/*.LICENSE.*"]
 keywords = [
     "operations research",

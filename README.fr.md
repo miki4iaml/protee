@@ -100,4 +100,10 @@ et les règles communes aux contributeurs et aux agents de codage dans
 
 [BSD-3-Clause](LICENSE). La page écrite par `protee.viz.render_html`
 embarque cytoscape.js et cytoscape-expand-collapse, sous licence MIT
-([notice](src/protee/_assets/NOTICE.md)).
+([notice](src/protee/_assets/NOTICE.md)) ; le jeu de valeurs embarqué
+réutilise un texte public sous [Licence Ouverte 2.0](https://spdx.org/licenses/etalab-2.0.html),
+crédité dans sa notice.
+
+Comment protee s'exécute, se développe et se publie, et ce qu'il
+embarque : [sécurité, chaîne d'approvisionnement et conformité](docs/security-and-compliance.md)
+(page en anglais).
