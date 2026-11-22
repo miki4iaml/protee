@@ -137,10 +137,12 @@ and this project adheres to
   declared once for each); opaque node identifiers (an IRI is
   allowed) with an optional `iri`; integer edge keys. The format is
   written by `to_node_link` and `write_node_link` (with `attributes` and
-  `multigraph`), read by `from_node_link`, which keeps the
-  `graph` block, the `multigraph` flag and the edge keys in a read-only
-  `Table`, and checked by `check_node_link`, which lists every departure
-  from the format. Writing gives an edge without a key the smallest key
+  `multigraph`), read without loss by `from_node_link`, which keeps the
+  `graph` block, the `multigraph` flag, the edge keys and the node
+  identifiers (texts or integers, `Table.ids`, written back through the
+  `ids` of `to_node_link`) in a read-only `Table`, and checked by
+  `check_node_link`, which lists every departure from the format; the
+  version of the producer is optional. Writing gives an edge without a key the smallest key
   free between its two nodes, writes no optional null, writes an infinite
   metric `"inf"` or `"-inf"`, refuses the columns that would replace `id`,
   `source` or `target`, and writes strict JSON with LF line ends;
@@ -148,7 +150,8 @@ and this project adheres to
 - `protee.viz`, drawing of node-link documents, without dependency:
   `select` (the nodes reached from starting nodes up to a depth, filtered
   by type, family or metric, their neighbours outside the selection marked
-  and the neighbours not shown counted), `collapse` (one node per family)
+  under `SELECTION`, drawn with a grey border and the label in italics,
+  their own line kept, and the neighbours not shown counted), `collapse` (one node per family)
   and `to_dot` (Graphviz DOT text, with default styles drawn from the
   declared vocabulary and told apart without colours up to a few values
   of each attribute, a style table given
@@ -158,9 +161,9 @@ and this project adheres to
   transitive reduction of one relation), without dependency.
 - `protee.viz.render_html`: a page to explore a document, which opens
   offline: the layout and styles of `render_svg`, groups (families or
-  loops) collapsed and expanded, tooltips (description, `iri`, `url`),
-  links that open no script, and the legend of `render_legend_svg`. It
-  embeds
+  loops) collapsed and expanded, filters by declared value and by family,
+  a search in the labels, tooltips (description, `iri`, `url`), links that
+  open no script, and the legend of `render_legend_svg`. It embeds
   cytoscape.js 3.35.0 and cytoscape-expand-collapse 4.1.1, under the MIT
   licence (`src/protee/_assets/NOTICE.md`); the distribution's licence
   expression is `BSD-3-Clause AND MIT`.
