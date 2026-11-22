@@ -16,6 +16,7 @@ import math
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -430,6 +431,118 @@ def test_render_svg_needs_the_viz_extra(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setitem(sys.modules, "pygraphviz", None)
     with pytest.raises(ImportError, match=r"protee\[viz\]"):
         viz.render_svg(chain())
+    with pytest.raises(ImportError, match=r"protee\[viz\]"):
+        viz.render_legend_svg(chain())
+
+
+# Legend -------------------------------------------------------------------
+
+SVG = "{http://www.w3.org/2000/svg}"
+
+
+def svg_tree(svg: str) -> ET.Element:
+    return ET.fromstring(svg.encode("utf-8"))
+
+
+def texts(element: ET.Element) -> dict[str, tuple[float, float]]:
+    """Each text of a drawing, with its position."""
+    return {
+        str(t.text): (float(t.attrib["x"]), float(t.attrib["y"]))
+        for t in element.iter(f"{SVG}text")
+    }
+
+
+def swatches(g: pgv.AGraph) -> dict[str, Any]:
+    return {
+        g.get_node(n).attr["label"]: g.get_node(n)
+        for n in g.nodes()
+        if n.startswith("protee:legend")
+    }
+
+
+def test_a_legend_swatch_takes_the_shape_of_its_nodes() -> None:
+    vocabulary = {
+        "type": [
+            {"id": "x:e", "on": "node", "label": "equation"},
+            {"id": "x:v", "on": "node", "label": "variable"},
+        ],
+        "role": [
+            {"id": "x:in", "on": "node", "label": "input"},
+            {"id": "x:mixed", "on": "node", "label": "mixed"},
+            {"id": "x:unused", "on": "node", "label": "unused"},
+            {"id": "x:fixed", "on": "node", "label": "fixed"},
+        ],
+    }
+    nodes = [
+        {"id": "a", "type": "x:v", "role": "x:in"},
+        {"id": "b", "type": "x:v", "role": "x:mixed"},
+        {"id": "c", "type": "x:e", "role": "x:mixed"},
+        {"id": "d", "type": "x:e", "role": "x:fixed"},
+    ]
+    styles: viz.Styles = {"node": {("role", "x:fixed"): {"shape": "hexagon"}}}
+    g = drawn(viz.to_dot(document(nodes, [], vocabulary), styles=styles))
+    swatch = swatches(g)
+    assert (swatch["equation"].attr["shape"], swatch["variable"].attr["shape"]) == (
+        "ellipse",
+        "box",
+    )
+    assert swatch["input"].attr["shape"] == "box"  # the shape of its nodes
+    assert "rounded" not in swatch["input"].attr["style"]
+    for neutral in ("mixed", "unused"):  # several shapes, or no node
+        assert swatch[neutral].attr["shape"] == "box"
+        assert swatch[neutral].attr["style"].startswith("rounded,filled")
+    assert swatch["fixed"].attr["shape"] == "hexagon"  # the caller's
+    coare = drawn(viz.to_dot(load(COARE)))
+    roles = load(COARE)["graph"]["vocabulary"]["role"]
+    on_nodes = [v["label"] for v in roles if v["on"] == "node"]
+    assert {swatches(coare)[r].attr["shape"] for r in on_nodes} == {"box"}
+
+
+def test_render_svg_places_the_legend_below_or_leaves_it_out() -> None:
+    data = load(COARE)
+    below = viz.render_svg(data, styles=CLOSING, legend="below")
+    assert below == viz.render_svg(data, styles=CLOSING, legend="below")
+    root = svg_tree(below)
+    graph, legend = root.findall(f"{SVG}svg")
+    assert "protee:legend" not in ET.tostring(graph, encoding="unicode")
+    labels = [v["label"] for vs in data["graph"]["vocabulary"].values() for v in vs]
+    assert set(labels) <= set(texts(legend))
+    height = float(graph.attrib["height"])
+    assert float(legend.attrib["y"]) > height
+    width = float(root.attrib["viewBox"].split()[2])
+    assert width == max(float(graph.attrib["width"]), float(legend.attrib["width"]))
+    alone = svg_tree(viz.render_svg(data, styles=CLOSING, legend=None))
+    assert graph.attrib["viewBox"] == alone.attrib["viewBox"]  # the same drawing
+    found = [e.attrib["id"] for e in root.iter() if "id" in e.attrib]
+    assert len(found) == len(set(found))  # the legend's are prefixed
+    right = viz.render_svg(data, styles=CLOSING)
+    assert "protee:legend" in right
+    assert not svg_tree(right).findall(f"{SVG}svg")
+    assert "protee:legend" not in viz.render_svg(data, legend=None)
+    plain = document([{"id": 0}, {"id": 1}], [(0, 1)])  # nothing is declared
+    assert viz.render_svg(plain, legend="below") == viz.render_svg(plain, legend=None)
+    for wrong in (True, "left"):
+        with pytest.raises(ValueError, match="legend must be one of"):
+            viz.render_svg(data, legend=wrong)  # type: ignore[arg-type]
+
+
+def test_render_legend_svg_draws_one_column_per_attribute_in_order() -> None:
+    data = load(KINDS)
+    svg = viz.render_legend_svg(data)
+    assert svg == viz.render_legend_svg(data)
+    at = texts(svg_tree(svg))
+    vocabulary = data["graph"]["vocabulary"]
+    columns = [
+        [v["label"] for v in vocabulary[attribute] if v["on"] == on]
+        for attribute, on in (("type", "node"), ("type", "edge"), ("origin", "node"))
+    ]
+    for column in columns:  # the first declared value at the top
+        ys = [at[label][1] for label in column]
+        assert ys == sorted(ys)
+    xs = [at[column[0]][0] for column in columns]
+    assert xs == sorted(xs)  # the attributes from left to right
+    with pytest.raises(ValueError, match="declares no value"):
+        viz.render_legend_svg(chain())
 
 
 def test_importing_viz_does_not_import_graphviz() -> None:

@@ -16,6 +16,7 @@ the styles from a table given by the caller.
   dependency;
 - :func:`render_svg` lays it out and draws it in SVG through Graphviz,
   with the optional extra ``viz`` (pygraphviz, which bundles Graphviz);
+  :func:`render_legend_svg` draws its legend alone;
 - :func:`render_html` writes a page to explore it, which opens offline,
   with the same layout and styles.
 
@@ -54,6 +55,7 @@ __all__ = [
     "condense",
     "reduce",
     "render_html",
+    "render_legend_svg",
     "render_svg",
     "select",
     "to_dot",
@@ -99,6 +101,7 @@ _ARROWS = ("normal", "empty", "dot", "odot", "diamond", "odiamond", "box", "obox
 _LINE_COLOURS = tuple(c for c in OKABE_ITO if c != "#F0E442")
 _FONT = "Helvetica,Arial,sans-serif"
 _DIRECTIONS = ("TB", "LR", "BT", "RL")
+_LEGEND_PLACES = ("right", "below", None)
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _MARKS: dict[str, dict[str, str]] = {
     OUTSIDE: {
@@ -612,7 +615,10 @@ def to_dot(
         increasing order along ``direction``, the others placed by Graphviz.
     direction : {"TB", "LR", "BT", "RL"}
     legend : bool
-        A cluster that shows each declared value with its style and label.
+        A cluster, placed by Graphviz, that shows each declared value with
+        its style and label. A node value that sets no shape is shown with
+        the shape of the nodes that carry it when they share one, and as a
+        rounded box otherwise.
 
     Returns
     -------
@@ -633,7 +639,6 @@ def to_dot(
         raise ValueError(f"direction must be one of {_DIRECTIONS}, got {direction!r}")
     node_defaults, edge_defaults, given = _style_tables(doc, styles)
     block = doc["graph"]
-    vocabulary = block.get("vocabulary") or {}
     head = {"rankdir": direction, "fontname": _FONT}
     if block.get("label"):
         head.update(label=block["label"], labelloc="t")
@@ -665,7 +670,7 @@ def to_dot(
     if order_by is not None:
         lines += _ordering(doc["nodes"], order_by)
     if legend:
-        lines += _legend(vocabulary, node_defaults, edge_defaults, given)
+        lines += _legend(_legend_entries(doc, node_defaults, edge_defaults, given))
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -676,7 +681,7 @@ def render_svg(
     styles: Styles | None = None,
     order_by: str | None = None,
     direction: str = "TB",
-    legend: bool = True,
+    legend: str | None = "right",
 ) -> str:
     """An SVG drawing of a document, laid out by Graphviz (``dot``).
 
@@ -685,6 +690,17 @@ def render_svg(
     installed on the workstation, and nothing is fetched. Labels stay text,
     in system fonts. With the same document and the same versions, the SVG
     is the same, byte for byte.
+
+    Parameters
+    ----------
+    data, styles, order_by, direction
+        As :func:`to_dot`.
+    legend : {"right", "below"} or None
+        ``"right"``: the cluster of :func:`to_dot`, placed by Graphviz
+        beside the graph. ``"below"``: the legend of
+        :func:`render_legend_svg`, laid out apart and drawn under the
+        graph, centred, so that it does not widen the figure. ``None``: no
+        legend.
 
     Returns
     -------
@@ -696,14 +712,96 @@ def render_svg(
     ImportError
         If pygraphviz is not installed (the optional extra ``viz``).
     ValueError, TypeError
-        As :func:`to_dot`.
+        As :func:`to_dot`, or if ``legend`` is not one of its values.
     """
+    if legend not in _LEGEND_PLACES:
+        raise ValueError(f"legend must be one of {_LEGEND_PLACES}, got {legend!r}")
     graphviz = _pygraphviz("render_svg")
     dot = to_dot(
-        data, styles=styles, order_by=order_by, direction=direction, legend=legend
+        data,
+        styles=styles,
+        order_by=order_by,
+        direction=direction,
+        legend=legend == "right",
     )
+    drawing = _svg(graphviz, dot)
+    if legend == "below":
+        doc = _document(data)
+        entries = _legend_entries(doc, *_style_tables(doc, styles))
+        if entries:
+            return _stack(drawing, _svg(graphviz, _legend_dot(entries)))
+    return drawing
+
+
+def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) -> str:
+    """The legend of a document alone, in SVG, laid out by Graphviz.
+
+    Each declared value with the style it takes in :func:`render_svg` with
+    the same ``styles``, one column per attribute in the order of
+    declaration, so that a figure can carry its legend apart. A node value
+    that sets no shape is shown with the shape of the nodes that carry it
+    when they share one, and as a rounded box otherwise.
+
+    Returns
+    -------
+    str
+        The SVG document.
+
+    Raises
+    ------
+    ImportError
+        If pygraphviz is not installed (the optional extra ``viz``).
+    ValueError
+        If the document does not follow the format or declares no value,
+        or a style names an invalid Graphviz attribute.
+    """
+    graphviz = _pygraphviz("render_legend_svg")
+    doc = _document(data)
+    entries = _legend_entries(doc, *_style_tables(doc, styles))
+    if not entries:
+        raise ValueError("the document declares no value: there is no legend")
+    return _svg(graphviz, _legend_dot(entries))
+
+
+def _svg(graphviz: Any, dot: str) -> str:
     drawing: bytes = graphviz.AGraph(string=dot).draw(format="svg", prog="dot")
     return drawing.decode("utf-8")
+
+
+_SVG_ROOT = re.compile(r'<svg width="[^"]*" height="[^"]*"\s+viewBox="([^"]*)"([^>]*)>')
+
+
+def _stack(top: str, bottom: str) -> str:
+    """One SVG: the drawing ``top`` above ``bottom``, both centred.
+
+    The identifiers of ``bottom`` are prefixed, so that none is repeated.
+    """
+    parts = []
+    for svg in (top, bottom):
+        root = _SVG_ROOT.search(svg)
+        assert root is not None, "Graphviz writes the root of its SVG so"
+        width, height = (float(x) for x in root.group(1).split()[2:])
+        parts.append((root, width, height, svg[root.end() : svg.rindex("</svg>")]))
+    gap = 12.0
+    width = max(p[1] for p in parts)
+    height = parts[0][2] + gap + parts[1][2]
+    first = parts[0][0]
+    lines = [
+        top[: first.start()]
+        + f'<svg width="{width:.0f}pt" height="{height:.0f}pt"\n'
+        + f' viewBox="0.00 0.00 {width:.2f} {height:.2f}"{first.group(2)}>'
+    ]
+    y = 0.0
+    for k, (root, w, h, inner) in enumerate(parts):
+        if k:
+            inner = inner.replace(' id="', ' id="protee-legend-')
+        lines.append(
+            f'<svg x="{(width - w) / 2:.2f}" y="{y:.2f}" width="{w:.2f}"'
+            f' height="{h:.2f}" viewBox="{root.group(1)}">{inner}</svg>'
+        )
+        y += h + gap
+    lines.append("</svg>\n")
+    return "\n".join(lines)
 
 
 def _pygraphviz(function: str) -> Any:
@@ -1064,30 +1162,119 @@ def _ordering(nodes: list[dict[str, Any]], attribute: str) -> list[str]:
     return lines
 
 
-def _legend(
-    vocabulary: Mapping[str, Any],
+type _Entry = tuple[str, str, dict[str, str]]
+
+
+def _legend_entries(
+    doc: Mapping[str, Any],
     node_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
     edge_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
     given: Mapping[str, Mapping[tuple[str, Any], Mapping[str, str]]],
-) -> list[str]:
-    entries = [
-        (attribute, v) for attribute, values in vocabulary.items() for v in values
+) -> list[_Entry]:
+    """Each declared value: its attribute, ``on``, and its swatch.
+
+    A node value that sets no shape takes the shape of the nodes that carry
+    it when they share one, and a rounded box otherwise: a swatch never
+    shows a shape that its nodes do not have.
+    """
+    vocabulary = doc["graph"].get("vocabulary") or {}
+    shapes = [
+        (node, _style(node, node_defaults, given["node"]).get("shape", "ellipse"))
+        for node in doc["nodes"]
     ]
+    entries: list[_Entry] = []
+    for attribute, values in vocabulary.items():
+        for v in values:
+            item = {attribute: v["id"]}
+            swatch = {"label": str(v["label"])}
+            if v["on"] == "node":
+                swatch.update(_style(item, node_defaults, given["node"]))
+                if "shape" not in swatch:
+                    found = {s for n, s in shapes if n.get(attribute) == v["id"]}
+                    if len(found) == 1:
+                        swatch["shape"] = found.pop()
+                    else:
+                        swatch["shape"] = "box"
+                        line = swatch.get("style")
+                        swatch["style"] = f"rounded,{line}" if line else "rounded"
+            else:
+                swatch.update(_style(item, edge_defaults, given["edge"]))
+            entries.append((attribute, v["on"], swatch))
+    return entries
+
+
+_POINT = 'shape="point", width="0.05", label=""'
+_LAYOUT_ONLY = ("constraint", "weight", "minlen")
+
+
+def _swatch(k: int, on: str, swatch: Mapping[str, str]) -> tuple[list[str], str, str]:
+    """The DOT lines of one swatch, and its first and last node."""
+    name = f"protee:legend:{k}"
+    if on == "node":
+        return [f"    {_quote(name)} [{_attributes(swatch)}];"], name, name
+    a, b = f"{name}:a", f"{name}:b"
+    return (
+        [
+            f"    {_quote(a)} [{_POINT}]; {_quote(b)} [{_POINT}];",
+            f"    {_quote(a)} -> {_quote(b)} [{_attributes(swatch)}];",
+        ],
+        a,
+        b,
+    )
+
+
+def _legend(entries: list[_Entry]) -> list[str]:
+    """The legend as a cluster of the drawing, placed by Graphviz."""
     if not entries:
         return []
     lines = ["  subgraph cluster_legend {", '    label=""; style="dashed";']
-    for k, (attribute, v) in enumerate(entries):
-        item = {attribute: v["id"]}
-        if v["on"] == "node":
-            values: dict[str, object] = {"label": v["label"]}
-            values.update(_style(item, node_defaults, given["node"]))
-            lines.append(f"    {_quote(f'protee:legend:{k}')} [{_attributes(values)}];")
-        else:
-            a, b = _quote(f"protee:legend:{k}:a"), _quote(f"protee:legend:{k}:b")
-            point = _attributes({"shape": "point", "width": "0.05", "label": ""})
-            lines.append(f"    {a} [{point}]; {b} [{point}];")
-            values = {"label": v["label"]}
-            values.update(_style(item, edge_defaults, given["edge"]))
-            lines.append(f"    {a} -> {b} [{_attributes(values)}];")
+    for k, (_, on, swatch) in enumerate(entries):
+        lines += _swatch(k, on, swatch)[0]
     lines.append("  }")
     return lines
+
+
+def _legend_dot(entries: list[_Entry]) -> str:
+    """The legend alone: one column per attribute, in the order of declaration."""
+    head = {"rankdir": "LR", "fontname": _FONT, "nodesep": "0.1", "ranksep": "0.3"}
+    lines = [
+        "digraph legend {",
+        f"  graph [{_attributes(head)}];",
+        f"  node [{_attributes({'fontname': _FONT})}];",
+        f"  edge [{_attributes({'fontname': _FONT})}];",
+        "  subgraph cluster_legend {",
+        '    label=""; style="dashed";',
+    ]
+    columns: dict[tuple[str, str], list[tuple[int, dict[str, str]]]] = {}
+    for k, (attribute, on, swatch) in enumerate(entries):
+        columns.setdefault((attribute, on), []).append((k, swatch))
+    previous: str | None = None
+    for (_, on), column in columns.items():
+        firsts: list[str] = []
+        lasts: list[str] = []
+        # Invisible edges within a rank fix the order of its nodes, which
+        # rankdir=LR draws from the bottom up: the chains start from the
+        # last declared value, so that the first one is drawn at the top.
+        for k, swatch in reversed(column):
+            if on == "edge":
+                # The layout attributes of the caller are left out, and a
+                # heavy edge is drawn straight.
+                swatch = {
+                    **{a: v for a, v in swatch.items() if a not in _LAYOUT_ONLY},
+                    "weight": "10",
+                }
+            drawn, first, last = _swatch(k, on, swatch)
+            lines += drawn
+            firsts.append(first)
+            lasts.append(last)
+        for rank in (firsts, lasts) if on == "edge" else (firsts,):
+            lines.append(f"    {{ rank=same; {' '.join(map(_quote, rank))} }}")
+            if len(rank) > 1:
+                lines.append(f'    {" -> ".join(map(_quote, rank))} [style="invis"];')
+        if previous is not None:
+            lines.append(
+                f'    {_quote(previous)} -> {_quote(firsts[-1])} [style="invis"];'
+            )
+        previous = lasts[-1]
+    lines += ["  }", "}"]
+    return "\n".join(lines) + "\n"
