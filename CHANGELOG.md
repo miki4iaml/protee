@@ -151,6 +151,15 @@ and this project adheres to
 - `protee.viz.condense` (one node per loop: the strongly connected
   components of `protee.structure`) and `protee.viz.reduce` (the
   transitive reduction of one relation), without dependency.
+- `protee.viz.render_html`: a page to explore a document, which opens
+  offline: the layout and styles of `render_svg`, groups (families or
+  loops) collapsed and expanded, tooltips, links and a legend. It embeds
+  cytoscape.js 3.35.0 and cytoscape-expand-collapse 4.1.1, under the MIT
+  licence (`src/protee/_assets/NOTICE.md`); the distribution's licence
+  expression is `BSD-3-Clause AND MIT`.
+- Default drawing styles: no yellow lines, and a symmetric relation draws
+  its head at both ends, so that symmetric relations are told apart
+  without colours.
 - `protee.viz.render_svg`: SVG drawing laid out by Graphviz, with the
   optional extra `viz` (pygraphviz, which bundles Graphviz); labels stay
   text in system fonts, nothing is fetched, and the same document gives

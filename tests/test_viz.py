@@ -9,11 +9,14 @@ oracle of the syntax and of the order of the nodes.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import math
+import re
 import subprocess
 import sys
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -280,8 +283,13 @@ def test_the_humidity_kinds_parse_with_their_legend_and_text() -> None:
     assert len(g.nodes()) - 59 == on_nodes + 2 * on_edges
     symmetric = {v["id"] for v in vocabulary["type"] if v.get("symmetric")}
     expected = sum(e["type"] in symmetric for e in data["edges"])
-    undirected = [e for e in g.edges() if e.attr["dir"] == "none"]
-    assert len(own([e[0] for e in undirected])) == expected == 18
+    both = [e for e in g.edges() if e.attr["dir"] == "both"]
+    assert len(own([e[0] for e in both])) == expected == 18
+    heads = {e.attr["arrowhead"] for e in both if own([e[0]]) == [e[0]]}
+    assert len(heads) == 2  # exact and close matches: told apart without colour
+    assert all(e.attr["arrowtail"] == e.attr["arrowhead"] for e in both)
+    colours = {e.attr["color"] for e in g.edges() if e.attr["color"]}
+    assert "#F0E442" not in colours  # yellow only fills nodes
     svg = g.draw(format="svg", prog="dot").decode()
     assert "<text" in svg
     assert "@font-face" not in svg  # no remote or embedded font
@@ -380,7 +388,8 @@ def test_default_styles_follow_the_order_of_declaration() -> None:
         "normal",
     )
     assert closing.attr["color"] == viz.OKABE_ITO[1]
-    assert (closing.attr["dir"], closing.attr["style"]) == ("none", "dashed")
+    assert (closing.attr["dir"], closing.attr["style"]) == ("both", "dashed")
+    assert closing.attr["arrowhead"] == closing.attr["arrowtail"] == "empty"
 
 
 def test_to_dot_refuses_bad_requests() -> None:
@@ -426,6 +435,200 @@ def test_render_svg_needs_the_viz_extra(monkeypatch: pytest.MonkeyPatch) -> None
 def test_importing_viz_does_not_import_graphviz() -> None:
     code = "import sys, protee.viz; assert 'pygraphviz' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+# Exploration page -----------------------------------------------------------
+
+
+def page_parts(page: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The nodes (groups included) and the edges given to cytoscape.js."""
+    found = re.search(
+        r'<script type="application/json" id="protee-elements">(.*?)</script>',
+        page,
+        re.DOTALL,
+    )
+    assert found is not None
+    elements: list[dict[str, Any]] = json.loads(found.group(1))
+    edges = [e for e in elements if "source" in e["data"]]
+    return [e for e in elements if "source" not in e["data"]], edges
+
+
+def test_render_html_is_a_page_that_fetches_nothing() -> None:
+    page = viz.render_html(
+        load(COARE), styles=CLOSING, order_by="rank", group_by="loop"
+    )
+    assert page.startswith("<!doctype html>")
+    assert re.search(r"<script[^>]*\bsrc=", page) is None
+    assert "<link" not in page
+    assert "@import" not in page
+    assert "The Cytoscape Consortium" in page
+    assert "iVis@Bilkent" in page
+    assert page == viz.render_html(
+        load(COARE), styles=CLOSING, order_by="rank", group_by="loop"
+    )
+
+
+def test_render_html_folds_the_loop_of_coare_in_the_order_of_the_source() -> None:
+    data = load(COARE)
+    page = viz.render_html(data, styles=CLOSING, order_by="rank", group_by="loop")
+    nodes, edges = page_parts(page)
+    assert len(edges) == len(data["edges"])
+    (group,) = (n for n in nodes if "position" not in n)
+    assert group["data"]["label"] == "⟳ 26"
+    members = [n for n in nodes if n["data"].get("parent") == group["data"]["id"]]
+    assert len(members) == 26
+    ranks = {n["id"]: n["rank"] for n in data["nodes"] if "rank" in n}
+    equations = sorted(
+        (n for n in nodes if n["data"]["id"] in ranks),
+        key=lambda n: ranks[n["data"]["id"]],
+    )
+    heights = [n["position"]["y"] for n in equations]
+    assert heights == sorted(heights)  # cytoscape.js counts y downwards
+    assert len(set(heights)) == 13
+    assert sum(e["style"].get("line-style") == "dashed" for e in edges) == 7
+
+
+def test_render_html_groups_families_with_a_legend_and_texts() -> None:
+    vocabulary = {
+        "type": [
+            {"id": "x:k", "on": "node", "label": "kind", "description": "a kind"},
+            {"id": "x:r", "on": "edge", "label": "specializes"},
+            {"id": "x:m", "on": "edge", "label": "matches", "symmetric": True},
+        ]
+    }
+    nodes: list[dict[str, Any]] = [
+        {"id": "a", "type": "x:k", "family": "F", "url": "https://example.org/a"},
+        {"id": "b", "type": "x:k", "family": "F", "description": "the second"},
+        {"id": "c", "label": "</script><b>", "metrics": {viz.HIDDEN: 2}},
+    ]
+    edges = [
+        {"source": "a", "target": "b", "type": "x:r", "label": "is a"},
+        {"source": "a", "target": "c", "type": "x:m"},
+    ]
+    doc = document(nodes, edges, vocabulary, label="Kinds & <names>", language="fr")
+    page = viz.render_html(doc)
+    assert '<html lang="fr">' in page
+    assert "<title>Kinds &amp; &lt;names&gt;</title>" in page
+    assert "</script><b>" not in page  # the label cannot end a script
+    found, links = page_parts(page)
+    (group,) = (n for n in found if "position" not in n)
+    assert group["data"]["label"] == "F"
+    by_id = {n["data"]["id"]: n["data"] for n in found}
+    assert by_id["a"]["parent"] == by_id["b"]["parent"] == group["data"]["id"]
+    assert by_id["a"]["url"] == "https://example.org/a"
+    assert by_id["b"]["tooltip"] == "the second"
+    assert by_id["c"]["label"] == "</script><b>\n+2"
+    plain, symmetric = links
+    assert plain["data"]["label"] == "is a"
+    assert plain["style"]["target-arrow-shape"] == "triangle"
+    assert (
+        symmetric["style"]["source-arrow-shape"]
+        == symmetric["style"]["target-arrow-shape"]
+    )
+    assert "<h2>type</h2>" in page
+    assert '<span class="note">a kind</span>' in page
+    assert viz.render_html(doc, title="Mine").count("<title>Mine</title>") == 1
+
+
+def test_render_html_translates_the_graphviz_styles() -> None:
+    styles: viz.Styles = {
+        "node": {
+            ("k", "box"): {
+                "shape": "box",
+                "style": "filled,bold",
+                "fillcolor": "#0072B2",
+            },
+            ("k", "dot"): {
+                "style": "dotted",
+                "color": "#D55E00",
+                "fontcolor": "#FFFFFF",
+            },
+            ("k", "two"): {"peripheries": "2", "shape": "house"},
+        },
+        "edge": {
+            ("k", "dash"): {
+                "style": "dashed",
+                "color": "#009E73",
+                "fontcolor": "#000000",
+            },
+            ("k", "dot"): {"style": "dotted,bold", "arrowhead": "odot"},
+            ("k", "none"): {"dir": "none"},
+            ("k", "both"): {"dir": "both", "arrowtail": "diamond"},
+        },
+    }
+    nodes = [{"id": "a", "k": "box"}, {"id": "b", "k": "dot"}, {"id": "c", "k": "two"}]
+    edges = [
+        {"source": "a", "target": "b", "k": "dash"},
+        {"source": "b", "target": "c", "k": "dot"},
+        {"source": "c", "target": "a", "k": "none"},
+        {"source": "a", "target": "c", "k": "both"},
+    ]
+    found, links = page_parts(viz.render_html(document(nodes, edges), styles=styles))
+    a, b, c = (n["style"] for n in found)
+    assert (a["shape"], a["background-color"], a["border-width"]) == (
+        "rectangle",
+        "#0072B2",
+        3,
+    )
+    assert (b["border-style"], b["border-color"], b["color"]) == (
+        "dotted",
+        "#D55E00",
+        "#FFFFFF",
+    )
+    assert (c["shape"], c["border-style"], c["border-width"]) == ("tag", "double", 4)
+    dash, dotted, none, both = (e["style"] for e in links)
+    assert (dash["line-style"], dash["line-color"], dash["color"]) == (
+        "dashed",
+        "#009E73",
+        "#000000",
+    )
+    assert (dotted["line-style"], dotted["width"], dotted["target-arrow-fill"]) == (
+        "dotted",
+        3,
+        "hollow",
+    )
+    assert none["target-arrow-shape"] == "none"
+    assert both["source-arrow-shape"] == "diamond"
+
+
+def test_render_html_refuses_unknown_groupings_and_needs_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = viz.render_html(chain(), group_by=None)
+    nodes, _ = page_parts(page)
+    assert all("position" in n for n in nodes)  # no group
+    with pytest.raises(ValueError, match="group_by must be"):
+        viz.render_html(chain(), group_by="kind")
+    monkeypatch.setitem(sys.modules, "pygraphviz", None)
+    with pytest.raises(ImportError, match=r"protee\[viz\]"):
+        viz.render_html(chain())
+
+
+def test_render_html_avoids_a_taken_group_identifier() -> None:
+    doc = document(
+        [
+            {"id": "a", "family": "F"},
+            {"id": "b", "family": "F"},
+            {"id": "protee:group:0"},
+        ],
+        [("a", "protee:group:0")],
+    )
+    found, _ = page_parts(viz.render_html(doc))
+    (group,) = (n for n in found if "position" not in n)
+    assert group["data"]["id"] == "protee:group:0#2"
+
+
+def test_the_embedded_scripts_match_their_notice() -> None:
+    assets = files("protee").joinpath("_assets")
+    notice = assets.joinpath("NOTICE.md").read_text(encoding="utf-8")
+    # The last column is the digest of the file as shipped.
+    rows = re.findall(
+        r"\| `([^`]+)` \| [^|]+ \| [^|]+ \| `[^`]+` \| `[0-9a-f]{64}` \| `([0-9a-f]{64})` \|",
+        notice,
+    )
+    assert len(rows) == 4
+    for name, digest in rows:
+        assert hashlib.sha256(assets.joinpath(name).read_bytes()).hexdigest() == digest
 
 
 # Loops and transitive reduction (NetworkX as an independent oracle) -------
