@@ -9,6 +9,7 @@ equations with a loop.
 """
 
 import copy
+import json
 import math
 from collections.abc import Callable
 from pathlib import Path
@@ -198,6 +199,21 @@ def test_examples_round_trip_without_loss(name: str, tmp_path: Path) -> None:
     assert io.check_node_link(expected) == ()
 
 
+#: Written by nomogram 0.8.0 from its catalogue, kept verbatim: the branch
+#: of relative humidity, with node identifiers that are IRIs.
+NOMOGRAM = Path(__file__).parent / "data" / "node_link"
+
+
+def test_nomogram_extract_follows_the_format_and_round_trips() -> None:
+    data = json.loads(
+        (NOMOGRAM / "nomogram-0.8.0-relative-humidity.json").read_text(encoding="utf-8")
+    )
+    assert io.check_node_link(data) == ()
+    assert rewritten(io.from_node_link(data)) == data
+    g = nx.node_link_graph(data, edges="edges")
+    assert nx.node_link_data(g, edges="edges") == data
+
+
 def test_networkx_reads_the_examples_and_finds_the_loop() -> None:
     kinds = nx.node_link_graph(KINDS, edges="edges")
     assert (kinds.number_of_nodes(), kinds.number_of_edges()) == (4, 3)
@@ -297,6 +313,13 @@ DEPARTURES: list[tuple[str, Change, str]] = [
     ("no multigraph", removing("multigraph"), "multigraph: must be"),
     ("no graph", removing("graph"), "graph: missing"),
     ("format", setting("graph.format", "node-link/1"), "graph.format: must be"),
+    ("language", setting("graph.language", "english!"), "graph.language"),
+    ("a region is allowed", setting("graph.language", "fr-FR"), ""),
+    (
+        "an IRI is a node id",
+        setting("nodes.3.id", "http://vocab.nerc.ac.uk/standard_name/rh/"),
+        "edges[2].target",  # the edge still names the old id
+    ),
     ("producer", setting("graph.producer", {"name": 3}), "graph.producer"),
     ("prefixes", setting("graph.prefixes", []), "graph.prefixes: must be an object"),
     ("prefix name", setting("graph.prefixes.a:b", None), "a prefix is a non-empty"),

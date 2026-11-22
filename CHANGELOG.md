@@ -131,9 +131,10 @@ and this project adheres to
   overconstrained system, multiple optima).
 - Node-link exchange format `protee-node-link/0` (`protee.io`), for
   typed graphs shared with other projects: a `graph` block with the
-  format, the producer, prefixes (an IRI, or null) and a declared
-  vocabulary (the values of `type`, `status`, `role`… for nodes or for
-  edges); nodes with an optional `iri`; integer edge keys. The format is
+  format, the producer, an optional language tag, prefixes (an IRI, or
+  null) and a declared vocabulary (the values of `type`, `status`,
+  `role`… for nodes or for edges); opaque node identifiers (an IRI is
+  allowed) with an optional `iri`; integer edge keys. The format is
   written by `to_node_link` and `write_node_link` (with `attributes` and
   `multigraph`), read without loss by `from_node_link`, which keeps the
   `graph` block, the `multigraph` flag and the edge keys in a read-only

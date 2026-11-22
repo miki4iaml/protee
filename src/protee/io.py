@@ -19,6 +19,7 @@ Provisional API (until version 1.0).
 import csv
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -230,6 +231,9 @@ def read_node_link(path: Path) -> Table:
 #: Keys whose values cannot be declared in ``graph.vocabulary``.
 _STRUCTURAL = frozenset({"id", "source", "target", "key"})
 
+#: A language tag (BCP 47): a language, then subtags such as a region.
+_LANGUAGE = re.compile(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*")
+
 
 def _absolute(iri: object) -> bool:
     return isinstance(iri, str) and bool(urlsplit(iri).scheme)
@@ -281,6 +285,11 @@ class _Checker:
             return {}
         if block.get("format") != NODE_LINK_FORMAT:
             self.bad("graph.format", f"must be {NODE_LINK_FORMAT!r}")
+        language = block.get("language")
+        if language is not None and not (
+            isinstance(language, str) and _LANGUAGE.fullmatch(language)
+        ):
+            self.bad("graph.language", "must be a language tag, such as 'en'")
         producer = block.get("producer")
         if producer is not None and not (
             isinstance(producer, Mapping)
@@ -431,13 +440,16 @@ def check_node_link(data: object) -> tuple[str, ...]:
     """The departures of a document from the ``protee-node-link/0`` format.
 
     The rules are those of the exchange contract: a directed graph; a
-    ``graph`` block with its ``format``; declared prefixes; for every
-    attribute declared in ``graph.vocabulary`` (``type``, ``status``,
-    ``role``…), each value used by a node or an edge declared there, for
-    nodes or for edges; unique node identifiers; edges between existing
-    nodes, with integer keys unique between the same two nodes; metrics
-    that are finite numbers, ``"inf"``, ``"-inf"`` or ``null``. Other keys
-    are allowed. ``links`` is read in place of ``edges``.
+    ``graph`` block with its ``format``, an optional language tag, declared
+    prefixes; for every attribute declared in ``graph.vocabulary``
+    (``type``, ``status``, ``role``…), each value used by a node or an edge
+    declared there, for nodes or for edges, a declared value being
+    ``prefix:name`` with a declared prefix or a plain name; unique node
+    identifiers, opaque texts (an IRI is allowed) or integers, never
+    expanded; edges between existing nodes, with integer keys unique
+    between the same two nodes; metrics that are finite numbers, ``"inf"``,
+    ``"-inf"`` or ``null``. Other keys are allowed. ``links`` is read in
+    place of ``edges``.
 
     Parameters
     ----------
