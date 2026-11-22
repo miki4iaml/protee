@@ -13,7 +13,9 @@ the styles from a table given by the caller.
   follows the format; the marks they add are declared under the
   ``protee`` prefix (:data:`DISPLAY`);
 - :func:`to_dot` writes the Graphviz DOT text of a document, without any
-  dependency.
+  dependency;
+- :func:`render_svg` lays it out and draws it in SVG through Graphviz,
+  with the optional extra ``viz`` (pygraphviz, which bundles Graphviz).
 
 Provisional API (until version 1.0).
 """
@@ -41,6 +43,7 @@ __all__ = [
     "OUTSIDE",
     "Styles",
     "collapse",
+    "render_svg",
     "select",
     "to_dot",
 ]
@@ -508,6 +511,47 @@ def to_dot(
         lines += _legend(vocabulary, node_defaults, edge_defaults, given)
     lines.append("}")
     return "\n".join(lines) + "\n"
+
+
+def render_svg(
+    data: Mapping[str, Any],
+    *,
+    styles: Styles | None = None,
+    order_by: str | None = None,
+    direction: str = "TB",
+    legend: bool = True,
+) -> str:
+    """An SVG drawing of a document, laid out by Graphviz (``dot``).
+
+    The text of :func:`to_dot`, with the same parameters, laid out and
+    drawn by the Graphviz that pygraphviz bundles: nothing else is
+    installed on the workstation, and nothing is fetched. Labels stay text,
+    in system fonts. With the same document and the same versions, the SVG
+    is the same, byte for byte.
+
+    Returns
+    -------
+    str
+        The SVG document.
+
+    Raises
+    ------
+    ImportError
+        If pygraphviz is not installed (the optional extra ``viz``).
+    ValueError, TypeError
+        As :func:`to_dot`.
+    """
+    try:  # an optional extra, imported on use
+        import pygraphviz
+    except ImportError as err:
+        raise ImportError(
+            "render_svg needs pygraphviz: install the optional extra protee[viz]"
+        ) from err
+    dot = to_dot(
+        data, styles=styles, order_by=order_by, direction=direction, legend=legend
+    )
+    drawing: bytes = pygraphviz.AGraph(string=dot).draw(format="svg", prog="dot")
+    return drawing.decode("utf-8")
 
 
 def _ordering(nodes: list[dict[str, Any]], attribute: str) -> list[str]:

@@ -45,6 +45,11 @@ Repository = "https://github.com/miki4iaml/protee"
 Issues = "https://github.com/miki4iaml/protee/issues"
 Changelog = "https://github.com/miki4iaml/protee/blob/main/CHANGELOG.md"
 
+[project.optional-dependencies]
+viz = [
+    "pygraphviz>=2.0",
+]
+
 [build-system]
 requires = ["uv_build>=0.12.18,<0.14.0"]
 build-backend = "uv_build"

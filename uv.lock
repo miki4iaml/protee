@@ -713,6 +713,11 @@ dependencies = [
     { name = "scipy" },
 ]
 
+[package.optional-dependencies]
+viz = [
+    { name = "pygraphviz" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "codespell" },
@@ -732,9 +737,11 @@ dev = [
 requires-dist = [
     { name = "numpy", marker = "python_full_version < '3.15'", specifier = ">=2.3.2" },
     { name = "numpy", marker = "python_full_version >= '3.15'", specifier = ">=2.5.2" },
+    { name = "pygraphviz", marker = "extra == 'viz'", specifier = ">=2.0" },
     { name = "scipy", marker = "python_full_version < '3.15'", specifier = ">=1.16.1" },
     { name = "scipy", marker = "python_full_version >= '3.15'", specifier = ">=1.18.1" },
 ]
+provides-extras = ["viz"]
 
 [package.metadata.requires-dev]
 dev = [
