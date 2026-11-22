@@ -8,6 +8,8 @@ would write them: a branch of a tree of quantity kinds, and a system of
 equations with a loop.
 """
 
+from __future__ import annotations
+
 import copy
 import json
 import math

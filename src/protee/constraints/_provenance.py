@@ -3,6 +3,8 @@
 
 """Provenance of a result: method, parameters, version and fingerprints."""
 
+from __future__ import annotations
+
 import dataclasses
 import enum
 import hashlib

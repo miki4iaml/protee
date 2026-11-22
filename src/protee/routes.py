@@ -21,6 +21,8 @@ deterministic.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 import heapq
 import itertools
 import math

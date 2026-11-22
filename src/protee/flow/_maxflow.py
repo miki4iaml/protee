@@ -3,6 +3,8 @@
 
 """Maximum flow: Edmonds-Karp and Dinic on a residual network."""
 
+from __future__ import annotations
+
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass

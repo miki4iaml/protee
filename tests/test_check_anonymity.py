@@ -3,6 +3,8 @@
 
 """Tests for the anonymity hook ``scripts/check_anonymity.py``."""
 
+from __future__ import annotations
+
 import importlib.util
 import os
 import sys

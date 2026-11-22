@@ -18,6 +18,8 @@ The state survives a change of costs: the tree stays primal feasible, the
 potentials are recomputed and pivoting resumes (warm start).
 """
 
+from __future__ import annotations
+
 import math
 from collections.abc import Sequence
 from typing import Literal

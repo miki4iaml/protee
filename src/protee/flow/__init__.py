@@ -23,6 +23,8 @@ certificate of infeasibility or unboundedness, deterministic counters.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 from protee.flow._disjoint import DisjointPaths, disjoint_paths
 from protee.flow._feasibility import Feasibility, check_feasibility
 from protee.flow._maxflow import MaxFlowResult, max_flow

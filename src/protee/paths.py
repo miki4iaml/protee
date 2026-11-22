@@ -15,6 +15,8 @@ Named methods, chosen explicitly by the caller:
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 import heapq
 import math
 from collections.abc import Collection, Iterable, Sequence

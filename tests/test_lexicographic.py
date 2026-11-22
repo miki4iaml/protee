@@ -3,6 +3,8 @@
 
 """Lexicographic shortest paths, against enumeration of simple paths."""
 
+from __future__ import annotations
+
 import random
 
 import pytest

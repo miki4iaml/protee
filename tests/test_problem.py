@@ -3,6 +3,8 @@
 
 """Validation and helpers of FlowProblem."""
 
+from __future__ import annotations
+
 import math
 
 import pytest

@@ -3,6 +3,8 @@
 
 """Feasibility of a flow problem, with a violated cut as certificate."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from types import MappingProxyType
 

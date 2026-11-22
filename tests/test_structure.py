@@ -3,6 +3,8 @@
 
 """Components, degree-2 paths, spanning forests and cycle bases."""
 
+from __future__ import annotations
+
 import itertools
 from collections.abc import Callable, Sequence
 from typing import Any

@@ -3,6 +3,8 @@
 
 """Result shared by every flow method, and its certificates."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum

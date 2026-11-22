@@ -16,7 +16,7 @@ designed.
 
 ## Prerequisites
 
-- Python 3.14 or later.
+- Python 3.12 or later.
 - [uv](https://docs.astral.sh/uv/). It is required: the ruff, mypy and
   pytest hooks run through `uv run --frozen`, so they use exactly the
   versions locked in `uv.lock` (a single source of versions, locally
@@ -36,8 +36,7 @@ stages (pre-commit, commit-msg, pre-push).
 
 On Windows without a C compiler: PyYAML, which pre-commit requires,
 has no wheel for Python 3.15 yet. Setting the environment variable
-`PYYAML_FORCE_LIBYAML=0` builds it in pure Python, for the Python 3.15
-commands of `AGENTS.md`.
+`PYYAML_FORCE_LIBYAML=0` builds it in pure Python.
 
 ## Local checks
 
@@ -150,7 +149,7 @@ which stay on your machine by design.
    format: it becomes the commit message on squash merge.
 4. CI must be green. Required checks:
    - `quality`: the hooks above, on the whole repository;
-   - `tests`: Ubuntu and Windows × Python 3.14 and 3.15, with an 80 %
+   - `tests`: Ubuntu and Windows × Python 3.12, 3.13 and 3.14, with an 80 %
      branch coverage floor;
    - `signatures`: every commit of the pull request is signed and
      verified.
