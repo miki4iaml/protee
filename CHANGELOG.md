@@ -164,3 +164,8 @@ and this project adheres to
   optional extra `viz` (pygraphviz, which bundles Graphviz); labels stay
   text in system fonts, nothing is fetched, and the same document gives
   the same SVG.
+- Legend of the drawings: a node value that sets no shape is shown with
+  the shape of the nodes that carry it, or as a rounded box when they have
+  several; `render_svg` takes `legend="right"`, `"below"` (laid out apart
+  and drawn under the graph) or `None`; `protee.viz.render_legend_svg`
+  draws the legend alone, one column per attribute.
