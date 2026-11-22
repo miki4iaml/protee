@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ import networkx as nx
 import pytest
 from constraints_cases import LINKS, PROFILE
 from hypothesis import given
+from jsonschema import Draft202012Validator
 from oracles import graphs
 
 from protee import io
@@ -174,9 +176,20 @@ def rewritten(table: io.Table) -> dict[str, Any]:
     )
 
 
+#: The schema shipped with protee, read by the reference implementation of
+#: JSON Schema: an oracle for the structure of the documents.
+SCHEMA = Draft202012Validator(io.node_link_schema())
+
+
+def follows(data: object) -> None:
+    """The document follows the format, and so passes the schema."""
+    assert io.check_node_link(data) == ()
+    assert [e.message for e in SCHEMA.iter_errors(data)] == []
+
+
 @pytest.mark.parametrize("name", sorted(EXAMPLES))
 def test_examples_follow_the_format(name: str) -> None:
-    assert io.check_node_link(EXAMPLES[name]) == ()
+    follows(EXAMPLES[name])
 
 
 @pytest.mark.parametrize("name", sorted(EXAMPLES))
@@ -198,7 +211,7 @@ def test_examples_round_trip_without_loss(name: str, tmp_path: Path) -> None:
     )
     again = io.read_node_link(path)
     assert rewritten(again) == expected
-    assert io.check_node_link(expected) == ()
+    follows(expected)
 
 
 #: Written by nomogram 0.8.0 from its catalogue, kept verbatim: the branch
@@ -211,10 +224,23 @@ NOMOGRAM_FILES = sorted(p.name for p in NOMOGRAM.glob("nomogram-*.json"))
 @pytest.mark.parametrize("name", NOMOGRAM_FILES)
 def test_nomogram_files_follow_the_format_and_round_trip(name: str) -> None:
     data = json.loads((NOMOGRAM / name).read_text(encoding="utf-8"))
-    assert io.check_node_link(data) == ()
+    follows(data)
     assert rewritten(io.from_node_link(data)) == data
     g = nx.node_link_graph(data, edges="edges")
     assert nx.node_link_data(g, edges="edges") == data
+
+
+def test_the_example_of_the_public_page_follows_the_format() -> None:
+    page = Path(__file__).parents[1] / "docs" / "node-link-format.md"
+    found = re.search(
+        r"```json\n(.*?)\n```", page.read_text(encoding="utf-8"), re.DOTALL
+    )
+    assert found is not None
+    data = json.loads(found.group(1))
+    follows(data)
+    assert rewritten(io.from_node_link(data)) == data
+    g = nx.node_link_graph(data, edges="edges")
+    assert (g.number_of_nodes(), g.number_of_edges()) == (2, 1)
 
 
 def test_networkx_reads_the_examples_and_finds_the_loop() -> None:
@@ -238,14 +264,14 @@ def test_a_profile_written_by_protee_follows_the_format() -> None:
         attributes=attributes,
     )
     assert data["graph"]["format"] == io.NODE_LINK_FORMAT
-    assert io.check_node_link(data) == ()
+    follows(data)
     assert nx.node_link_graph(data, edges="edges").number_of_edges() == PROFILE.m
 
 
 @given(graph=graphs())
 def test_every_written_graph_follows_the_format(graph: Digraph) -> None:
     data = io.to_node_link(graph, arcs={"cost": list(range(graph.m))})
-    assert io.check_node_link(data) == ()
+    follows(data)
 
 
 def test_links_is_read_in_place_of_edges() -> None:
@@ -405,11 +431,26 @@ DEPARTURES: list[tuple[str, Change, str]] = [
 ]
 
 
+#: Departures that cross parts of a document (or a NaN, a JSON number to
+#: the schema): only check_node_link sees them. The schema refuses every
+#: other departure.
+CROSSING = {
+    "an IRI is a node id",
+    "undeclared prefix",
+    "declared twice",
+    "repeated id",
+    "metric",
+    "undeclared type",
+    "node type on an edge",
+    "source",
+}
+
+
 @pytest.mark.parametrize(
-    ("change", "message"),
-    [pytest.param(c, m, id=name) for name, c, m in DEPARTURES],
+    ("name", "change", "message"),
+    [pytest.param(n, c, m, id=n) for n, c, m in DEPARTURES],
 )
-def test_each_departure_is_reported(change: Change, message: str) -> None:
+def test_each_departure_is_reported(name: str, change: Change, message: str) -> None:
     doc = copy.deepcopy(KINDS)
     change(doc)
     problems = io.check_node_link(doc)
@@ -417,6 +458,37 @@ def test_each_departure_is_reported(change: Change, message: str) -> None:
         assert any(message in p for p in problems), problems
     else:
         assert problems == ()
+    assert SCHEMA.is_valid(doc) == (not message or name in CROSSING)
+
+
+def test_a_null_key_means_an_absent_one() -> None:
+    doc = copy.deepcopy(KINDS)
+    doc["graph"].update(language=None, label=None)
+    doc["graph"]["producer"]["version"] = None
+    doc["graph"]["vocabulary"]["status"][0].update(description=None, symmetric=None)
+    doc["nodes"][0].update(iri=None, metrics=None, family=None)
+    follows(doc)
+    plain = {
+        "directed": True,
+        "multigraph": True,
+        "graph": {"format": io.NODE_LINK_FORMAT, "prefixes": None, "vocabulary": None},
+        "nodes": [{"id": 0}, {"id": 1}],
+        "edges": [{"source": 0, "target": 1, "key": None}],
+    }
+    follows(plain)
+
+
+def test_the_schema_is_shipped_and_says_what_it_does_not_check() -> None:
+    schema = io.node_link_schema()
+    Draft202012Validator.check_schema(schema)
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert "check_node_link" in schema["description"]
+    assert schema["properties"]["graph"]["$ref"] == "#/$defs/graph"
+    assert schema["$defs"]["graph"]["properties"]["format"]["const"] == (
+        io.NODE_LINK_FORMAT
+    )
+    schema["title"] = "changed"
+    assert io.node_link_schema()["title"] == io.NODE_LINK_FORMAT  # a new object
 
 
 def test_repeated_keys_and_parallel_edges() -> None:

@@ -30,6 +30,12 @@ poste hors ligne (aucun solveur, service ou moteur en ligne).
 > version 1.0, et le modèle des profils de cycle de vie est en cours de
 > conception.
 
+Les graphes typés s'échangent avec d'autres projets au format node-link
+[`protee-node-link/0`](docs/node-link-format.md) (`protee.io`, page en
+anglais), et se dessinent par `protee.viz` : sélection, groupes et
+boucles sans dépendance, SVG et page à explorer hors ligne avec l'extra
+facultatif `viz` (voir la [galerie](docs/gallery/README.md)).
+
 ## Pourquoi protee
 
 Bien des problèmes de graphes partent d'exigences écrites par des
