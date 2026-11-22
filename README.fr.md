@@ -70,7 +70,7 @@ d'illustration.
 ## Installation
 
 Le paquet n'est pas encore publié. Depuis un clone du dépôt, avec
-[uv](https://docs.astral.sh/uv/) et Python 3.14 ou plus récent :
+[uv](https://docs.astral.sh/uv/) et Python 3.12 ou plus récent :
 
 ```
 uv sync

@@ -4,7 +4,10 @@
 """Graph and flow problem formats.
 
 - node-link JSON, the layout of NetworkX's ``node_link_data`` (``nodes``
-  and ``edges``; ``links`` is read too), with attribute columns;
+  and ``edges``; ``links`` is read too), with attribute columns; the
+  exchange format ``protee-node-link/0`` (:data:`NODE_LINK_FORMAT`) adds a
+  ``graph`` block (producer, prefixes, declared vocabulary), checked by
+  :func:`check_node_link`;
 - CSV table of arcs, one row per arc;
 - DIMACS minimum cost flow format (``p min``), for flow problems.
 
@@ -13,19 +16,26 @@ Files are read and written in UTF-8.
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 import csv
 import json
+import math
+import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import urlsplit
 
 from protee.flow._problem import FlowProblem
 from protee.graph import Digraph
 
 __all__ = [
+    "NODE_LINK_FORMAT",
     "Table",
+    "check_node_link",
     "from_node_link",
     "read_arcs_csv",
     "read_dimacs_min",
@@ -35,6 +45,27 @@ __all__ = [
     "write_dimacs_min",
     "write_node_link",
 ]
+
+#: Name and version of the node-link exchange format, in ``graph.format``.
+NODE_LINK_FORMAT = "protee-node-link/0"
+
+
+def _freeze(x: Any) -> Any:
+    """A read-only copy: mappings become read-only, lists become tuples."""
+    if isinstance(x, Mapping):
+        return MappingProxyType({k: _freeze(v) for k, v in x.items()})
+    if isinstance(x, (list, tuple)):
+        return tuple(_freeze(v) for v in x)
+    return x
+
+
+def _thaw(x: Any) -> Any:
+    """Plain JSON data from a frozen value."""
+    if isinstance(x, Mapping):
+        return {k: _thaw(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_thaw(v) for v in x]
+    return x
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,11 +79,18 @@ class Table:
         One value per arc for each attribute.
     nodes : mapping of str to tuple
         One value per node for each attribute.
+    attributes : mapping of str to object
+        The ``graph`` block of a node-link document (format, producer,
+        prefixes, vocabulary…), read-only.
+    multigraph : bool
+        Whether the document allows parallel edges.
     """
 
     graph: Digraph
     arcs: Mapping[str, tuple[Any, ...]]
     nodes: Mapping[str, tuple[Any, ...]]
+    attributes: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    multigraph: bool = True
 
 
 def _check(
@@ -70,32 +108,55 @@ def to_node_link(
     graph: Digraph,
     arcs: Mapping[str, Sequence[Any]] | None = None,
     nodes: Mapping[str, Sequence[Any]] | None = None,
+    *,
+    attributes: Mapping[str, Any] | None = None,
+    multigraph: bool = True,
 ) -> dict[str, Any]:
     """Node-link dictionary of a graph and its attribute columns.
 
     Nodes are identified by their labels (or their indices when the graph
-    has none); each edge carries a ``key``, its arc index.
+    has none). Each edge carries a ``key``: the value of an arc column
+    named ``key`` when there is one, else its arc index. A ``None`` value
+    is left out: absent and ``null`` mean the same.
+
+    Parameters
+    ----------
+    graph : Digraph
+    arcs, nodes : mapping of str to sequence, optional
+        Attribute columns, one value per arc or per node.
+    attributes : mapping, optional
+        The ``graph`` block (producer, prefixes, vocabulary…); its
+        ``format`` is :data:`NODE_LINK_FORMAT`.
+    multigraph : bool
+        ``False`` declares that no two arcs join the same two nodes.
+
+    Raises
+    ------
+    ValueError
+        If a column has another size, ``attributes`` names another format,
+        or ``multigraph`` is false while two arcs join the same nodes.
     """
     arcs = _check("arc", arcs, graph.m)
     nodes = _check("node", nodes, graph.n)
+    block = dict(_thaw(attributes or {}))
+    if block.setdefault("format", NODE_LINK_FORMAT) != NODE_LINK_FORMAT:
+        raise ValueError(f"format {block['format']!r} is not {NODE_LINK_FORMAT!r}")
+    if not multigraph and len(set(graph.arcs())) < graph.m:
+        raise ValueError("parallel arcs in a graph declared not to be a multigraph")
     ident: list[Any] = (
         list(range(graph.n)) if graph.labels is None else list(graph.labels)
     )
+
+    def values(columns: Mapping[str, Sequence[Any]], i: int) -> dict[str, Any]:
+        return {k: _thaw(v[i]) for k, v in columns.items() if v[i] is not None}
+
     return {
         "directed": True,
-        "multigraph": True,
-        "graph": {},
-        "nodes": [
-            {"id": ident[v], **{k: vals[v] for k, vals in nodes.items()}}
-            for v in range(graph.n)
-        ],
+        "multigraph": multigraph,
+        "graph": {"format": NODE_LINK_FORMAT, **block},
+        "nodes": [{"id": ident[v], **values(nodes, v)} for v in range(graph.n)],
         "edges": [
-            {
-                "source": ident[t],
-                "target": ident[h],
-                "key": a,
-                **{k: vals[a] for k, vals in arcs.items()},
-            }
+            {"source": ident[t], "target": ident[h], "key": a, **values(arcs, a)}
             for a, (t, h) in enumerate(graph.arcs())
         ],
     }
@@ -104,10 +165,11 @@ def to_node_link(
 def from_node_link(data: Mapping[str, Any]) -> Table:
     """Graph and attribute columns of a node-link dictionary.
 
-    Arcs are numbered in the order of the edges in the data (a NetworkX
-    ``key`` only tells apart the edges between the same two nodes). A node
-    attribute or an edge
-    attribute missing somewhere is ``None`` there.
+    Arcs are numbered in the order of the edges in the data. Their ``key``
+    values, which tell apart the edges between the same two nodes, are kept
+    in the arc column ``key``. A node attribute or an edge attribute missing
+    somewhere is ``None`` there. The ``graph`` block is kept, read-only, in
+    :attr:`Table.attributes`; it is not checked (see :func:`check_node_link`).
 
     Raises
     ------
@@ -131,14 +193,18 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
     graph = Digraph.from_arcs(len(ids), arcs, labels)
     node_keys = sorted({k for node in raw_nodes for k in node if k != "id"})
     edge_keys = sorted(
-        {k for e in raw_edges for k in e if k not in ("source", "target", "key")}
+        {k for e in raw_edges for k in e if k not in ("source", "target")}
     )
     return Table(
         graph,
-        MappingProxyType({k: tuple(e.get(k) for e in raw_edges) for k in edge_keys}),
         MappingProxyType(
-            {k: tuple(node.get(k) for node in raw_nodes) for k in node_keys}
+            {k: tuple(_freeze(e.get(k)) for e in raw_edges) for k in edge_keys}
         ),
+        MappingProxyType(
+            {k: tuple(_freeze(node.get(k)) for node in raw_nodes) for k in node_keys}
+        ),
+        _freeze(data.get("graph") or {}),
+        bool(data.get("multigraph", True)),
     )
 
 
@@ -147,15 +213,269 @@ def write_node_link(
     graph: Digraph,
     arcs: Mapping[str, Sequence[Any]] | None = None,
     nodes: Mapping[str, Sequence[Any]] | None = None,
+    *,
+    attributes: Mapping[str, Any] | None = None,
+    multigraph: bool = True,
 ) -> None:
     """Write :func:`to_node_link` as a JSON file."""
-    text = json.dumps(to_node_link(graph, arcs, nodes), ensure_ascii=False, indent=1)
+    data = to_node_link(
+        graph, arcs, nodes, attributes=attributes, multigraph=multigraph
+    )
+    text = json.dumps(data, ensure_ascii=False, indent=1)
     Path(path).write_text(text + "\n", encoding="utf-8")
 
 
 def read_node_link(path: Path) -> Table:
     """Read a node-link JSON file (see :func:`from_node_link`)."""
     return from_node_link(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+#: Keys whose values cannot be declared in ``graph.vocabulary``.
+_STRUCTURAL = frozenset({"id", "source", "target", "key"})
+
+#: A language tag (BCP 47): a language, then subtags such as a region.
+_LANGUAGE = re.compile(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*")
+
+
+def _absolute(iri: object) -> bool:
+    return isinstance(iri, str) and bool(urlsplit(iri).scheme)
+
+
+def _metric(value: object) -> bool:
+    if value is None or value in ("inf", "-inf"):
+        return True
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _node_id(value: object) -> bool:
+    return isinstance(value, (str, int)) and not isinstance(value, bool)
+
+
+class _Checker:
+    """The rules of :func:`check_node_link`, one method per part."""
+
+    def __init__(self) -> None:
+        self.problems: list[str] = []
+        self.prefixes: Mapping[str, Any] = {}
+        # attribute -> "node" or "edge" -> declared values
+        self.declared: dict[str, dict[str, set[str]]] = {}
+
+    def bad(self, where: str, what: str) -> None:
+        self.problems.append(f"{where}: {what}")
+
+    def identifier(self, where: str, ident: object) -> bool:
+        if not isinstance(ident, str) or not ident:
+            self.bad(where, "an identifier is a non-empty text")
+            return False
+        prefix = ident.split(":", 1)[0]
+        if ":" in ident and prefix not in self.prefixes:
+            self.bad(where, f"prefix {prefix!r} is not declared in graph.prefixes")
+        return True
+
+    def header(self, data: Mapping[str, Any]) -> Mapping[str, Any]:
+        if data.get("directed") is not True:
+            self.bad("directed", "must be true")
+        if not isinstance(data.get("multigraph"), bool):
+            self.bad("multigraph", "must be true or false")
+        block = data.get("graph")
+        if not isinstance(block, Mapping):
+            self.bad("graph", "missing, or not an object")
+            return {}
+        if block.get("format") != NODE_LINK_FORMAT:
+            self.bad("graph.format", f"must be {NODE_LINK_FORMAT!r}")
+        for key in ("label", "description"):
+            if block.get(key) is not None and not isinstance(block[key], str):
+                self.bad(f"graph.{key}", "must be a text")
+        language = block.get("language")
+        if language is not None and not (
+            isinstance(language, str) and _LANGUAGE.fullmatch(language)
+        ):
+            self.bad("graph.language", "must be a language tag, such as 'en'")
+        producer = block.get("producer")
+        if producer is not None and not (
+            isinstance(producer, Mapping)
+            and isinstance(producer.get("name"), str)
+            and isinstance(producer.get("version", ""), str)
+        ):
+            self.bad("graph.producer", "an object with a text 'name' and 'version'")
+        return block
+
+    def prefix_table(self, block: Mapping[str, Any]) -> None:
+        prefixes = block.get("prefixes", {})
+        if not isinstance(prefixes, Mapping):
+            self.bad("graph.prefixes", "must be an object")
+            return
+        self.prefixes = prefixes
+        for prefix, iri in prefixes.items():
+            where = f"graph.prefixes[{prefix!r}]"
+            if not prefix or ":" in prefix:
+                self.bad(where, "a prefix is a non-empty name without ':'")
+            if iri is not None and not _absolute(iri):
+                self.bad(where, "must be an absolute IRI, or null")
+
+    def vocabulary(self, block: Mapping[str, Any]) -> None:
+        vocabulary = block.get("vocabulary", {})
+        if not isinstance(vocabulary, Mapping):
+            self.bad("graph.vocabulary", "must be an object")
+            return
+        for attribute, entries in vocabulary.items():
+            where = f"graph.vocabulary[{attribute!r}]"
+            if attribute in _STRUCTURAL:
+                self.bad(where, "the values of a structural key are not declared")
+                continue
+            if not isinstance(entries, list):
+                self.bad(where, "must be a list")
+                continue
+            sets = self.declared.setdefault(attribute, {"node": set(), "edge": set()})
+            for i, entry in enumerate(entries):
+                self.declaration(f"{where}[{i}]", entry, sets)
+
+    def declaration(self, where: str, entry: object, sets: dict[str, set[str]]) -> None:
+        if not isinstance(entry, Mapping):
+            self.bad(where, "must be an object")
+            return
+        on = entry.get("on")
+        if on not in ("node", "edge"):
+            self.bad(where, "'on' must be 'node' or 'edge'")
+            return
+        if not isinstance(entry.get("label"), str):
+            self.bad(where, "needs a text 'label'")
+        if not isinstance(entry.get("description", ""), str):
+            self.bad(where, "'description' must be a text")
+        if "symmetric" in entry and (
+            on != "edge" or not isinstance(entry["symmetric"], bool)
+        ):
+            self.bad(where, "'symmetric' is a boolean, for edges only")
+        ident = entry.get("id")
+        if self.identifier(f"{where}.id", ident):
+            assert isinstance(ident, str)
+            if ident in sets[on]:
+                self.bad(where, f"{ident!r} is declared twice for {on}s")
+            sets[on].add(ident)
+
+    def common(self, where: str, item: Mapping[str, Any], on: str) -> None:
+        for key in ("label", "description", "family", "url"):
+            if item.get(key) is not None and not isinstance(item[key], str):
+                self.bad(f"{where}.{key}", "must be a text")
+        metrics = item.get("metrics")
+        if metrics is not None and not isinstance(metrics, Mapping):
+            self.bad(f"{where}.metrics", "must be an object")
+        elif metrics is not None:
+            for name, value in metrics.items():
+                if not _metric(value):
+                    self.bad(
+                        f"{where}.metrics[{name!r}]",
+                        "must be a finite number, 'inf', '-inf' or null",
+                    )
+        for attribute, sets in self.declared.items():
+            value = item.get(attribute)
+            if value is not None and not (isinstance(value, str) and value in sets[on]):
+                self.bad(
+                    f"{where}.{attribute}",
+                    f"{value!r} is not declared for {on}s in "
+                    f"graph.vocabulary[{attribute!r}]",
+                )
+
+    def nodes(self, raw: object) -> set[Any]:
+        ids: set[Any] = set()
+        if not isinstance(raw, list):
+            self.bad("nodes", "missing, or not a list")
+            return ids
+        for i, node in enumerate(raw):
+            where = f"nodes[{i}]"
+            if not isinstance(node, Mapping):
+                self.bad(where, "must be an object")
+                continue
+            ident = node.get("id")
+            if not _node_id(ident):
+                self.bad(f"{where}.id", "must be a text or an integer")
+            elif ident in ids:
+                self.bad(f"{where}.id", f"{ident!r} is repeated")
+            else:
+                ids.add(ident)
+            if node.get("iri") is not None and not _absolute(node["iri"]):
+                self.bad(f"{where}.iri", "must be an absolute IRI")
+            self.common(where, node, "node")
+        return ids
+
+    def edges(self, raw: object, ids: set[Any], multigraph: object) -> None:
+        if not isinstance(raw, list):
+            self.bad("edges", "missing, or not a list")
+            return
+        keys: dict[tuple[Any, Any], set[int]] = {}
+        for i, edge in enumerate(raw):
+            where = f"edges[{i}]"
+            if not isinstance(edge, Mapping):
+                self.bad(where, "must be an object")
+                continue
+            ends = edge.get("source"), edge.get("target")
+            for name, end in zip(("source", "target"), ends, strict=True):
+                if not (_node_id(end) and end in ids):
+                    self.bad(f"{where}.{name}", f"{end!r} is not a node id")
+            key = edge.get("key")
+            if key is not None and (isinstance(key, bool) or not isinstance(key, int)):
+                self.bad(f"{where}.key", "must be an integer")
+                key = None
+            if not all(_node_id(end) for end in ends):
+                self.common(where, edge, "edge")
+                continue
+            pair = (ends[0], ends[1])
+            if pair in keys and multigraph is False:
+                self.bad(
+                    where,
+                    f"a second edge from {pair[0]!r} to {pair[1]!r}, "
+                    "in a graph that is not a multigraph",
+                )
+            seen = keys.setdefault(pair, set())
+            if key is not None and key in seen:
+                self.bad(
+                    f"{where}.key",
+                    f"{key} is repeated from {pair[0]!r} to {pair[1]!r}",
+                )
+            elif key is not None:
+                seen.add(key)
+            self.common(where, edge, "edge")
+
+
+def check_node_link(data: object) -> tuple[str, ...]:
+    """The departures of a document from the ``protee-node-link/0`` format.
+
+    The rules are those of the exchange contract: a directed graph; a
+    ``graph`` block with its ``format``, an optional language tag, declared
+    prefixes; for every attribute declared in ``graph.vocabulary``
+    (``type``, ``status``, ``role``…), each value used by a node or an edge
+    declared there, for nodes or for edges, a declared value being
+    ``prefix:name`` with a declared prefix or a plain name; unique node
+    identifiers, opaque texts (an IRI is allowed) or integers, never
+    expanded; edges between existing nodes, with integer keys unique
+    between the same two nodes; metrics that are finite numbers, ``"inf"``,
+    ``"-inf"`` or ``null``. Other keys are allowed. ``links`` is read in
+    place of ``edges``.
+
+    Parameters
+    ----------
+    data : object
+        The decoded JSON document.
+
+    Returns
+    -------
+    tuple of str
+        One message per departure, each starting with where it is; empty
+        when the document follows the format.
+    """
+    checker = _Checker()
+    if not isinstance(data, Mapping):
+        return ("document: must be a JSON object",)
+    block = checker.header(data)
+    checker.prefix_table(block)
+    checker.vocabulary(block)
+    ids = checker.nodes(data.get("nodes"))
+    checker.edges(data.get("edges", data.get("links")), ids, data.get("multigraph"))
+    return tuple(checker.problems)
 
 
 def write_arcs_csv(

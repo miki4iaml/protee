@@ -22,6 +22,8 @@ explicitly. When the node potentials carry over as well,
 Provisional API (until version 1.0).
 """
 
+from __future__ import annotations
+
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass

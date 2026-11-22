@@ -10,6 +10,8 @@
   and shortest admissible paths by enumeration of simple paths.
 """
 
+from __future__ import annotations
+
 import math
 import random
 from collections.abc import Iterator, Mapping, Sequence

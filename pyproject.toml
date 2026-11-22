@@ -6,9 +6,10 @@ readme = "README.md"
 authors = [
     { name = "miki4ia", email = "miki4ia@gmail.com" }
 ]
-requires-python = ">=3.14"
-license = "BSD-3-Clause"
-license-files = ["LICENSE"]
+requires-python = ">=3.12"
+# The drawing page embeds third-party JavaScript under the MIT licence.
+license = "BSD-3-Clause AND MIT"
+license-files = ["LICENSE", "src/protee/_assets/*.LICENSE.*"]
 keywords = [
     "operations research",
     "optimization",
@@ -24,8 +25,9 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Typing :: Typed",
@@ -44,6 +46,11 @@ Repository = "https://github.com/miki4iaml/protee"
 Issues = "https://github.com/miki4iaml/protee/issues"
 Changelog = "https://github.com/miki4iaml/protee/blob/main/CHANGELOG.md"
 
+[project.optional-dependencies]
+viz = [
+    "pygraphviz>=2.0",
+]
+
 [build-system]
 requires = ["uv_build>=0.12.18,<0.14.0"]
 build-backend = "uv_build"
@@ -59,21 +66,22 @@ dev = [
     "mypy>=2.4.0",
     "networkx>=3.7",
     "pre-commit>=4.6.2",
+    "pygraphviz>=2.0",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
     "zizmor>=1.30.1",
 ]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.12"
 strict = true
 files = ["src", "tests", "scripts"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 [[tool.mypy.overrides]]
-# networkx ships no type hints; it only serves as a test oracle.
-module = ["networkx", "networkx.*"]
+# networkx and pygraphviz ship no type hints; they only serve the tests.
+module = ["networkx", "networkx.*", "pygraphviz", "pygraphviz.*"]
 ignore_missing_imports = true
 
 [tool.pytest]
@@ -97,27 +105,27 @@ fail_under = 80
 show_missing = true
 exclude_also = ['if __name__ == "__main__":']
 
-[tool.ruff]
-# The check scripts are shared with repositories that support Python 3.12:
-# keep a syntax that 3.12 accepts (parenthesized except tuples, PEP 758).
-per-file-target-version = { "scripts/check_*.py" = "py312" }
-
 [tool.ruff.format]
 # The documents keep their own layout (aligned comments).
 exclude = ["*.md"]
 
 [tool.ruff.lint]
 # On top of ruff's default selection, which Dependabot bumps surface in CI.
-extend-select = ["ARG", "B", "C4", "PIE", "PT", "PTH", "RET", "T20"]
+extend-select = ["ARG", "B", "C4", "I002", "PIE", "PT", "PTH", "RET", "T20"]
+
+[tool.ruff.lint.isort]
+# Annotations are evaluated lazily on every supported Python version.
+required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.lint.per-file-ignores]
 # Fixtures requested for their side effects look like unused arguments.
 "tests/**" = ["ARG001"]
-# The hooks are command-line tools: printing is their output.
-"scripts/**" = ["T20"]
+# The hooks are command-line tools: printing is their output. They are
+# shared with other repositories and keep their own imports.
+"scripts/**" = ["T20", "I002"]
 
 [tool.codespell]
-skip = "*.fr.md,uv.lock"
+skip = "*.fr.md,uv.lock,src/protee/_assets/*.js"
 # Format terms: the Flate filter of PDF, the ALPH chunk of WebP.
 ignore-words-list = "flate,alph"
 

@@ -3,6 +3,8 @@
 
 """Disjoint paths and flow diagnostics, against enumeration and NetworkX."""
 
+from __future__ import annotations
+
 import itertools
 
 import networkx as nx

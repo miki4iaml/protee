@@ -3,6 +3,8 @@
 
 """The model of protee.constraints: sources, values, requirements, patterns."""
 
+from __future__ import annotations
+
 import math
 
 import pytest

@@ -62,7 +62,7 @@ testing and illustration.
 ## Installation
 
 The package is not published yet. From a clone of the repository, with
-[uv](https://docs.astral.sh/uv/) and Python 3.14 or later:
+[uv](https://docs.astral.sh/uv/) and Python 3.12 or later:
 
 ```
 uv sync

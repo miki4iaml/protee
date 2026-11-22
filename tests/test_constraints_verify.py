@@ -4,6 +4,8 @@
 """Verification, input checks and the requirement table, end to end on
 both reference applications: route planning and life-cycle profiles."""
 
+from __future__ import annotations
+
 import json
 import math
 

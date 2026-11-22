@@ -3,6 +3,8 @@
 
 """Rulebooks and their values, read from TOML."""
 
+from __future__ import annotations
+
 import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass

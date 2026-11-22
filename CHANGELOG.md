@@ -11,13 +11,13 @@ and this project adheres to
 ### Added
 
 - Project skeleton: the `protee` package (typed, version read from the
-  installed distribution), Python 3.14 or later, BSD-3-Clause.
+  installed distribution), Python 3.12 or later, BSD-3-Clause.
 - Rules shared by contributors and coding agents (`AGENTS.md`), the
   contributing guide in English and French, and the security policy.
 - Local checks (pre-commit hooks: formatting, lint, typing, tests,
   secrets, anonymity, image metadata, hidden characters and local-only
-  files), replayed by CI on Ubuntu and Windows with Python 3.14 and
-  3.15, with an 80 % branch coverage floor.
+  files), replayed by CI on Ubuntu and Windows with Python 3.12, 3.13
+  and 3.14, with an 80 % branch coverage floor.
 - Release workflow: build checked, provenance and SBOM attested,
   publication through Trusted Publishing.
 - First algorithms, pure Python, provisional API until version 1.0
@@ -55,7 +55,7 @@ and this project adheres to
   reproducible property-based tests (Hypothesis).
 - Runtime dependencies NumPy and SciPy (wheels for every supported
   platform). Lower bounds are the first releases with wheels for each
-  Python version: NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14, NumPy
+  Python version: NumPy 2.3.2 and SciPy 1.16.1 up to Python 3.14, NumPy
   2.5.2 and SciPy 1.18.1 on Python 3.15. `import protee` does not import
   them.
 - `protee.constraints`: requirements (normalized statements taken from a
@@ -129,3 +129,43 @@ and this project adheres to
   hand-built reference life-cycle profiles, with edge cases (non-zero
   minimum, zero or infinite maxima, unattainable or non-binding maxima,
   overconstrained system, multiple optima).
+- Node-link exchange format `protee-node-link/0` (`protee.io`), for
+  typed graphs shared with other projects: a `graph` block with the
+  format, the producer, an optional label, description and language tag,
+  prefixes (an IRI, or null) and a declared vocabulary (the values of
+  `type`, `status`, `role`… for nodes or for edges, a value used on both
+  declared once for each); opaque node identifiers (an IRI is
+  allowed) with an optional `iri`; integer edge keys. The format is
+  written by `to_node_link` and `write_node_link` (with `attributes` and
+  `multigraph`), read without loss by `from_node_link`, which keeps the
+  `graph` block, the `multigraph` flag and the edge keys in a read-only
+  `Table`, and checked by `check_node_link`, which lists every departure
+  from the format.
+- `protee.viz`, drawing of node-link documents, without dependency:
+  `select` (the nodes reached from starting nodes up to a depth, filtered
+  by type, family or metric, their neighbours outside the selection marked
+  and the neighbours not shown counted), `collapse` (one node per family)
+  and `to_dot` (Graphviz DOT text, with default styles drawn from the
+  declared vocabulary and told apart without colours, a style table given
+  by the caller, `order_by` for a numeric attribute, and a legend).
+- `protee.viz.condense` (one node per loop: the strongly connected
+  components of `protee.structure`) and `protee.viz.reduce` (the
+  transitive reduction of one relation), without dependency.
+- `protee.viz.render_html`: a page to explore a document, which opens
+  offline: the layout and styles of `render_svg`, groups (families or
+  loops) collapsed and expanded, tooltips, links and a legend. It embeds
+  cytoscape.js 3.35.0 and cytoscape-expand-collapse 4.1.1, under the MIT
+  licence (`src/protee/_assets/NOTICE.md`); the distribution's licence
+  expression is `BSD-3-Clause AND MIT`.
+- Default drawing styles: no yellow lines, and a symmetric relation draws
+  its head at both ends, so that symmetric relations are told apart
+  without colours.
+- `protee.viz.render_svg`: SVG drawing laid out by Graphviz, with the
+  optional extra `viz` (pygraphviz, which bundles Graphviz); labels stay
+  text in system fonts, nothing is fetched, and the same document gives
+  the same SVG.
+- Legend of the drawings: a node value that sets no shape is shown with
+  the shape of the nodes that carry it, or as a rounded box when they have
+  several; `render_svg` takes `legend="right"`, `"below"` (laid out apart
+  and drawn under the graph) or `None`; `protee.viz.render_legend_svg`
+  draws the legend alone, one column per attribute.

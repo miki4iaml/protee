@@ -4,6 +4,8 @@
 """Useful failure: conflicts, relaxations, tiers and impacts, on routes and
 on life-cycle profiles."""
 
+from __future__ import annotations
+
 import itertools
 import math
 import random

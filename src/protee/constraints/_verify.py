@@ -3,6 +3,8 @@
 
 """Verification of a route or a flow against requirements."""
 
+from __future__ import annotations
+
 import itertools
 import math
 from collections.abc import Iterator, Mapping, Sequence

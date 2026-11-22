@@ -3,6 +3,8 @@
 
 """Arc attributes, with an explicit unknown."""
 
+from __future__ import annotations
+
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field

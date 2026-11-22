@@ -1,6 +1,6 @@
 # Continuous integration: replays the local checks (pre-commit) and
 # runs the tests on the complete, blocking matrix, Ubuntu and Windows x
-# Python 3.14 and 3.15 (the minimum, and the next version as a canary).
+# Python 3.12, 3.13 and 3.14.
 #
 # Actions pinned by commit SHA (enforced by the repository); updated by
 # Dependabot. Job names are required checks in the rulesets: renaming
@@ -89,7 +89,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.14", "3.15"]
+        python: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

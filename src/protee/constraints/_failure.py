@@ -3,6 +3,8 @@
 
 """Useful failure: minimal conflicts, relaxations, tiers and impacts."""
 
+from __future__ import annotations
+
 import itertools
 import math
 import operator

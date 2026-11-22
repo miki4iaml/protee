@@ -3,6 +3,8 @@
 
 """Tests for the release script ``scripts/absolute_links.py``."""
 
+from __future__ import annotations
+
 import importlib.util
 import io
 import tarfile
