@@ -74,12 +74,21 @@ valeurs tiré d'un texte public, à des fins de test et d'illustration.
 
 ## Installation
 
-Le paquet n'est pas encore publié. Depuis un clone du dépôt, avec
-[uv](https://docs.astral.sh/uv/) et Python 3.12 ou plus récent :
+Depuis PyPI, avec Python 3.12 ou plus récent :
 
 ```
-uv sync
+pip install protee
 ```
+
+Le dessin en SVG et la page à explorer (`protee.viz.render_svg`,
+`protee.viz.render_html`) demandent l'extra facultatif `viz` :
+
+```
+pip install "protee[viz]"
+```
+
+Pour travailler sur protee lui-même, voir le
+[guide de contribution](.github/CONTRIBUTING.fr.md).
 
 ## Contribuer
 
