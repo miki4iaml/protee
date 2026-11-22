@@ -93,4 +93,9 @@ and the rules shared by contributors and coding agents in
 
 [BSD-3-Clause](LICENSE). The page written by `protee.viz.render_html`
 embeds cytoscape.js and cytoscape-expand-collapse, under the MIT licence
-([notice](src/protee/_assets/NOTICE.md)).
+([notice](src/protee/_assets/NOTICE.md)); the embedded value set reuses a
+public text under the [Licence Ouverte 2.0](https://spdx.org/licenses/etalab-2.0.html),
+credited in its notice.
+
+How protee runs, is developed and published, and what it ships:
+[security, supply chain and compliance](docs/security-and-compliance.md).
