@@ -86,6 +86,9 @@ class Table:
         prefixes, vocabulary…), read-only.
     multigraph : bool
         Whether the document allows parallel edges.
+    ids : tuple of str or int, optional
+        The node identifiers of a node-link document, as read (texts or
+        integers), one per node.
     """
 
     graph: Digraph
@@ -93,6 +96,7 @@ class Table:
     nodes: Mapping[str, tuple[Any, ...]]
     attributes: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     multigraph: bool = True
+    ids: tuple[str | int, ...] | None = None
 
 
 def _check(
@@ -113,11 +117,12 @@ def to_node_link(
     *,
     attributes: Mapping[str, Any] | None = None,
     multigraph: bool = True,
+    ids: Sequence[str | int] | None = None,
 ) -> dict[str, Any]:
     """Node-link dictionary of a graph and its attribute columns.
 
-    Nodes are identified by their labels (or their indices when the graph
-    has none). Each edge carries a ``key``: the value of an arc column
+    Nodes are identified by ``ids`` when given, else by their labels (or
+    their indices when the graph has none). Each edge carries a ``key``: the value of an arc column
     named ``key`` when it is not ``None``, else the smallest integer that
     no other edge between the same two nodes uses. ``null`` is written only
     in the entries of ``prefixes`` and of ``metrics``, where it is a value:
@@ -135,6 +140,9 @@ def to_node_link(
         ``format`` is :data:`NODE_LINK_FORMAT`.
     multigraph : bool
         ``False`` declares that no two arcs join the same two nodes.
+    ids : sequence of str or int, optional
+        The identifier of each node, unique: for instance the
+        :attr:`Table.ids` of a document read by :func:`from_node_link`.
 
     Returns
     -------
@@ -145,10 +153,12 @@ def to_node_link(
     ------
     ValueError
         If a column has another size or a reserved name, a key is repeated
-        between the same two nodes, ``attributes`` names another format, or
-        ``multigraph`` is false while two arcs join the same nodes.
+        between the same two nodes, ``ids`` has another size or a repeated
+        identifier, ``attributes`` names another format, or ``multigraph``
+        is false while two arcs join the same nodes.
     TypeError
-        If a key is not an integer.
+        If a key is not an integer, or an identifier neither a text nor an
+        integer.
     """
     arcs = _check("arc", arcs, graph.m)
     nodes = _check("node", nodes, graph.n)
@@ -161,9 +171,7 @@ def to_node_link(
         raise ValueError(f"format {block['format']!r} is not {NODE_LINK_FORMAT!r}")
     if not multigraph and len(set(graph.arcs())) < graph.m:
         raise ValueError("parallel arcs in a graph declared not to be a multigraph")
-    ident: list[Any] = (
-        list(range(graph.n)) if graph.labels is None else list(graph.labels)
-    )
+    ident = _identifiers(graph, ids)
     keys = _keys(graph, arcs.get("key"))
 
     def values(columns: Mapping[str, Sequence[Any]], i: int) -> dict[str, Any]:
@@ -215,6 +223,22 @@ def _written(key: str, value: Any) -> Any:
     return value
 
 
+def _identifiers(graph: Digraph, ids: Sequence[Any] | None) -> list[Any]:
+    """The node identifiers: those given, else the labels, else the indices."""
+    if ids is None:
+        return list(range(graph.n)) if graph.labels is None else list(graph.labels)
+    ident = list(ids)
+    if len(ident) != graph.n:
+        raise ValueError(f"ids: expected {graph.n} identifiers, got {len(ident)}")
+    if bad := [
+        i for i in ident if isinstance(i, bool) or not isinstance(i, (str, int))
+    ]:
+        raise TypeError(f"ids: {bad[0]!r} is neither a text nor an integer")
+    if len(set(ident)) < len(ident):
+        raise ValueError("ids: an identifier is repeated")
+    return ident
+
+
 def _keys(graph: Digraph, given: Sequence[Any] | None) -> list[int]:
     """The key of each arc: the one given, else the smallest one free."""
     keys: list[int | None] = list(given) if given is not None else [None] * graph.m
@@ -245,9 +269,11 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
     in the arc column ``key``. A node attribute or an edge attribute missing
     somewhere is ``None`` there. The ``graph`` block is kept, read-only, in
     :attr:`Table.attributes`; it is not checked (see :func:`check_node_link`).
-    Node identifiers become the labels of the graph, as texts, except
-    integer identifiers that are exactly 0 to n - 1 in order, which stay the
-    node indices.
+    The node identifiers are kept as read, texts or integers, in
+    :attr:`Table.ids`, which :func:`to_node_link` writes back. They also
+    become the labels of the graph, as texts, unless they are exactly the
+    integers 0 to n - 1 in order, or two of them write the same text (``1``
+    and ``"1"``): the graph then keeps the node indices.
 
     Parameters
     ----------
@@ -261,8 +287,7 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
     Raises
     ------
     ValueError
-        If the data is not directed, an edge refers to an unknown node, or
-        two identifiers write the same text (``1`` and ``"1"``).
+        If the data is not directed, or an edge refers to an unknown node.
     KeyError
         If a node has no ``id``.
     """
@@ -271,8 +296,9 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
     raw_nodes = list(data.get("nodes", []))
     raw_edges = list(data.get("edges", data.get("links", [])))
     ids = [node["id"] for node in raw_nodes]
+    texts = tuple(str(i) for i in ids)
     numeric = ids == list(range(len(ids)))
-    labels = None if numeric else tuple(str(i) for i in ids)
+    labels = None if numeric or len(set(texts)) < len(texts) else texts
     index = {i: v for v, i in enumerate(ids)}
     arcs = []
     for e in raw_edges:
@@ -295,6 +321,7 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
         ),
         _freeze(data.get("graph") or {}),
         bool(data.get("multigraph", True)),
+        tuple(ids),
     )
 
 
@@ -306,6 +333,7 @@ def write_node_link(
     *,
     attributes: Mapping[str, Any] | None = None,
     multigraph: bool = True,
+    ids: Sequence[str | int] | None = None,
 ) -> None:
     """Write :func:`to_node_link` as a JSON file, in UTF-8 with LF line ends.
 
@@ -315,7 +343,7 @@ def write_node_link(
     Parameters
     ----------
     path : Path
-    graph, arcs, nodes, attributes, multigraph
+    graph, arcs, nodes, attributes, multigraph, ids
         As :func:`to_node_link`.
 
     Raises
@@ -326,7 +354,7 @@ def write_node_link(
         For a value that is not JSON data.
     """
     data = to_node_link(
-        graph, arcs, nodes, attributes=attributes, multigraph=multigraph
+        graph, arcs, nodes, attributes=attributes, multigraph=multigraph, ids=ids
     )
     text = json.dumps(
         data, ensure_ascii=False, indent=1, allow_nan=False, default=_scalar

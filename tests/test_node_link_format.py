@@ -173,6 +173,7 @@ def rewritten(table: io.Table) -> dict[str, Any]:
         table.nodes,
         attributes=table.attributes,
         multigraph=table.multigraph,
+        ids=table.ids,
     )
 
 
@@ -208,6 +209,7 @@ def test_examples_round_trip_without_loss(name: str, tmp_path: Path) -> None:
         table.nodes,
         attributes=table.attributes,
         multigraph=table.multigraph,
+        ids=table.ids,
     )
     again = io.read_node_link(path)
     assert rewritten(again) == expected
@@ -493,6 +495,37 @@ def test_a_null_key_means_an_absent_one() -> None:
         "edges": [{"source": 0, "target": 1, "key": None}],
     }
     follows(plain)
+
+
+def test_node_ids_are_kept_as_read() -> None:
+    g = nx.MultiDiGraph()
+    g.add_edges_from([(1, 2), (2, 3), (3, 1)])
+    data = nx.node_link_data(g, edges="edges")
+    data["graph"] = {"format": io.NODE_LINK_FORMAT}
+    follows(data)
+    table = io.from_node_link(data)
+    assert table.ids == (1, 2, 3)
+    assert rewritten(table) == data  # integers stay integers
+    assert nx.node_link_graph(rewritten(table), edges="edges").nodes == g.nodes
+    mixed = {
+        **data,
+        "nodes": [{"id": 1}, {"id": "1"}, {"id": 0}],
+        "edges": [{"source": 1, "target": "1", "key": 0}],
+    }
+    follows(mixed)
+    table = io.from_node_link(mixed)
+    assert table.graph.labels is None  # 1 and "1" write the same text
+    assert rewritten(table) == mixed
+
+
+def test_writing_checks_the_ids_it_is_given() -> None:
+    g = Digraph.from_arcs(2, [(0, 1)])
+    with pytest.raises(ValueError, match="expected 2 identifiers"):
+        io.to_node_link(g, ids=["a"])
+    with pytest.raises(ValueError, match="is repeated"):
+        io.to_node_link(g, ids=["a", "a"])
+    with pytest.raises(TypeError, match="neither a text nor an integer"):
+        io.to_node_link(g, ids=["a", True])
 
 
 def test_keyless_parallel_edges_take_a_free_key() -> None:

@@ -129,8 +129,9 @@ CLOSING = {
 ```
 
 `viz.render_html` writes a page to explore the same documents offline
-(groups folded and unfolded, tooltips, and links for the nodes that have
-a `url`); it is not shown here, as it embeds the JavaScript of
+(groups folded and unfolded, filters by declared value and by family, a
+search in the labels, tooltips, and links for the nodes that have a
+`url`); it is not shown here, as it embeds the JavaScript of
 cytoscape.js.
 
 This page and its drawings are written by

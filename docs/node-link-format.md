@@ -60,7 +60,7 @@ without protee.
 | root | `multigraph` | yes | a boolean; when `false`, at most one edge per (source, target) pair |
 | root | `graph`, `nodes`, `edges` | yes | an object, an array, an array; `links` is read in place of `edges` |
 | `graph` | `format` | yes | `"protee-node-link/0"` |
-| `graph` | `producer` | no | `{"name", "version"}`: who wrote the file, for traceability |
+| `graph` | `producer` | no | `{"name", "version"?}`: who wrote the file, for traceability |
 | `graph` | `language` | no | a BCP 47 language tag (`"en"`, `"fr-FR"`): the language of the labels |
 | `graph` | `label`, `description` | no | texts: the name and description of the whole graph (the title or caption of a figure) |
 | `graph` | `prefixes` | no | prefix → IRI, or `null` for a producer without a published namespace (its identifiers then do not export to RDF); every prefix used is declared here |
@@ -109,9 +109,8 @@ passes the schema.
   document from these rules, an empty tuple when there is none.
 - `protee.io.to_node_link` and `protee.io.write_node_link` write a graph
   of protee with its attribute columns; `protee.io.from_node_link` and
-  `protee.io.read_node_link` read a document: the `graph` block, the
-  `multigraph` flag and the edge keys are kept; node identifiers become
-  the labels of the graph, as texts, except integer identifiers that are
-  exactly 0 to n − 1 in order, kept as node indices.
+  `protee.io.read_node_link` read a document without loss: the `graph`
+  block, the `multigraph` flag, the edge keys and the node identifiers,
+  texts or integers, are kept.
 - `protee.viz` draws a document (selection, groups, loops, SVG, a page to
   explore it offline): see the [gallery](gallery/README.md).

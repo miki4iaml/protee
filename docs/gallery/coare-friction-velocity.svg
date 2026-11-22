@@ -7,6 +7,7 @@
 <svg width="1598pt" height="702pt"
  viewBox="0.00 0.00 1598.00 702.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <svg x="0.00" y="0.00" width="1598.00" height="514.00" viewBox="0.00 0.00 1598.00 514.00">
+<style>.protee_outside text { font-style: italic; }</style>
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 509.75)">
 <title>Surface&#45;layer scales of COARE 3.6, solved together (COARE 3.6 code)</title>
 <g id="a_graph0"><a xlink:title="The loop of the code (lines 480 to 595) over the formulations of the catalog, in the order of the code: the Obukhov length from the scales of the previous pass, the roughness lengths, the scales, the gustiness, the wind with it, the neutral wind at 10 m and the Charnock coefficient. Its unknowns, read before they are computed in a pass, are the three scales, the Charnock coefficient and the wind with gustiness. The code runs 10 passes without a test of convergence (line 473); Newton&#39;s method solves the equations themselves. The first guess is simpler than the code&#39;s (lines 380 to 477, which take psiu_40 and a relation from the bulk Richardson number, not in the catalog): the scales of a neutral profile, k / ln(17 m / 1e&#45;4 m) = 0.033 times the differences between air and surface (for the temperature with the lapse g z_t / c_pa, as dT of line 383), a gustiness of 0.5 m/s, and a Charnock coefficient of 0.011, which the code sets at line 452 and replaces by a1 u10 + a2 at line 457. Left out: the cool skin, which the code computes in the loop, and the warm layer, which a separate function computes before calling it (line 35), the surface temperature and humidity being inputs (the skin temperature and Qs of the output of the code, in its test data); the Charnock coefficient from the waves where they are given (lines 463 to 477 and 592 to 595), the system being the code run without them; and, where its first guess gives zeta_u &gt; 50 (line 431), the scales of the first pass and the Obukhov length it started from, which the code keeps (lines 578 to 586 and 600 to 607), where the system gives the solution of its equations. Over ice, the code takes z_0 = 5e&#45;4 m (line 484): not here. Below 2.94 m/s the Charnock coefficient is negative, beyond the bounds of its kind; the code takes it, its smooth&#45;flow term keeping the roughness length positive (outside = ignore for both).">
@@ -24,10 +25,10 @@
 </g>
 </g>
 <!-- variables.L -->
-<g id="node12" class="node">
+<g id="node12" class="node protee_outside">
 <title>variables.L</title>
 <g id="a_node12"><a xlink:title="Obukhov length">
-<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="5,2" points="642.51,-334.5 588.51,-334.5 588.51,-295 642.51,-295 642.51,-334.5"/>
+<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="1,5" points="642.51,-334.5 588.51,-334.5 588.51,-295 642.51,-295 642.51,-334.5"/>
 <text xml:space="preserve" text-anchor="middle" x="615.51" y="-317.2" font-family="Helvetica,Arial,sans-serif" font-size="14.00">L</text>
 <text xml:space="preserve" text-anchor="middle" x="615.51" y="-301.45" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+2</text>
 </a>
@@ -49,10 +50,10 @@
 </g>
 </g>
 <!-- variables.z_0M -->
-<g id="node15" class="node">
+<g id="node15" class="node protee_outside">
 <title>variables.z_0M</title>
 <g id="a_node15"><a xlink:title="Roughness length for momentum">
-<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="5,2" points="1171.51,-332.75 1117.51,-332.75 1117.51,-296.75 1171.51,-296.75 1171.51,-332.75"/>
+<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="1,5" points="1171.51,-332.75 1117.51,-332.75 1117.51,-296.75 1171.51,-296.75 1171.51,-332.75"/>
 <text xml:space="preserve" text-anchor="middle" x="1144.51" y="-309.32" font-family="Helvetica,Arial,sans-serif" font-size="14.00">z_0M</text>
 </a>
 </g>
@@ -73,10 +74,10 @@
 </g>
 </g>
 <!-- variables.R_r -->
-<g id="node16" class="node">
+<g id="node16" class="node protee_outside">
 <title>variables.R_r</title>
 <g id="a_node16"><a xlink:title="Roughness Reynolds number">
-<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="5,2" points="1272.51,-187 1218.51,-187 1218.51,-147.5 1272.51,-147.5 1272.51,-187"/>
+<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="1,5" points="1272.51,-187 1218.51,-187 1218.51,-147.5 1272.51,-147.5 1272.51,-187"/>
 <text xml:space="preserve" text-anchor="middle" x="1245.51" y="-169.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">R_r</text>
 <text xml:space="preserve" text-anchor="middle" x="1245.51" y="-153.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+2</text>
 </a>
@@ -122,10 +123,10 @@
 </g>
 </g>
 <!-- variables.Q_0v -->
-<g id="node20" class="node">
+<g id="node20" class="node protee_outside">
 <title>variables.Q_0v</title>
 <g id="a_node20"><a xlink:title="Virtual temperature flux, positive upward">
-<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="5,2" points="351.51,-39.5 297.51,-39.5 297.51,0 351.51,0 351.51,-39.5"/>
+<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="1,5" points="351.51,-39.5 297.51,-39.5 297.51,0 351.51,0 351.51,-39.5"/>
 <text xml:space="preserve" text-anchor="middle" x="324.51" y="-22.2" font-family="Helvetica,Arial,sans-serif" font-size="14.00">Q_0v</text>
 <text xml:space="preserve" text-anchor="middle" x="324.51" y="-6.45" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -147,10 +148,10 @@
 </g>
 </g>
 <!-- variables.U_10N -->
-<g id="node22" class="node">
+<g id="node22" class="node protee_outside">
 <title>variables.U_10N</title>
 <g id="a_node22"><a xlink:title="Equivalent neutral wind speed at 10 m">
-<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="5,2" points="1113.51,-39.5 1055.51,-39.5 1055.51,0 1113.51,0 1113.51,-39.5"/>
+<polygon fill="#009e73" stroke="#7f7f7f" stroke-dasharray="1,5" points="1113.51,-39.5 1055.51,-39.5 1055.51,0 1113.51,0 1113.51,-39.5"/>
 <text xml:space="preserve" text-anchor="middle" x="1084.51" y="-22.2" font-family="Helvetica,Arial,sans-serif" font-size="14.00">U_10N</text>
 <text xml:space="preserve" text-anchor="middle" x="1084.51" y="-6.45" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -163,10 +164,10 @@
 <polygon fill="#e69f00" stroke="#e69f00" points="1088.01,-51.49 1084.51,-41.49 1081.01,-51.49 1088.01,-51.49"/>
 </g>
 <!-- variables.T -->
-<g id="node7" class="node">
+<g id="node7" class="node protee_outside">
 <title>variables.T</title>
 <g id="a_node7"><a xlink:title="Air temperature">
-<polygon fill="#e69f00" stroke="#7f7f7f" stroke-dasharray="5,2" points="504.51,-482 450.51,-482 450.51,-442.5 504.51,-442.5 504.51,-482"/>
+<polygon fill="#e69f00" stroke="#7f7f7f" points="504.51,-482 450.51,-482 450.51,-442.5 504.51,-442.5 504.51,-482"/>
 <text xml:space="preserve" text-anchor="middle" x="477.51" y="-464.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">T</text>
 <text xml:space="preserve" text-anchor="middle" x="477.51" y="-448.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+2</text>
 </a>
@@ -215,10 +216,10 @@
 <polygon fill="none" stroke="#56b4e9" points="990.67,-117.26 999.77,-111.82 989.27,-110.4 990.67,-117.26"/>
 </g>
 <!-- variables.T_s -->
-<g id="node9" class="node">
+<g id="node9" class="node protee_outside">
 <title>variables.T_s</title>
 <g id="a_node9"><a xlink:title="Scale of potential temperature of the surface layer">
-<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-dasharray="5,2" points="423.51,-187 369.51,-187 369.51,-147.5 423.51,-147.5 423.51,-187"/>
+<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-width="2" points="423.51,-187 369.51,-187 369.51,-147.5 423.51,-147.5 423.51,-187"/>
 <text xml:space="preserve" text-anchor="middle" x="396.51" y="-169.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">T_s</text>
 <text xml:space="preserve" text-anchor="middle" x="396.51" y="-153.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -237,10 +238,10 @@
 <polygon fill="none" stroke="#56b4e9" points="352.52,-117.47 342.96,-112.89 347.58,-122.42 352.52,-117.47"/>
 </g>
 <!-- variables.q_s -->
-<g id="node10" class="node">
+<g id="node10" class="node protee_outside">
 <title>variables.q_s</title>
 <g id="a_node10"><a xlink:title="Scale of specific humidity of the surface layer">
-<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-dasharray="5,2" points="241.51,-187 187.51,-187 187.51,-147.5 241.51,-147.5 241.51,-187"/>
+<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-width="2" points="241.51,-187 187.51,-187 187.51,-147.5 241.51,-147.5 241.51,-187"/>
 <text xml:space="preserve" text-anchor="middle" x="214.51" y="-169.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">q_s</text>
 <text xml:space="preserve" text-anchor="middle" x="214.51" y="-153.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -259,10 +260,10 @@
 <polygon fill="none" stroke="#56b4e9" points="290.42,-120.92 296.88,-112.52 286.59,-115.06 290.42,-120.92"/>
 </g>
 <!-- variables.g -->
-<g id="node11" class="node">
+<g id="node11" class="node protee_outside">
 <title>variables.g</title>
 <g id="a_node11"><a xlink:title="Acceleration of gravity at the latitude">
-<polygon fill="#e69f00" stroke="#7f7f7f" stroke-dasharray="5,2" points="690.51,-482 636.51,-482 636.51,-442.5 690.51,-442.5 690.51,-482"/>
+<polygon fill="#e69f00" stroke="#7f7f7f" points="690.51,-482 636.51,-482 636.51,-442.5 690.51,-442.5 690.51,-482"/>
 <text xml:space="preserve" text-anchor="middle" x="663.51" y="-464.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">g</text>
 <text xml:space="preserve" text-anchor="middle" x="663.51" y="-448.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+2</text>
 </a>
@@ -287,10 +288,10 @@
 <polygon fill="none" stroke="#56b4e9" points="697.04,-268.27 703.77,-260.09 693.41,-262.29 697.04,-268.27"/>
 </g>
 <!-- variables.alpha -->
-<g id="node13" class="node">
+<g id="node13" class="node protee_outside">
 <title>variables.alpha</title>
 <g id="a_node13"><a xlink:title="Charnock coefficient">
-<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-dasharray="5,2" points="1508.51,-482 1454.51,-482 1454.51,-442.5 1508.51,-442.5 1508.51,-482"/>
+<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-width="2" points="1508.51,-482 1454.51,-482 1454.51,-442.5 1508.51,-442.5 1508.51,-482"/>
 <text xml:space="preserve" text-anchor="middle" x="1481.51" y="-464.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">alpha</text>
 <text xml:space="preserve" text-anchor="middle" x="1481.51" y="-448.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -303,10 +304,10 @@
 <polygon fill="none" stroke="#56b4e9" points="1325.92,-405.28 1315.41,-406.62 1324.46,-412.13 1325.92,-405.28"/>
 </g>
 <!-- variables.nu -->
-<g id="node14" class="node">
+<g id="node14" class="node protee_outside">
 <title>variables.nu</title>
 <g id="a_node14"><a xlink:title="Kinematic viscosity of the air">
-<polygon fill="#e69f00" stroke="#7f7f7f" stroke-dasharray="5,2" points="1436.51,-480.25 1382.51,-480.25 1382.51,-444.25 1436.51,-444.25 1436.51,-480.25"/>
+<polygon fill="#e69f00" stroke="#7f7f7f" points="1436.51,-480.25 1382.51,-480.25 1382.51,-444.25 1436.51,-444.25 1436.51,-480.25"/>
 <text xml:space="preserve" text-anchor="middle" x="1409.51" y="-456.82" font-family="Helvetica,Arial,sans-serif" font-size="14.00">nu</text>
 </a>
 </g>
@@ -342,10 +343,10 @@
 <polygon fill="none" stroke="#56b4e9" points="1082.97,-123.63 1080.99,-113.22 1076.04,-122.59 1082.97,-123.63"/>
 </g>
 <!-- variables.S -->
-<g id="node17" class="node">
+<g id="node17" class="node protee_outside">
 <title>variables.S</title>
 <g id="a_node17"><a xlink:title="Mean wind speed relative to the sea surface, gustiness included">
-<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-dasharray="5,2" points="1153.51,-187 1099.51,-187 1099.51,-147.5 1153.51,-147.5 1153.51,-187"/>
+<polygon fill="#56b4e9" stroke="#7f7f7f" stroke-width="2" points="1153.51,-187 1099.51,-187 1099.51,-147.5 1153.51,-147.5 1153.51,-187"/>
 <text xml:space="preserve" text-anchor="middle" x="1126.51" y="-169.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">S</text>
 <text xml:space="preserve" text-anchor="middle" x="1126.51" y="-153.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -364,10 +365,10 @@
 <polygon fill="none" stroke="#56b4e9" points="1103.49,-119.99 1095.42,-113.12 1097.45,-123.52 1103.49,-119.99"/>
 </g>
 <!-- variables.z_u -->
-<g id="node18" class="node">
+<g id="node18" class="node protee_outside">
 <title>variables.z_u</title>
 <g id="a_node18"><a xlink:title="Height of the wind">
-<polygon fill="#e69f00" stroke="#7f7f7f" stroke-dasharray="5,2" points="760.51,-332.75 706.51,-332.75 706.51,-296.75 760.51,-296.75 760.51,-332.75"/>
+<polygon fill="#e69f00" stroke="#7f7f7f" points="760.51,-332.75 706.51,-332.75 706.51,-296.75 760.51,-296.75 760.51,-332.75"/>
 <text xml:space="preserve" text-anchor="middle" x="733.51" y="-309.32" font-family="Helvetica,Arial,sans-serif" font-size="14.00">z_u</text>
 </a>
 </g>
@@ -379,10 +380,10 @@
 <polygon fill="none" stroke="#56b4e9" points="737.01,-270.97 733.51,-260.97 730.01,-270.97 737.01,-270.97"/>
 </g>
 <!-- variables.q -->
-<g id="node19" class="node">
+<g id="node19" class="node protee_outside">
 <title>variables.q</title>
 <g id="a_node19"><a xlink:title="Specific humidity of the air at z_q">
-<polygon fill="#e69f00" stroke="#7f7f7f" stroke-dasharray="5,2" points="351.51,-187 297.51,-187 297.51,-147.5 351.51,-147.5 351.51,-187"/>
+<polygon fill="#e69f00" stroke="#7f7f7f" points="351.51,-187 297.51,-187 297.51,-147.5 351.51,-147.5 351.51,-187"/>
 <text xml:space="preserve" text-anchor="middle" x="324.51" y="-169.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">q</text>
 <text xml:space="preserve" text-anchor="middle" x="324.51" y="-153.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -395,10 +396,10 @@
 <polygon fill="none" stroke="#56b4e9" points="328.01,-123.33 324.51,-113.33 321.01,-123.33 328.01,-123.33"/>
 </g>
 <!-- variables.U -->
-<g id="node21" class="node">
+<g id="node21" class="node protee_outside">
 <title>variables.U</title>
 <g id="a_node21"><a xlink:title="Mean wind speed relative to the sea surface">
-<polygon fill="#e69f00" stroke="#7f7f7f" stroke-dasharray="5,2" points="1344.51,-187 1290.51,-187 1290.51,-147.5 1344.51,-147.5 1344.51,-187"/>
+<polygon fill="#e69f00" stroke="#7f7f7f" points="1344.51,-187 1290.51,-187 1290.51,-147.5 1344.51,-147.5 1344.51,-187"/>
 <text xml:space="preserve" text-anchor="middle" x="1317.51" y="-169.7" font-family="Helvetica,Arial,sans-serif" font-size="14.00">U</text>
 <text xml:space="preserve" text-anchor="middle" x="1317.51" y="-153.95" font-family="Helvetica,Arial,sans-serif" font-size="14.00">+1</text>
 </a>
@@ -413,6 +414,7 @@
 </g>
 </svg>
 <svg x="480.00" y="526.00" width="638.00" height="176.00" viewBox="0.00 0.00 638.00 176.00">
+<style>.protee_outside text { font-style: italic; }</style>
 <g id="protee-legend-graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 172)">
 <title>legend</title>
 <polygon fill="white" stroke="none" points="-4,4 -4,-172 634.05,-172 634.05,4 -4,4"/>
@@ -510,9 +512,9 @@
 <text xml:space="preserve" text-anchor="middle" x="394.33" y="-136.45" font-family="Helvetica,Arial,sans-serif" font-size="14.00"> closes a loop </text>
 </g>
 <!-- protee:legend:8 -->
-<g id="protee-legend-node12" class="node">
+<g id="protee-legend-node12" class="node protee_outside">
 <title>protee:legend:8</title>
-<polygon fill="none" stroke="#7f7f7f" stroke-dasharray="5,2" points="614.05,-152 475.05,-152 475.05,-116 614.05,-116 614.05,-152"/>
+<polygon fill="none" stroke="#7f7f7f" points="614.05,-152 475.05,-152 475.05,-116 614.05,-116 614.05,-152"/>
 <text xml:space="preserve" text-anchor="middle" x="544.55" y="-128.57" font-family="Helvetica,Arial,sans-serif" font-size="14.00">outside the selection</text>
 </g>
 <!-- protee:legend:7:b&#45;&gt;protee:legend:8 -->
