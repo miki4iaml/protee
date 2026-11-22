@@ -285,6 +285,9 @@ class _Checker:
             return {}
         if block.get("format") != NODE_LINK_FORMAT:
             self.bad("graph.format", f"must be {NODE_LINK_FORMAT!r}")
+        for key in ("label", "description"):
+            if block.get(key) is not None and not isinstance(block[key], str):
+                self.bad(f"graph.{key}", "must be a text")
         language = block.get("language")
         if language is not None and not (
             isinstance(language, str) and _LANGUAGE.fullmatch(language)
