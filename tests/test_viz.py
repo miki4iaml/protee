@@ -17,10 +17,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import networkx as nx
 import pygraphviz as pgv
 import pytest
+from hypothesis import given
+from oracles import graphs
 
 from protee import io, viz
+from protee.graph import Digraph
 
 DATA = Path(__file__).parent / "data" / "node_link"
 COARE = "nomogram-0.8.0-coare36-surface-layer.json"
@@ -422,3 +426,112 @@ def test_render_svg_needs_the_viz_extra(monkeypatch: pytest.MonkeyPatch) -> None
 def test_importing_viz_does_not_import_graphviz() -> None:
     code = "import sys, protee.viz; assert 'pygraphviz' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+# Loops and transitive reduction (NetworkX as an independent oracle) -------
+
+
+def loops_of(doc: dict[str, Any]) -> list[set[Any]]:
+    return [
+        set(n[viz.CONTAINS]) for n in doc["nodes"] if n.get(viz.DISPLAY) == viz.LOOP
+    ]
+
+
+def test_condense_folds_the_loop_of_coare() -> None:
+    data = load(COARE)
+    out = viz.condense(data)
+    assert io.check_node_link(out) == ()
+    oracle = [
+        c
+        for c in nx.strongly_connected_components(
+            nx.node_link_graph(data, edges="edges")
+        )
+        if len(c) > 1
+    ]
+    assert loops_of(out) == oracle
+    (loop,) = (n for n in out["nodes"] if n.get(viz.DISPLAY) == viz.LOOP)
+    assert (loop["label"], loop["metrics"]) == ("⟳ 26", {viz.MEMBERS: 26})
+    assert len(out["nodes"]) == 37 - 26 + 1
+    rest = nx.DiGraph(nx.node_link_graph(out, edges="edges"))
+    rest.remove_edges_from(nx.selfloop_edges(rest))
+    assert nx.is_directed_acyclic_graph(rest)
+    g = drawn(viz.to_dot(out))
+    assert g.get_node(loop["id"]).attr["peripheries"] == "3"
+
+
+def test_condense_keeps_the_order_and_single_node_loops() -> None:
+    doc = document(
+        [{"id": i} for i in "abcdef"],
+        [
+            ("a", "b"),
+            ("b", "a"),
+            ("b", "c"),
+            ("c", "d"),
+            ("d", "e"),
+            ("e", "c"),
+            ("f", "f"),
+        ],
+    )
+    out = viz.condense(doc)
+    assert ids(out) == ["loop:a", "loop:c", "f"]
+    assert loops_of(out) == [{"a", "b"}, {"c", "d", "e"}]
+    assert pairs(out) == [("loop:a", "loop:c"), ("f", "f")]
+    assert viz.condense(chain()) == chain()
+
+
+@given(graph=graphs())
+def test_condense_finds_the_components_of_networkx(graph: Digraph) -> None:
+    data = io.to_node_link(graph)
+    expected = [
+        c
+        for c in nx.strongly_connected_components(
+            nx.node_link_graph(data, edges="edges")
+        )
+        if len(c) > 1
+    ]
+    found = loops_of(viz.condense(data))
+    assert sorted(map(sorted, found)) == sorted(map(sorted, expected))
+
+
+@given(graph=graphs())
+def test_reduce_matches_the_transitive_reduction_of_networkx(graph: Digraph) -> None:
+    arcs = [(t, h) for t, h in graph.arcs() if t < h]  # without cycles
+    data = io.to_node_link(
+        Digraph.from_arcs(graph.n, arcs), arcs={"type": ["x:r"] * len(arcs)}
+    )
+    out = viz.reduce(data, edge_type="x:r")
+    oracle = nx.transitive_reduction(nx.DiGraph(arcs) if arcs else nx.DiGraph())
+    assert set(pairs(out)) == set(oracle.edges)
+    assert len(pairs(out)) == len(set(pairs(out)))
+
+
+def test_reduce_leaves_other_relations_and_refuses_cycles() -> None:
+    doc = document(
+        [{"id": i} for i in "abcd"],
+        [
+            {"source": "a", "target": "b", "type": "x:r"},
+            {"source": "a", "target": "b", "type": "x:r"},
+            {"source": "b", "target": "c", "type": "x:r"},
+            {"source": "a", "target": "c", "type": "x:r"},
+            {"source": "a", "target": "c", "type": "x:s"},
+            {"source": "c", "target": "d"},
+        ],
+    )
+    out = viz.reduce(doc, edge_type="x:r")
+    assert [(e["source"], e["target"], e.get("type")) for e in out["edges"]] == [
+        ("a", "b", "x:r"),
+        ("b", "c", "x:r"),
+        ("a", "c", "x:s"),
+        ("c", "d", None),
+    ]
+    kinds = load(KINDS)
+    tree = viz.reduce(kinds, edge_type="qudt:specializationOf")
+    assert tree == kinds  # a tree has nothing to reduce
+    cycle = document([{"id": "a"}, {"id": "b"}], [("a", "b"), ("b", "a")])
+    for edge in cycle["edges"]:
+        edge["type"] = "x:r"
+    with pytest.raises(ValueError, match="form a cycle"):
+        viz.reduce(cycle, edge_type="x:r")
+    loop = document([{"id": "a"}], [{"source": "a", "target": "a", "type": "x:r"}])
+    with pytest.raises(ValueError, match="form a cycle"):
+        viz.reduce(loop, edge_type="x:r")

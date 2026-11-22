@@ -9,9 +9,9 @@ of documents does not need protee's model. Nothing here depends on a
 producer: the legend comes from the vocabulary declared in the document,
 the styles from a table given by the caller.
 
-- :func:`select` and :func:`collapse` turn a document into a document that
-  follows the format; the marks they add are declared under the
-  ``protee`` prefix (:data:`DISPLAY`);
+- :func:`select`, :func:`collapse`, :func:`condense` and :func:`reduce`
+  turn a document into a document that follows the format; the marks they
+  add are declared under the ``protee`` prefix (:data:`DISPLAY`);
 - :func:`to_dot` writes the Graphviz DOT text of a document, without any
   dependency;
 - :func:`render_svg` lays it out and draws it in SVG through Graphviz,
@@ -30,19 +30,24 @@ from collections import deque
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from protee.io import check_node_link
+from protee.graph import Digraph
+from protee.io import check_node_link, from_node_link
+from protee.structure import strong_components
 
 __all__ = [
     "CONTAINS",
     "DISPLAY",
     "GROUP",
     "HIDDEN",
+    "LOOP",
     "MEMBERS",
     "MERGED",
     "OKABE_ITO",
     "OUTSIDE",
     "Styles",
     "collapse",
+    "condense",
+    "reduce",
     "render_svg",
     "select",
     "to_dot",
@@ -52,6 +57,7 @@ __all__ = [
 DISPLAY = "protee:display"
 OUTSIDE = "protee:outside"
 GROUP = "protee:group"
+LOOP = "protee:loop"
 #: Metrics protee adds: the neighbours not shown, the members of a group,
 #: the edges merged into one.
 HIDDEN = "protee:hidden"
@@ -98,6 +104,12 @@ _MARKS: dict[str, dict[str, str]] = {
         "on": "node",
         "label": "group",
         "description": "nodes sharing a value, shown as one",
+    },
+    LOOP: {
+        "id": LOOP,
+        "on": "node",
+        "label": "loop",
+        "description": "nodes on a common cycle, shown as one",
     },
 }
 
@@ -265,24 +277,137 @@ def collapse(data: Mapping[str, Any], *, by: str = "family") -> dict[str, Any]:
     for node in doc["nodes"]:
         if node.get(by) is not None:
             members.setdefault(node[by], []).append(node["id"])
-    groups = {v: ids for v, ids in members.items() if len(ids) > 1}
+    groups = [
+        (f"{by}={value}", str(value), ids, {by: value})
+        for value, ids in members.items()
+        if len(ids) > 1
+    ]
+    return _merge(doc, groups, GROUP)
+
+
+def condense(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One node for each loop: the nodes of a common cycle, shown as one.
+
+    Each strongly connected component of two nodes or more becomes one
+    node, at the place of its first member, as in :func:`collapse`: its
+    identifier is ``"loop:<first member>"``, its label ``⟳ <size>``, marked
+    :data:`LOOP` under :data:`DISPLAY`, with its members under
+    :data:`CONTAINS` and their number in ``metrics[MEMBERS]``. The rest of
+    the graph no longer has any cycle, but for loops on one node.
+
+    The components are those of :func:`protee.structure.strong_components`.
+
+    Raises
+    ------
+    ValueError
+        If the document does not follow the format.
+    """
+    doc = _document(data)
+    component = strong_components(from_node_link(doc).graph)
+    members: dict[int, list[Any]] = {}
+    for node, c in zip(doc["nodes"], component, strict=True):
+        members.setdefault(c, []).append(node["id"])
+    # In the order of their first member, as the nodes are read.
+    groups: list[tuple[str, str, list[Any], dict[str, Any]]] = [
+        (f"loop:{ids[0]}", f"⟳ {len(ids)}", ids, {})
+        for ids in members.values()
+        if len(ids) > 1
+    ]
+    return _merge(doc, groups, LOOP)
+
+
+def reduce(data: Mapping[str, Any], *, edge_type: str) -> dict[str, Any]:
+    """The transitive reduction of one relation: fewer edges, same meaning.
+
+    An edge of type ``edge_type`` from ``u`` to ``v`` is left out when ``v``
+    is reached from ``u`` by a longer path of edges of that type: in a
+    hierarchy, a link to a grandparent that a parent already gives. A
+    second edge of that type between the same two nodes is left out too.
+    Edges of other types stay.
+
+    Raises
+    ------
+    ValueError
+        If the document does not follow the format, or the edges of that
+        type form a cycle.
+    """
+    doc = _document(data)
+    relation = [e for e in doc["edges"] if e.get("type") == edge_type]
+    successors: dict[Any, list[Any]] = {}
+    for e in relation:
+        successors.setdefault(e["source"], []).append(e["target"])
+    if any(
+        len(ids) > 1 or ids[0] in successors.get(ids[0], [])
+        for ids in _components(doc, successors)
+    ):
+        raise ValueError(f"the edges of type {edge_type!r} form a cycle")
+
+    def further(u: Any, v: Any) -> bool:
+        """Whether v is reached from u by a path of two edges or more."""
+        seen: set[Any] = set()
+        stack = [w for w in successors.get(u, []) if w != v]
+        while stack:
+            w = stack.pop()
+            if w == v:
+                return True
+            if w not in seen:
+                seen.add(w)
+                stack.extend(successors.get(w, []))
+        return False
+
+    kept, pairs = [], set()
+    for e in doc["edges"]:
+        if e.get("type") == edge_type:
+            pair = (e["source"], e["target"])
+            if pair in pairs or further(*pair):
+                continue
+            pairs.add(pair)
+        kept.append(e)
+    doc["edges"] = kept
+    return doc
+
+
+def _components(
+    doc: dict[str, Any], successors: Mapping[Any, list[Any]]
+) -> list[list[Any]]:
+    """The strongly connected components of a relation on the nodes."""
+    ids = [n["id"] for n in doc["nodes"]]
+    index = {i: k for k, i in enumerate(ids)}
+    arcs = [(index[u], index[v]) for u, vs in successors.items() for v in vs]
+    component = strong_components(Digraph.from_arcs(len(ids), arcs))
+    members: dict[int, list[Any]] = {}
+    for i, c in zip(ids, component, strict=True):
+        members.setdefault(c, []).append(i)
+    return list(members.values())
+
+
+def _merge(
+    doc: dict[str, Any],
+    groups: list[tuple[str, str, list[Any], dict[str, Any]]],
+    mark: str,
+) -> dict[str, Any]:
+    """Each group of nodes becomes one node; its edges are merged.
+
+    ``groups`` holds, for each group, a proposed identifier, a label, the
+    identifiers of its members and attributes to keep.
+    """
     if not groups:
         return doc
     taken = {n["id"] for n in doc["nodes"]}
     target: dict[Any, str] = {}
     by_id = {n["id"]: n for n in doc["nodes"]}
     group_nodes: dict[Any, dict[str, Any]] = {}
-    for value, ids in groups.items():
-        gid, k = f"{by}={value}", 1
+    for proposed, label, ids, attributes in groups:
+        gid, k = proposed, 1
         while gid in taken:
             k += 1
-            gid = f"{by}={value}#{k}"
+            gid = f"{proposed}#{k}"
         taken.add(gid)
-        group: dict[str, Any] = {"id": gid, "label": str(value), by: value}
+        group: dict[str, Any] = {"id": gid, "label": label, **attributes}
         shared = {by_id[i].get("type") for i in ids}
         if len(shared) == 1 and None not in shared:
             group["type"] = shared.pop()
-        group[DISPLAY] = GROUP
+        group[DISPLAY] = mark
         group[CONTAINS] = list(ids)
         group["metrics"] = {MEMBERS: len(ids)}
         group_nodes[ids[0]] = group
@@ -326,7 +451,7 @@ def collapse(data: Mapping[str, Any], *, by: str = "family") -> dict[str, Any]:
     doc["edges"] = kept
     pairs = [(e["source"], e["target"]) for e in kept]
     doc["multigraph"] = bool(doc["multigraph"]) or len(set(pairs)) < len(pairs)
-    _declare(doc, GROUP)
+    _declare(doc, mark)
     return doc
 
 
@@ -421,7 +546,7 @@ def to_dot(
       arrowhead, the second the line (dashed, dotted, bold); a symmetric
       value draws no arrow;
     - marks: :data:`OUTSIDE` is grey and dashed, :data:`GROUP` has a double
-      border.
+      border, :data:`LOOP` a triple one.
 
     Every distinction holds without the colours. The caller's styles
     complete and override the defaults.
@@ -472,6 +597,7 @@ def to_dot(
     node_defaults = _defaults(vocabulary, "node")
     node_defaults[(DISPLAY, OUTSIDE)] = {"style": "dashed", "color": "#7F7F7F"}
     node_defaults[(DISPLAY, GROUP)] = {"peripheries": "2"}
+    node_defaults[(DISPLAY, LOOP)] = {"peripheries": "3"}
     edge_defaults = _defaults(vocabulary, "edge")
     head = {"rankdir": direction, "fontname": _FONT}
     if block.get("label"):
