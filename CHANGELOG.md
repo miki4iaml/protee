@@ -19,7 +19,9 @@ and this project adheres to
   files), replayed by CI on Ubuntu and Windows with Python 3.12, 3.13
   and 3.14, with an 80 % branch coverage floor.
 - Release workflow: build checked, provenance and SBOM attested,
-  publication through Trusted Publishing.
+  publication through Trusted Publishing; the release procedure is in
+  the contributing guide, and CI checks that `uv.lock` matches
+  `pyproject.toml`.
 - First algorithms, pure Python, provisional API until version 1.0
   (`import protee` loads the subpackages on demand):
   - `protee.graph`: immutable directed multigraph (parallel arcs and
@@ -54,10 +56,11 @@ and this project adheres to
 - Tests against independent oracles (NetworkX, HiGHS, enumeration) and
   reproducible property-based tests (Hypothesis).
 - Runtime dependencies NumPy and SciPy (wheels for every supported
-  platform). Lower bounds are the first releases with wheels for each
-  Python version: NumPy 2.3.2 and SciPy 1.16.1 up to Python 3.14, NumPy
-  2.5.2 and SciPy 1.18.1 on Python 3.15. `import protee` does not import
-  them.
+  platform). Lower bounds: NumPy 2.3.2 and SciPy 1.16.1 up to Python
+  3.14, the first releases with wheels for 3.14, kept for 3.12 and 3.13,
+  whose first releases with wheels are past the support window of SPEC 0;
+  NumPy 2.5.2 and SciPy 1.18.1 on Python 3.15. `import protee` does not
+  import them.
 - `protee.constraints`: requirements (normalized statements taken from a
   source, never package dependencies) turned into traceable constraints
   on graphs, provisional API until version 1.0:

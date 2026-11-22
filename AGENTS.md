@@ -124,8 +124,10 @@ and the resulting schedule.
   → solve → verify → explain. Topology transformations come after the
   effects; route-level constraints act during the search.
 - Core dependencies: NumPy and SciPy, chosen with the dependency grid;
-  each lower bound is the first release with wheels for the Python
-  version. Any other one needs explicit approval (see Working rules).
+  each lower bound is the first release with wheels for Python 3.14, or
+  for 3.15 on 3.15. Python 3.12 and 3.13 keep the bounds of 3.14: their
+  first releases with wheels are past the support window of SPEC 0. Any
+  other dependency needs explicit approval (see Working rules).
 - `import protee` stays light: subpackages are imported on demand
   (PEP 562); NumPy and SciPy are imported only by the subpackages that
   use them.
@@ -169,7 +171,8 @@ and the resulting schedule.
   Version declared only in `pyproject.toml`, read through
   `importlib.metadata`. Git tags prefixed with `v`.
 - `requires-python = ">=3.12"`. Development on 3.14. Every module
-  starts with `from __future__ import annotations` (enforced by ruff).
+  starts with `from __future__ import annotations` (enforced by ruff),
+  except the hook scripts of `scripts/`, shared with other repositories.
 - Documentation: Sphinx, NumPy-style docstrings. A strict build will
   be a blocking CI check.
 - License BSD-3-Clause. Every source file starts with:
@@ -180,32 +183,12 @@ and the resulting schedule.
 
 ## Releasing
 
-1. Pull request against `develop` (squash): version bump in
-   `pyproject.toml` and `CITATION.cff`, `[Unreleased]` section of
-   `CHANGELOG.md` turned into `[x.y.z] - date`, titled
-   `chore: release x.y.z`.
-2. Pull request `develop` → `main`, merged with a merge commit (the
-   only exception to squash: `main` must hold the exact history of
-   `develop`, otherwise both branches diverge at every release).
-3. Before tagging, check locally: `uv build` then
-   `uvx --from twine twine check --strict dist/*`.
-4. Signed tag `vx.y.z` on `main`, then publish a GitHub release from
-   it, its notes the `CHANGELOG.md` section of the version, with links
-   made absolute: `python scripts/absolute_links.py rewrite --repo
-   miki4iaml/protee --ref vx.y.z notes.md`. The release workflow
-   (`.github/workflows/release.yml`) checks that the tag matches the
-   project version, makes the links of the README absolute at the tag
-   (PyPI shows it outside the repository), builds once, checks that no
-   relative link is left, attests the build provenance and the CycloneDX
-   SBOM, and publishes exactly those files to PyPI through Trusted
-   Publishing (OIDC, no stored token), after approval of the protected
-   `pypi` environment.
-5. Verify: `gh attestation verify <wheel> --repo miki4iaml/protee`.
-
-Rehearsal: run the release workflow manually (`workflow_dispatch`). It
-publishes a unique `x.y.z.devN` version to TestPyPI without creating a
-release. Never publish a GitHub release just to test: each published
-release also archives a permanent Zenodo DOI.
+The procedure is in [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md),
+section *Releasing*: read it before preparing a version, and follow its
+steps in order. A coding agent never publishes a GitHub release to
+test: each published release also archives a permanent Zenodo DOI. The
+rehearsal is the manual run of the release workflow, which publishes to
+TestPyPI.
 
 ## Security
 

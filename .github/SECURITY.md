@@ -30,8 +30,12 @@ it.
 ## Scope
 
 - The `protee` package code.
+- The third-party JavaScript embedded in the package
+  (`src/protee/_assets/`), for the way it is embedded.
 - The hook scripts in `scripts/`.
 - The CI workflows in `.github/workflows/`.
 
 Vulnerabilities in third-party dependencies should be reported to
 their maintainers; Dependabot alerts are enabled on this repository.
+Dependabot does not watch the embedded JavaScript: its advisories are
+checked before each release.
