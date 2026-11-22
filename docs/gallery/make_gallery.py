@@ -3,8 +3,9 @@
 
 """Write the gallery of ``protee.viz``: SVG drawings and the page that shows them.
 
-The documents are the extracts of nomogram 0.8.0 kept in the tests of
-protee. Each drawing is written by the call shown under it on the page.
+The documents are those written by the graph export of nomogram (producer
+version 0.8.0) and kept in the tests of protee. Each drawing is written by
+the call shown under it on the page.
 From the root of the repository, with the optional extra ``viz``::
 
     uv run python docs/gallery/make_gallery.py
@@ -76,17 +77,17 @@ CASES = (
     ),
     Case(
         stem="humidity-kinds",
-        title="A tree of quantity kinds, from right to left",
+        title="A forest of quantity kinds, from right to left",
         text=(
-            "Kinds of humidity and their counterparts in QUDT, the CF standard "
-            "names and Wikidata; the relations of SKOS are told apart by their "
-            "heads, a symmetric one drawn at both ends."
+            "Kinds of humidity, in several trees, and their counterparts in "
+            "QUDT, the CF standard names and Wikidata; the relations of SKOS "
+            "are told apart by their heads, a symmetric one drawn at both ends."
         ),
         call='viz.render_svg(kinds, direction="RL", legend="below")',
     ),
     Case(
         stem="humidity-families",
-        title="The same tree, one node per family",
+        title="The same forest, one node per family",
         text=(
             "Each family (moist air, water vapour, sea water, boundary layer) is "
             "collapsed into one node with a double border."
@@ -97,8 +98,8 @@ CASES = (
         stem="humidity-kinds-legend",
         title="A legend alone",
         text=(
-            "One column per declared attribute, in the order of declaration, to "
-            "set beside a figure."
+            "One column per declared attribute and per kind of element (nodes, "
+            "edges), in the order of declaration, to set beside a figure."
         ),
         call="viz.render_legend_svg(kinds)",
     ),
@@ -114,11 +115,12 @@ HEADER = """\
 
 Drawings of node-link documents (format
 [`protee-node-link/0`](../node-link-format.md)) by `protee.viz`, with the
-optional extra `viz`. The documents are written by
-[nomogram](https://github.com/miki4iaml/nomogram) 0.8.0 and kept in the
-tests of protee (`tests/data/node_link/`); `coare` and `kinds` are those
-documents, decoded from JSON. The styles come from the vocabulary each
-document declares; the only style given here is `CLOSING`:
+optional extra `viz`. The documents are written by the graph export of
+[nomogram](https://github.com/miki4iaml/nomogram) (producer version 0.8.0)
+and kept in the tests of protee (`tests/data/node_link/`); `coare` and
+`kinds` are those documents, decoded from JSON. The styles come from the
+vocabulary each document declares; the only style given here is
+`CLOSING`:
 
 ```python
 CLOSING = {
@@ -127,8 +129,9 @@ CLOSING = {
 ```
 
 `viz.render_html` writes a page to explore the same documents offline
-(groups folded and unfolded, tooltips, links); it is not shown here, as it
-embeds the JavaScript of cytoscape.js.
+(groups folded and unfolded, tooltips, and links for the nodes that have
+a `url`); it is not shown here, as it embeds the JavaScript of
+cytoscape.js.
 
 This page and its drawings are written by
 [`make_gallery.py`](make_gallery.py):

@@ -20,12 +20,14 @@ import sys
 import xml.etree.ElementTree as ET
 from importlib.resources import files
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import networkx as nx
 import pygraphviz as pgv
 import pytest
 from hypothesis import given
+from hypothesis import strategies as st
 from oracles import graphs
 
 from protee import io, viz
@@ -325,7 +327,10 @@ def test_labels_tooltips_links_and_marks() -> None:
     dot = viz.to_dot(out, legend=False)
     g = drawn(dot)
     b, d = g.get_node("b"), g.get_node("d")
-    assert (b.attr["URL"], b.attr["tooltip"]) == ("https://example.org/b", "the second")
+    assert (b.attr["URL"], b.attr["tooltip"]) == (
+        "https://example.org/b",
+        "the second\\nhttps://example.org/b",  # then the url, a line below
+    )
     assert d.attr["label"].endswith("+1")
     assert (d.attr["style"], d.attr["color"]) == ("dashed", "#7F7F7F")
     assert g.get_edge("a", "b").attr["label"] == "first"
@@ -453,6 +458,21 @@ def texts(element: ET.Element) -> dict[str, tuple[float, float]]:
     }
 
 
+def swatch_tags(element: ET.Element, label: str) -> set[str]:
+    """The shapes drawn by the node or edge group of a drawing that shows
+    ``label``."""
+    for group in element.iter(f"{SVG}g"):
+        if group.get("class") not in ("node", "edge"):
+            continue
+        if any(str(t.text).strip() == label for t in group.iter(f"{SVG}text")):
+            return {
+                e.tag.removeprefix(SVG)
+                for e in group.iter()
+                if e.tag not in (f"{SVG}g", f"{SVG}title", f"{SVG}text", f"{SVG}a")
+            }
+    raise AssertionError(f"no swatch shows {label!r}")
+
+
 def swatches(g: pgv.AGraph) -> dict[str, Any]:
     return {
         g.get_node(n).attr["label"]: g.get_node(n)
@@ -564,7 +584,24 @@ def test_the_gallery_is_the_one_its_script_writes(tmp_path: Path) -> None:
     for name in written:
         if name.endswith(".svg"):
             assert f"]({name})" in page
-            svg_tree((tmp_path / name).read_text(encoding="utf-8"))  # well formed
+            again = (tmp_path / name).read_text(encoding="utf-8")
+            kept_svg = (folder / name).read_text(encoding="utf-8")
+            assert projection(again) == projection(kept_svg), name
+
+
+def projection(svg: str) -> list[tuple[str, ...]]:
+    """What a drawing shows, its positions and sizes aside: those depend on
+    the fonts of the workstation, which Graphviz measures."""
+    return sorted(
+        (
+            e.tag.removeprefix(SVG),
+            e.get("fill", ""),
+            e.get("stroke", ""),
+            e.get("stroke-dasharray", ""),
+            str(e.text or "").strip(),
+        )
+        for e in svg_tree(svg).iter()
+    )
 
 
 def test_importing_viz_does_not_import_graphviz() -> None:
@@ -660,8 +697,12 @@ def test_render_html_groups_families_with_a_legend_and_texts() -> None:
         symmetric["style"]["source-arrow-shape"]
         == symmetric["style"]["target-arrow-shape"]
     )
-    assert "<h2>type</h2>" in page
-    assert '<span class="note">a kind</span>' in page
+    aside = page[page.index("<aside>") : page.index("</aside>")]
+    legend = svg_tree(aside[len("<aside>") : aside.index("</svg>") + len("</svg>")])
+    shown = texts(legend)
+    assert {"kind", "specializes", "matches"} <= set(shown)
+    assert swatch_tags(legend, "kind") >= {"ellipse"}  # its shape, as drawn
+    assert '<span class="note">a kind</span>' in aside
     assert viz.render_html(doc, title="Mine").count("<title>Mine</title>") == 1
 
 
@@ -873,3 +914,253 @@ def test_reduce_leaves_other_relations_and_refuses_cycles() -> None:
     loop = document([{"id": "a"}], [{"source": "a", "target": "a", "type": "x:r"}])
     with pytest.raises(ValueError, match="form a cycle"):
         viz.reduce(loop, edge_type="x:r")
+
+
+# What any producer may write ------------------------------------------------
+
+
+def test_select_reads_infinite_metrics_and_adds_hidden_counts() -> None:
+    doc = document(
+        [
+            {"id": "a", "metrics": {"m": 3}},
+            {"id": "b", "metrics": {"m": "inf"}},
+            {"id": "c", "metrics": {"m": "-inf"}},
+        ],
+        [("a", "b"), ("b", "c")],
+    )
+    kept = viz.select(doc, ["a", "b", "c"], depth=0, threshold=("m", 1))
+    assert marked(kept, viz.OUTSIDE) == {"c"}  # "inf" is at least 1
+    star = document(
+        [{"id": i} for i in ("z", "y1", "y2", "x", "q")],
+        [("z", "y1"), ("z", "y2"), ("y1", "x"), ("y2", "x"), ("x", "q")],
+    )
+    once = viz.select(star, ["y1"], depth=0)
+    twice = viz.select(viz.select(star, ["z"], depth=1), ["y1"], depth=0)
+    assert hidden(once)["x"] == hidden(twice)["x"] == 2  # y2 and q
+
+
+@given(graph=graphs(), data=st.data())
+def test_select_reaches_what_networkx_reaches(
+    graph: Digraph, data: st.DataObject
+) -> None:
+    doc = io.to_node_link(graph)
+    names = [n["id"] for n in doc["nodes"]]
+    starts = data.draw(
+        st.lists(st.sampled_from(names), min_size=1, max_size=3, unique=True)
+    )
+    depth = data.draw(st.integers(0, 3))
+    direction = data.draw(st.sampled_from(["both", "out", "in"]))
+    out = viz.select(doc, starts, depth=depth, direction=direction)
+    g = nx.node_link_graph(doc, edges="edges")
+    view = {
+        "out": g,
+        "in": g.reverse(copy=False),
+        "both": g.to_undirected(as_view=True),
+    }[direction]
+    reached: set[Any] = set()
+    for s in starts:
+        reached |= set(nx.single_source_shortest_path_length(view, s, cutoff=depth))
+    selected = set(ids(out)) - marked(out, viz.OUTSIDE)
+    assert selected == reached
+    assert pairs(out) == [
+        (e["source"], e["target"])
+        for e in doc["edges"]
+        if e["source"] in selected or e["target"] in selected
+    ]
+    assert io.check_node_link(out) == ()
+
+
+def test_collapse_keeps_the_metrics_of_an_edge_redirected_alone() -> None:
+    doc = document(
+        [{"id": "a", "family": "f"}, {"id": "b", "family": "f"}, {"id": "c"}],
+        [
+            {"source": "a", "target": "c", "label": "x", "metrics": {"w": 3}},
+            {"source": "c", "target": "a", "metrics": {"w": 1, "v": 2}},
+            {"source": "c", "target": "b", "metrics": {"w": 1}},
+        ],
+    )
+    out = viz.collapse(doc)
+    assert out["edges"] == [
+        {
+            "source": "family=f",
+            "target": "c",
+            "label": "x",
+            "metrics": {"w": 3},
+            "key": 0,
+        },
+        {
+            "source": "c",
+            "target": "family=f",
+            "metrics": {"w": 1, viz.MERGED: 2},
+            "key": 0,
+        },
+    ]
+    assert io.check_node_link(out) == ()
+    by_type = viz.collapse(
+        document(
+            [{"id": "a", "type": "t"}, {"id": "b", "type": "t"}, {"id": "c"}],
+            [("a", "c")],
+        ),
+        by="type",
+    )
+    assert ids(by_type) == ["type=t", "c"]
+    with pytest.raises(TypeError, match="not a text or a number"):
+        viz.collapse(document([{"id": "a", "tags": ["x"]}], []), by="tags")
+
+
+def test_loops_tell_apart_ids_that_write_the_same() -> None:
+    doc = document([{"id": 1}, {"id": "1"}, {"id": 2}], [(1, 2), (2, 1), ("1", 2)])
+    out = viz.condense(doc)
+    (loop,) = (n for n in out["nodes"] if n.get(viz.DISPLAY) == viz.LOOP)
+    assert loop[viz.CONTAINS] == [1, 2]
+    assert io.check_node_link(out) == ()
+
+
+def test_read_only_documents_are_drawn() -> None:
+    block = MappingProxyType(load(KINDS)["graph"])  # a read-only graph block
+    assert io.check_node_link(dict(load(KINDS), graph=block)) == ()
+    assert viz.to_dot(dict(load(KINDS), graph=block)) == viz.to_dot(load(KINDS))
+
+
+def test_links_that_open_a_script_are_dropped() -> None:
+    urls = {
+        "a": "javascript:alert(1)",
+        "b": " JaVaScRiPt:alert(1)",
+        "c": "java\tscript:alert(1)",
+        "d": "data:text/html,<b>x</b>",
+        "e": "https://example.org/e",
+        "f": "doc.html#f",
+        "g": "mailto:?subject=protee",
+    }
+    nodes: list[dict[str, Any]] = [{"id": i, "url": u} for i, u in urls.items()]
+    nodes[4]["iri"] = "https://example.org/iri/e"
+    doc = document(nodes, [])
+    g = drawn(viz.to_dot(doc, legend=False))
+    links = {i: g.get_node(i).attr["URL"] or None for i in urls}
+    safe = {"e": urls["e"], "f": urls["f"], "g": urls["g"]}
+    assert links == {i: safe.get(i) for i in urls}
+    assert g.get_node("e").attr["tooltip"] == "\\n".join(
+        ["e", "https://example.org/iri/e", urls["e"]]
+    )
+    found, _ = page_parts(viz.render_html(doc))
+    assert {n["data"]["id"]: n["data"].get("url") for n in found} == links
+
+
+def test_the_page_resists_texts_that_look_like_markup() -> None:
+    label = "<!--<script>"
+    doc = document([{"id": "a", "label": label, "description": "<!-- <script>"}], [])
+    page = viz.render_html(doc)
+    start = page.index('id="protee-elements">') + len('id="protee-elements">')
+    assert "<" not in page[start : page.index("</script>", start)]
+    found, _ = page_parts(page)
+    assert found[0]["data"]["label"] == label
+
+
+def test_the_page_places_ids_that_dot_writes_otherwise() -> None:
+    names = ["C:\\dir", "two\nlines", "ends\\"]
+    doc = document(
+        [{"id": i} for i in names], [(names[0], names[1]), (names[1], names[2])]
+    )
+    found, _ = page_parts(viz.render_html(doc))
+    assert [n["data"]["id"] for n in found] == names
+    heights = [n["position"]["y"] for n in found]
+    assert heights == sorted(heights)  # a chain, from top to bottom
+    assert len(set(heights)) == 3
+
+
+def test_order_by_keeps_the_groups_of_the_page_whole() -> None:
+    doc = document(
+        [
+            {"id": "a", "family": "f", "r": 1},
+            {"id": "b", "family": "g", "r": 1},
+            {"id": "c", "family": "f", "r": 2},
+            {"id": "d", "family": "g", "r": 2},
+        ],
+        [("a", "d"), ("b", "c")],
+    )
+    found, _ = page_parts(viz.render_html(doc, order_by="r"))
+    at = {n["data"]["id"]: n["position"] for n in found if "position" in n}
+    f = sorted([at["a"]["x"], at["c"]["x"]])
+    g = sorted([at["b"]["x"], at["d"]["x"]])
+    assert f[1] < g[0] or g[1] < f[0]  # the groups do not interleave
+    assert at["a"]["y"] == at["b"]["y"]  # equal values, same rank
+    assert at["c"]["y"] == at["d"]["y"]
+
+
+def test_internal_names_leave_the_ids_of_a_document_alone() -> None:
+    vocabulary = {
+        "type": [
+            {"id": "x:k", "on": "node", "label": "kind"},
+            {"id": "x:r", "on": "edge", "label": "rel"},
+        ]
+    }
+    nodes = [
+        {"id": "protee:legend:0", "label": "mine", "type": "x:k"},
+        {"id": "protee:edge:0", "type": "x:k"},
+    ]
+    edges = [{"source": "protee:legend:0", "target": "protee:edge:0", "type": "x:r"}]
+    doc = document(nodes, edges, vocabulary)
+    g = drawn(viz.to_dot(doc))
+    assert g.get_node("protee:legend:0").attr["label"] == "mine"
+    assert len(g.nodes()) == 2 + 3  # two nodes; a node swatch, an edge swatch
+    found, links = page_parts(viz.render_html(doc))
+    names = [e["data"]["id"] for e in found + links]
+    assert len(names) == len(set(names))
+    assert len(links) == 1
+
+
+def test_gradient_fills_stay_referenced_and_stable() -> None:
+    vocabulary = {"type": [{"id": "x:k", "on": "node", "label": "kind"}]}
+    doc = document(
+        [{"id": "a", "type": "x:k"}, {"id": "b", "type": "x:k"}],
+        [("a", "b")],
+        vocabulary,
+    )
+    styles: viz.Styles = {
+        "node": {("type", "x:k"): {"style": "filled", "fillcolor": "red:blue"}}
+    }
+    first = viz.render_svg(doc, styles=styles, legend="below")
+    assert first == viz.render_svg(doc, styles=styles, legend="below")
+    referenced = set(re.findall(r"url\(#([^)]+)\)", first))
+    defined = set(re.findall(r' id="([^"]+)"', first))
+    assert referenced
+    assert referenced <= defined
+
+
+def test_a_nul_character_is_refused_with_a_clear_message() -> None:
+    with pytest.raises(ValueError, match="NUL"):
+        viz.to_dot(document([{"id": "a", "label": "x\x00y"}], []))
+
+
+def test_the_legends_take_the_styles_of_the_caller() -> None:
+    vocabulary = {"type": [{"id": "x:k", "on": "node", "label": "kind"}]}
+    doc = document([{"id": "a", "type": "x:k"}], [], vocabulary)
+    styles: viz.Styles = {"node": {("type", "x:k"): {"shape": "box"}}}
+    assert swatch_tags(svg_tree(viz.render_legend_svg(doc)), "kind") == {"ellipse"}
+    alone = svg_tree(viz.render_legend_svg(doc, styles=styles))
+    assert swatch_tags(alone, "kind") == {"polygon"}
+    below = svg_tree(viz.render_svg(doc, styles=styles, legend="below"))
+    graph, legend = below.findall(f"{SVG}svg")
+    assert swatch_tags(legend, "kind") == {"polygon"}
+    width = float(below.attrib["viewBox"].split()[2])
+    for part in (graph, legend):
+        centre = (width - float(part.attrib["width"])) / 2
+        assert float(part.attrib["x"]) == pytest.approx(centre, abs=0.01)
+
+
+def test_render_html_follows_its_direction_and_leaves_lone_members_alone() -> None:
+    doc = document(
+        [
+            {"id": "a", "family": "f"},
+            {"id": "b", "family": "g"},
+            {"id": "c", "family": "g"},
+        ],
+        [("a", "b"), ("b", "c")],
+    )
+    found, _ = page_parts(viz.render_html(doc, direction="LR"))
+    by_id = {n["data"]["id"]: n for n in found}
+    xs = [by_id[i]["position"]["x"] for i in "abc"]
+    assert xs == sorted(xs)
+    assert len(set(xs)) == 3
+    assert "parent" not in by_id["a"]["data"]  # alone in its family
+    assert by_id["b"]["data"]["parent"] == by_id["c"]["data"]["parent"]

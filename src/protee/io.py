@@ -19,6 +19,7 @@ Provisional API (until version 1.0).
 from __future__ import annotations
 
 import csv
+import itertools
 import json
 import math
 import re
@@ -28,7 +29,6 @@ from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-from urllib.parse import urlsplit
 
 from protee.flow._problem import FlowProblem
 from protee.graph import Digraph
@@ -118,29 +118,45 @@ def to_node_link(
 
     Nodes are identified by their labels (or their indices when the graph
     has none). Each edge carries a ``key``: the value of an arc column
-    named ``key`` when there is one, else its arc index. A ``None`` value
-    is left out: absent and ``null`` mean the same.
+    named ``key`` when it is not ``None``, else the smallest integer that
+    no other edge between the same two nodes uses. ``null`` is written only
+    in the entries of ``prefixes`` and of ``metrics``, where it is a value:
+    elsewhere, absent and ``null`` mean the same. An infinite metric is
+    written ``"inf"`` or ``"-inf"``, as the format states.
 
     Parameters
     ----------
     graph : Digraph
     arcs, nodes : mapping of str to sequence, optional
-        Attribute columns, one value per arc or per node.
+        Attribute columns, one value per arc or per node. A node column
+        cannot be named ``id``, nor an arc column ``source`` or ``target``.
     attributes : mapping, optional
         The ``graph`` block (producer, prefixes, vocabulary…); its
         ``format`` is :data:`NODE_LINK_FORMAT`.
     multigraph : bool
         ``False`` declares that no two arcs join the same two nodes.
 
+    Returns
+    -------
+    dict
+        The node-link document, plain JSON data.
+
     Raises
     ------
     ValueError
-        If a column has another size, ``attributes`` names another format,
-        or ``multigraph`` is false while two arcs join the same nodes.
+        If a column has another size or a reserved name, a key is repeated
+        between the same two nodes, ``attributes`` names another format, or
+        ``multigraph`` is false while two arcs join the same nodes.
+    TypeError
+        If a key is not an integer.
     """
     arcs = _check("arc", arcs, graph.m)
     nodes = _check("node", nodes, graph.n)
-    block = dict(_thaw(attributes or {}))
+    if "id" in nodes:
+        raise ValueError("a node column cannot be named 'id'")
+    if reserved := sorted({"source", "target"} & set(arcs)):
+        raise ValueError(f"an arc column cannot be named {reserved[0]!r}")
+    block = _without_nulls(_thaw(attributes or {}))
     if block.setdefault("format", NODE_LINK_FORMAT) != NODE_LINK_FORMAT:
         raise ValueError(f"format {block['format']!r} is not {NODE_LINK_FORMAT!r}")
     if not multigraph and len(set(graph.arcs())) < graph.m:
@@ -148,9 +164,14 @@ def to_node_link(
     ident: list[Any] = (
         list(range(graph.n)) if graph.labels is None else list(graph.labels)
     )
+    keys = _keys(graph, arcs.get("key"))
 
     def values(columns: Mapping[str, Sequence[Any]], i: int) -> dict[str, Any]:
-        return {k: _thaw(v[i]) for k, v in columns.items() if v[i] is not None}
+        return {
+            k: _written(k, _thaw(v[i]))
+            for k, v in columns.items()
+            if v[i] is not None and k != "key"
+        }
 
     return {
         "directed": True,
@@ -158,10 +179,62 @@ def to_node_link(
         "graph": {"format": NODE_LINK_FORMAT, **block},
         "nodes": [{"id": ident[v], **values(nodes, v)} for v in range(graph.n)],
         "edges": [
-            {"source": ident[t], "target": ident[h], "key": a, **values(arcs, a)}
+            {"source": ident[t], "target": ident[h], "key": keys[a], **values(arcs, a)}
             for a, (t, h) in enumerate(graph.arcs())
         ],
     }
+
+
+#: Keys whose entries keep ``null`` as a value.
+_NULL_VALUED = frozenset({"prefixes", "metrics"})
+
+
+def _without_nulls(x: Any, keep: bool = False) -> Any:
+    """JSON data without the ``null`` of optional keys (``keep`` keeps them)."""
+    if isinstance(x, Mapping):
+        return {
+            k: _without_nulls(v, k in _NULL_VALUED)
+            for k, v in x.items()
+            if keep or v is not None
+        }
+    if isinstance(x, list):
+        return [_without_nulls(v) for v in x]
+    return x
+
+
+def _written(key: str, value: Any) -> Any:
+    """An attribute as written: no optional null, infinite metrics as text."""
+    value = _without_nulls(value, key in _NULL_VALUED)
+    if key == "metrics" and isinstance(value, dict):
+        return {
+            name: ("inf" if v > 0 else "-inf")
+            if isinstance(v, float) and math.isinf(v)
+            else v
+            for name, v in value.items()
+        }
+    return value
+
+
+def _keys(graph: Digraph, given: Sequence[Any] | None) -> list[int]:
+    """The key of each arc: the one given, else the smallest one free."""
+    keys: list[int | None] = list(given) if given is not None else [None] * graph.m
+    used: dict[tuple[int, int], set[int]] = {}
+    for a, (pair, key) in enumerate(zip(graph.arcs(), keys, strict=True)):
+        if key is None:
+            continue
+        if isinstance(key, bool) or not isinstance(key, int):
+            raise TypeError(f"arc {a}: key {key!r} is not an integer")
+        if key in used.setdefault(pair, set()):
+            raise ValueError(f"arc {a}: key {key} is repeated between the same nodes")
+        used[pair].add(key)
+    out = []
+    for pair, key in zip(graph.arcs(), keys, strict=True):
+        if key is None:
+            taken = used.setdefault(pair, set())
+            key = next(k for k in itertools.count() if k not in taken)
+            taken.add(key)
+        out.append(key)
+    return out
 
 
 def from_node_link(data: Mapping[str, Any]) -> Table:
@@ -172,11 +245,26 @@ def from_node_link(data: Mapping[str, Any]) -> Table:
     in the arc column ``key``. A node attribute or an edge attribute missing
     somewhere is ``None`` there. The ``graph`` block is kept, read-only, in
     :attr:`Table.attributes`; it is not checked (see :func:`check_node_link`).
+    Node identifiers become the labels of the graph, as texts, except
+    integer identifiers that are exactly 0 to n - 1 in order, which stay the
+    node indices.
+
+    Parameters
+    ----------
+    data : mapping
+        A decoded node-link document.
+
+    Returns
+    -------
+    Table
 
     Raises
     ------
     ValueError
-        If the data is not directed, or an edge refers to an unknown node.
+        If the data is not directed, an edge refers to an unknown node, or
+        two identifiers write the same text (``1`` and ``"1"``).
+    KeyError
+        If a node has no ``id``.
     """
     if not data.get("directed", False):
         raise ValueError("protee graphs are directed: 'directed' must be true")
@@ -219,38 +307,88 @@ def write_node_link(
     attributes: Mapping[str, Any] | None = None,
     multigraph: bool = True,
 ) -> None:
-    """Write :func:`to_node_link` as a JSON file."""
+    """Write :func:`to_node_link` as a JSON file, in UTF-8 with LF line ends.
+
+    The file is strict JSON: a NaN, or an infinity outside ``metrics``, is
+    refused. NumPy scalars are written as the numbers they hold.
+
+    Parameters
+    ----------
+    path : Path
+    graph, arcs, nodes, attributes, multigraph
+        As :func:`to_node_link`.
+
+    Raises
+    ------
+    ValueError
+        As :func:`to_node_link`, or for a value that JSON cannot hold.
+    TypeError
+        For a value that is not JSON data.
+    """
     data = to_node_link(
         graph, arcs, nodes, attributes=attributes, multigraph=multigraph
     )
-    text = json.dumps(data, ensure_ascii=False, indent=1)
-    Path(path).write_text(text + "\n", encoding="utf-8")
+    text = json.dumps(
+        data, ensure_ascii=False, indent=1, allow_nan=False, default=_scalar
+    )
+    Path(path).write_text(text + "\n", encoding="utf-8", newline="\n")
+
+
+def _scalar(value: object) -> Any:
+    """The Python number of a NumPy scalar, for JSON."""
+    item = getattr(value, "item", None)
+    if callable(item) and getattr(value, "shape", None) == ():
+        return item()
+    raise TypeError(f"{type(value).__name__} is not JSON data")
+
+
+def _not_json(token: str) -> Any:
+    raise ValueError(f"{token} is not JSON: write 'inf', '-inf' or null")
 
 
 def read_node_link(path: Path) -> Table:
-    """Read a node-link JSON file (see :func:`from_node_link`)."""
-    return from_node_link(json.loads(Path(path).read_text(encoding="utf-8")))
+    """Read a node-link JSON file (see :func:`from_node_link`).
+
+    Parameters
+    ----------
+    path : Path
+
+    Returns
+    -------
+    Table
+
+    Raises
+    ------
+    ValueError
+        If the file is not strict JSON (``NaN``, ``Infinity``), or as
+        :func:`from_node_link`.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    return from_node_link(json.loads(text, parse_constant=_not_json))
 
 
 #: Keys whose values cannot be declared in ``graph.vocabulary``.
 _STRUCTURAL = frozenset({"id", "source", "target", "key"})
 
-#: A language tag (BCP 47): a language, then subtags such as a region.
-_LANGUAGE = re.compile(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*")
+#: A language tag (BCP 47): a language, then subtags such as a region; or a
+#: private use (``x-…``) or grandfathered (``i-…``) tag.
+_LANGUAGE = re.compile(
+    r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|[xXiI](?:-[A-Za-z0-9]{1,8})+"
+)
+#: The start of an absolute IRI: its scheme, then a colon (as the schema).
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _absolute(iri: object) -> bool:
-    return isinstance(iri, str) and bool(urlsplit(iri).scheme)
+    return isinstance(iri, str) and _SCHEME.match(iri) is not None
 
 
 def _metric(value: object) -> bool:
     if value is None or value in ("inf", "-inf"):
         return True
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
 
 
 def _node_id(value: object) -> bool:
@@ -338,6 +476,8 @@ class _Checker:
             if attribute in _STRUCTURAL:
                 self.bad(where, "the values of a structural key are not declared")
                 continue
+            if entries is None:  # absent or null: the same
+                continue
             if not isinstance(entries, list):
                 self.bad(where, "must be a list")
                 continue
@@ -369,7 +509,12 @@ class _Checker:
             sets[on].add(ident)
 
     def common(self, where: str, item: Mapping[str, Any], on: str) -> None:
-        for key in ("label", "description", "family", "url"):
+        # The format defines description, family and url for nodes only: on
+        # an edge, they are free keys.
+        texts = (
+            ("label", "description", "family", "url") if on == "node" else ("label",)
+        )
+        for key in texts:
             if item.get(key) is not None and not isinstance(item[key], str):
                 self.bad(f"{where}.{key}", "must be a text")
         metrics = item.get("metrics")
@@ -593,7 +738,7 @@ def write_dimacs_min(path: Path, problem: FlowProblem, comment: str = "") -> Non
                 f"arc {a} has a non-integer cost {c!r}: DIMACS costs are integers"
             )
         lines.append(f"a {t + 1} {h + 1} {problem.lower[a]} {hi} {sign * c}")
-    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def read_dimacs_min(path: Path) -> FlowProblem:

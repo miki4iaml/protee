@@ -2,11 +2,12 @@
 
 Drawings of node-link documents (format
 [`protee-node-link/0`](../node-link-format.md)) by `protee.viz`, with the
-optional extra `viz`. The documents are written by
-[nomogram](https://github.com/miki4iaml/nomogram) 0.8.0 and kept in the
-tests of protee (`tests/data/node_link/`); `coare` and `kinds` are those
-documents, decoded from JSON. The styles come from the vocabulary each
-document declares; the only style given here is `CLOSING`:
+optional extra `viz`. The documents are written by the graph export of
+[nomogram](https://github.com/miki4iaml/nomogram) (producer version 0.8.0)
+and kept in the tests of protee (`tests/data/node_link/`); `coare` and
+`kinds` are those documents, decoded from JSON. The styles come from the
+vocabulary each document declares; the only style given here is
+`CLOSING`:
 
 ```python
 CLOSING = {
@@ -15,8 +16,9 @@ CLOSING = {
 ```
 
 `viz.render_html` writes a page to explore the same documents offline
-(groups folded and unfolded, tooltips, links); it is not shown here, as it
-embeds the JavaScript of cytoscape.js.
+(groups folded and unfolded, tooltips, and links for the nodes that have
+a `url`); it is not shown here, as it embeds the JavaScript of
+cytoscape.js.
 
 This page and its drawings are written by
 [`make_gallery.py`](make_gallery.py):
@@ -56,17 +58,17 @@ viz.render_svg(
 
 ![The neighbourhood of one variable](coare-friction-velocity.svg)
 
-## A tree of quantity kinds, from right to left
+## A forest of quantity kinds, from right to left
 
-Kinds of humidity and their counterparts in QUDT, the CF standard names and Wikidata; the relations of SKOS are told apart by their heads, a symmetric one drawn at both ends.
+Kinds of humidity, in several trees, and their counterparts in QUDT, the CF standard names and Wikidata; the relations of SKOS are told apart by their heads, a symmetric one drawn at both ends.
 
 ```python
 viz.render_svg(kinds, direction="RL", legend="below")
 ```
 
-![A tree of quantity kinds, from right to left](humidity-kinds.svg)
+![A forest of quantity kinds, from right to left](humidity-kinds.svg)
 
-## The same tree, one node per family
+## The same forest, one node per family
 
 Each family (moist air, water vapour, sea water, boundary layer) is collapsed into one node with a double border.
 
@@ -74,11 +76,11 @@ Each family (moist air, water vapour, sea water, boundary layer) is collapsed in
 viz.render_svg(viz.collapse(kinds), direction="RL", legend="below")
 ```
 
-![The same tree, one node per family](humidity-families.svg)
+![The same forest, one node per family](humidity-families.svg)
 
 ## A legend alone
 
-One column per declared attribute, in the order of declaration, to set beside a figure.
+One column per declared attribute and per kind of element (nodes, edges), in the order of declaration, to set beside a figure.
 
 ```python
 viz.render_legend_svg(kinds)

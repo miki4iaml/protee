@@ -19,16 +19,16 @@ without protee.
   "multigraph": true,
   "graph": {
     "format": "protee-node-link/0",
-    "producer": {"name": "nomogram", "version": "0.8.0"},
+    "producer": {"name": "example", "version": "1.0"},
     "language": "en",
     "prefixes": {
       "skos": "http://www.w3.org/2004/02/skos/core#",
       "qudt": "http://qudt.org/schema/qudt/",
-      "nomogram": null
+      "example": null
     },
     "vocabulary": {
       "type": [
-        {"id": "nomogram:kind", "on": "node", "label": "quantity kind"},
+        {"id": "example:kind", "on": "node", "label": "quantity kind"},
         {"id": "qudt:specializationOf", "on": "edge", "label": "specializes"},
         {"id": "skos:exactMatch", "on": "edge", "label": "exact match", "symmetric": true}
       ],
@@ -40,9 +40,9 @@ without protee.
   },
   "nodes": [
     {"id": "kinds.RelativeHumidity", "label": "Relative humidity",
-     "type": "nomogram:kind", "family": "humidity", "status": "verified",
+     "type": "example:kind", "family": "humidity", "status": "verified",
      "iri": "http://qudt.org/vocab/quantitykind/RelativeHumidity"},
-    {"id": "kinds.Humidity", "label": "Humidity", "type": "nomogram:kind",
+    {"id": "kinds.Humidity", "label": "Humidity", "type": "example:kind",
      "status": "to-confirm"}
   ],
   "edges": [
@@ -69,7 +69,7 @@ without protee.
 | node | `label` | no | the text shown, the `id` otherwise |
 | node | `type`, `status`, `role`… | no | attributes declared in `graph.vocabulary` (see above); `role` serves, for instance, the role of a variable in a system of equations (input, unknown, intermediate) |
 | node | `iri` | no | the absolute IRI of the entity of an external vocabulary that the node stands for (a QUDT quantity kind, a CF standard name, a Wikidata item); the `id` stays the producer's |
-| node | `family` | no | a group: a cluster when drawn, a unit to fold |
+| node | `family` | no | a group, which a consumer may fold or draw as one (`protee.viz.collapse`, the page of `protee.viz.render_html`) |
 | node, edge | `metrics` | no | an object, name → number, `"inf"`, `"-inf"` or `null` |
 | node | `url`, `description` | no | a link to the documentation, the text of a tooltip |
 | edge | `source`, `target` | yes | identifiers of existing nodes |
@@ -109,7 +109,9 @@ passes the schema.
   document from these rules, an empty tuple when there is none.
 - `protee.io.to_node_link` and `protee.io.write_node_link` write a graph
   of protee with its attribute columns; `protee.io.from_node_link` and
-  `protee.io.read_node_link` read a document without loss: the `graph`
-  block, the `multigraph` flag and the edge keys are kept.
+  `protee.io.read_node_link` read a document: the `graph` block, the
+  `multigraph` flag and the edge keys are kept; node identifiers become
+  the labels of the graph, as texts, except integer identifiers that are
+  exactly 0 to n − 1 in order, kept as node indices.
 - `protee.viz` draws a document (selection, groups, loops, SVG, a page to
   explore it offline): see the [gallery](gallery/README.md).

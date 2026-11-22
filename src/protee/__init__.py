@@ -23,7 +23,8 @@ light:
   traceable constraints on graphs, composed, verified on results and
   reported in a table;
 - :mod:`protee.viz`: drawing of node-link documents (selection, groups,
-  Graphviz DOT text).
+  loops, transitive reduction, Graphviz DOT text; SVG and a page to
+  explore offline with the optional extra ``viz``).
 
 The whole API is provisional until version 1.0: the formalization of the
 problems is refined with the feedback of the 0.x versions.

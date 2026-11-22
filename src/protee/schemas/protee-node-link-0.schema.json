@@ -10,12 +10,12 @@
     "multigraph": {"type": "boolean"},
     "graph": {"$ref": "#/$defs/graph"},
     "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
-    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
-    "links": {
-      "description": "Read in place of edges.",
-      "type": "array",
-      "items": {"$ref": "#/$defs/edge"}
-    }
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+  },
+  "if": {"not": {"required": ["edges"]}},
+  "then": {
+    "description": "links is read in place of edges when edges is absent; next to edges, it is a free key.",
+    "properties": {"links": {"type": "array", "items": {"$ref": "#/$defs/edge"}}}
   },
   "$defs": {
     "text": {"type": ["string", "null"]},
@@ -54,7 +54,7 @@
         "language": {
           "description": "A BCP 47 language tag, such as en or fr-FR.",
           "type": ["string", "null"],
-          "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"
+          "pattern": "^([A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*|[xXiI](-[A-Za-z0-9]{1,8})+)$"
         },
         "label": {"$ref": "#/$defs/text"},
         "description": {"$ref": "#/$defs/text"},
@@ -71,7 +71,7 @@
           "type": ["object", "null"],
           "propertyNames": {"not": {"enum": ["id", "source", "target", "key"]}},
           "additionalProperties": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {"$ref": "#/$defs/declaration"}
           }
         }
@@ -118,9 +118,6 @@
         "target": {"$ref": "#/$defs/nodeId"},
         "key": {"type": ["integer", "null"]},
         "label": {"$ref": "#/$defs/text"},
-        "description": {"$ref": "#/$defs/text"},
-        "family": {"$ref": "#/$defs/text"},
-        "url": {"$ref": "#/$defs/text"},
         "metrics": {"$ref": "#/$defs/metrics"}
       }
     }

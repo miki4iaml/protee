@@ -196,8 +196,8 @@ def test_examples_follow_the_format(name: str) -> None:
 def test_examples_round_trip_without_loss(name: str, tmp_path: Path) -> None:
     data = EXAMPLES[name]
     expected = copy.deepcopy(data)
-    for a, edge in enumerate(expected["edges"]):
-        edge.setdefault("key", a)  # protee numbers the edges without a key
+    for edge in expected["edges"]:
+        edge.setdefault("key", 0)  # one edge per pair here: its free key is 0
     assert rewritten(io.from_node_link(data)) == expected
     path = tmp_path / f"{name}.json"
     table = io.from_node_link(data)
@@ -428,6 +428,23 @@ DEPARTURES: list[tuple[str, Change, str]] = [
         ),
         "",
     ),
+    # Read as urlsplit would, these IRIs passed the check and failed the
+    # schema, or raised: the scheme is read on the raw text.
+    ("an IRI after a space", setting("nodes.1.iri", " http://x.org/a"), "nodes[1].iri"),
+    ("an IRI cut by a tab", setting("nodes.1.iri", "ht\ttp://x.org/a"), "nodes[1].iri"),
+    ("a broken host is still an IRI", setting("nodes.1.iri", "http://["), ""),
+    (
+        "a prefix IRI after a newline",
+        setting("graph.prefixes.skos", "\nhttp://x/"),
+        "IRI",
+    ),
+    ("a huge integer metric", setting("nodes.2.metrics.formulations", 10**400), ""),
+    ("a boolean metric", setting("nodes.2.metrics.formulations", True), "finite"),
+    ("a private language tag", setting("graph.language", "x-private"), ""),
+    ("a grandfathered language tag", setting("graph.language", "i-default"), ""),
+    ("free keys on an edge", setting("edges.0.family", ["a"]), ""),
+    ("links next to edges is a free key", setting("links", 5), ""),
+    ("a null vocabulary entry", setting("graph.vocabulary.status", None), ""),
 ]
 
 
@@ -476,6 +493,86 @@ def test_a_null_key_means_an_absent_one() -> None:
         "edges": [{"source": 0, "target": 1, "key": None}],
     }
     follows(plain)
+
+
+def test_keyless_parallel_edges_take_a_free_key() -> None:
+    doc = copy.deepcopy(KINDS)
+    doc["edges"] = [
+        {"source": "k.relative", "target": "k.humidity"},
+        {"source": "k.relative", "target": "k.humidity", "key": 0},
+        {"source": "k.relative", "target": "k.humidity", "key": None},
+    ]
+    follows(doc)
+    out = rewritten(io.from_node_link(doc))
+    assert [e["key"] for e in out["edges"]] == [1, 0, 2]
+    follows(out)
+
+
+def test_writing_drops_optional_nulls_and_writes_infinities_as_text() -> None:
+    g = Digraph.from_arcs(2, [(0, 1)], ["a", "b"])
+    data = io.to_node_link(
+        g,
+        nodes={
+            "metrics": [{"d": math.inf, "gap": None}, {"d": -math.inf}],
+            "notes": [{"seen": None, "by": "x"}, None],
+        },
+        attributes={
+            "language": None,
+            "producer": {"name": "x", "version": None},
+            "prefixes": {"p": None},
+            "vocabulary": {
+                "type": [{"id": "t", "on": "node", "label": "t", "description": None}]
+            },
+        },
+    )
+    assert data["graph"] == {
+        "format": io.NODE_LINK_FORMAT,
+        "producer": {"name": "x"},
+        "prefixes": {"p": None},  # a value there
+        "vocabulary": {"type": [{"id": "t", "on": "node", "label": "t"}]},
+    }
+    assert data["nodes"] == [
+        {"id": "a", "metrics": {"d": "inf", "gap": None}, "notes": {"by": "x"}},
+        {"id": "b", "metrics": {"d": "-inf"}},
+    ]
+    follows(data)
+
+
+def test_writing_refuses_reserved_columns_and_bad_keys() -> None:
+    g = Digraph.from_arcs(2, [(0, 1), (0, 1)], ["a", "b"])
+    with pytest.raises(ValueError, match="cannot be named 'id'"):
+        io.to_node_link(g, nodes={"id": ["x", "y"]})
+    with pytest.raises(ValueError, match="cannot be named 'source'"):
+        io.to_node_link(g, arcs={"source": ["b", "b"]})
+    with pytest.raises(TypeError, match="is not an integer"):
+        io.to_node_link(g, arcs={"key": ["0", None]})
+    with pytest.raises(ValueError, match="is repeated"):
+        io.to_node_link(g, arcs={"key": [0, 0]})
+
+
+def test_a_written_file_is_strict_json_with_lf_line_ends(tmp_path: Path) -> None:
+    np = pytest.importorskip("numpy")
+    g = Digraph.from_arcs(2, [(0, 1)], ["a", "b"])
+    path = tmp_path / "g.json"
+    io.write_node_link(
+        path,
+        g,
+        arcs={"flow": np.array([3]), "metrics": [{"cost": np.float64(2.5)}]},
+        nodes={"metrics": [{"d": 0.0}, {"d": math.inf}]},
+    )
+    raw = path.read_bytes()
+    assert b"\r\n" not in raw
+    assert b"Infinity" not in raw
+    table = io.read_node_link(path)
+    assert table.arcs["flow"] == (3,)
+    assert table.nodes["metrics"][1]["d"] == "inf"
+    with pytest.raises(ValueError, match="JSON"):
+        io.write_node_link(path, g, arcs={"w": [math.nan]})
+    with pytest.raises(TypeError, match="not JSON data"):
+        io.write_node_link(path, g, arcs={"w": [object()]})
+    path.write_text('{"directed": true, "nodes": [{"id": NaN}]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="NaN is not JSON"):
+        io.read_node_link(path)
 
 
 def test_the_schema_is_shipped_and_says_what_it_does_not_check() -> None:
