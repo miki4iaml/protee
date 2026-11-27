@@ -406,7 +406,7 @@ _LANGUAGE = re.compile(
 #: The start of an absolute IRI: its scheme, then a colon (as the schema).
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 #: A term of a vocabulary: ``prefix:name`` (as the schema).
-_TERM = re.compile(r"[^:]+:.+")
+_TERM = re.compile(r"[^:\s]+:\S+")
 
 
 def _absolute(iri: object) -> bool:

@@ -486,6 +486,16 @@ DEPARTURES: list[tuple[str, Change, str]] = [
     ),
     ("free keys in a mapping", setting(f"{MAPPINGS}.0.confidence", 0.9), ""),
     (
+        "a term with a space",
+        setting(f"{MAPPINGS}.0.object", "qudt:Quantity Kind"),
+        "mappings[0].object: must be a term prefix:name",
+    ),
+    (
+        "a term that ends a line",
+        setting(f"{MAPPINGS}.0.object", "qudt:QuantityKind\n"),
+        "mappings[0].object: must be a term prefix:name",
+    ),
+    (
         "a mapping on an edge type",
         setting(
             "graph.vocabulary.type.3.mappings",

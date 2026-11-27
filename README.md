@@ -31,7 +31,7 @@ Typed graphs are exchanged with other projects in the node-link format
 drawn by `protee.viz`: selection, groups, loops, contraction, colour by
 vocabulary and a matrix view (N² chart) without dependency; SVG figures,
 light or dark, with their legend and a footer, and a page to explore
-offline (tooltips, formulas, the matrix beside the graph), with the
+offline (tooltips, formulas, the matrix under the graph), with the
 optional extra `viz` (see the [gallery](docs/gallery/README.md)).
 
 ## Why protee

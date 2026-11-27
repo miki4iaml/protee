@@ -38,16 +38,18 @@ import html
 import itertools
 import json
 import math
+import os
 import re
 import struct
 import subprocess
 import sys
 import xml.parsers.expat
 from collections import Counter, deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Buffer, Iterable, Mapping
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any
+from urllib.parse import urlsplit
 
 from protee.graph import Digraph
 from protee.io import check_node_link
@@ -132,8 +134,17 @@ class Theme:
     """The colours of a drawing: its background, its ink and a muted grey.
 
     The ink draws the lines and texts that no style colours; the muted grey
-    draws the nodes outside a selection and the frame of the legend. Each
-    colour is written ``#RRGGBB``.
+    draws the nodes outside a selection and the frame of the legend.
+
+    Attributes
+    ----------
+    background, ink, muted : str
+        Colours written ``#RRGGBB``.
+
+    Raises
+    ------
+    ValueError
+        If a colour is not written ``#RRGGBB``.
     """
 
     background: str
@@ -394,16 +405,17 @@ def collapse(data: Mapping[str, Any], *, by: str = "family") -> dict[str, Any]:
         If a value of ``by`` is neither a text nor a number.
     """
     doc = _document(data)
-    members: dict[Any, list[Any]] = {}
+    members: dict[tuple[bool, Any], list[Any]] = {}
     for node in doc["nodes"]:
         value = node.get(by)
         if isinstance(value, (dict, list)):
             raise TypeError(f"collapse by {by!r}: {value!r} is not a text or a number")
         if value is not None:
-            members.setdefault(value, []).append(node["id"])
+            # true and 1 are two values of JSON, equal in Python.
+            members.setdefault((isinstance(value, bool), value), []).append(node["id"])
     groups = [
         (f"{by}={value}", str(value), ids, {by: value})
-        for value, ids in members.items()
+        for (_, value), ids in members.items()
         if len(ids) > 1
     ]
     return _merge(doc, groups, GROUP)
@@ -520,20 +532,24 @@ def mark_vocabularies(data: Mapping[str, Any]) -> dict[str, Any]:
         ]
         items.insert(first + 1, (VOCABULARY, declared))
         vocabulary = dict(items)
-        block["prefixes"] = {**(block.get("prefixes") or {}), "protee": None}
+        table = dict(block.get("prefixes") or {})
+        table.setdefault("protee", None)
+        block["prefixes"] = table
     block["vocabulary"] = vocabulary
     return doc
 
 
 def _authority(iri: str) -> str:
-    """The authority of an IRI without its port, or its scheme."""
-    scheme, _, rest = iri.partition(":")
-    if rest.startswith("//"):
-        host = re.split(r"[/?#]", rest[2:], maxsplit=1)[0].rpartition("@")[2]
-        host = host.split(":", 1)[0]
-        if host:
-            return host
-    return scheme
+    """The host of an IRI, in lower case and without its port, or its scheme
+    when it has none, or when the host holds a colon (an IPv6 address), which
+    a declared value cannot."""
+    try:
+        host = urlsplit(iri).hostname
+    except ValueError:  # a broken IPv6 address
+        host = None
+    if host and ":" not in host:
+        return host
+    return iri.partition(":")[0].lower()
 
 
 def _successors(edges: Iterable[Mapping[str, Any]]) -> dict[Any, list[Any]]:
@@ -803,11 +819,15 @@ def contract(
 
 def _absorb(stays: dict[str, Any], goes: Mapping[str, Any]) -> None:
     """The node ``stays`` takes in the node ``goes``, which disappears."""
+    takes_iri = stays.get("iri") is None and goes.get("iri") is not None
     for k, v in goes.items():
         if k in ("id", "metrics") or k.startswith("protee:"):
             continue
         if stays.get(k) is None:
             stays[k] = v
+    # The vocabulary of an IRI goes with it (mark_vocabularies).
+    if takes_iri and goes.get(VOCABULARY) is not None:
+        stays[VOCABULARY] = goes[VOCABULARY]
     metrics = {**(goes.get("metrics") or {}), **(stays.get("metrics") or {})}
     hidden = [
         m[HIDDEN]
@@ -826,10 +846,24 @@ def _absorb(stays: dict[str, Any], goes: Mapping[str, Any]) -> None:
 
 
 def _quote(text: object) -> str:
+    """A text as a quoted string of DOT.
+
+    Graphviz copies a character reference (``&#58;``) as it is into its SVG,
+    where the reader decodes it: every ``&`` is written ``&amp;``, so that
+    the text drawn is the text given. A character that XML cannot carry is
+    refused, as the SVG would not open.
+    """
     raw = str(text)
     if "\x00" in raw:
         raise ValueError(f"{raw!r} holds a NUL character, which Graphviz cannot read")
-    escaped = raw.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    if _NOT_XML.search(raw):
+        raise ValueError(f"{raw!r} holds a character that SVG cannot carry")
+    escaped = (
+        raw.replace("&", "&amp;")
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+    )
     return f'"{escaped}"'
 
 
@@ -837,16 +871,24 @@ def _quote(text: object) -> str:
 _URL_IGNORED = re.compile(r"^[\x00-\x20]+|[\t\n\r]")
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*):")
 _URL_SCHEMES = frozenset({"http", "https", "mailto"})
+#: The start of a link to another host without a scheme (``//host``), which
+#: a page opened from a file reads as ``file://host``.
+_URL_HOST = re.compile(r"[/\\]{2}")
 
 
 def _safe_url(url: object) -> str | None:
-    """A link that opens no script: http, https, mailto, or relative."""
+    """A link that opens no script and names no host without a scheme:
+    http, https, mailto, or relative to the page, read as a browser reads
+    it, character references decoded."""
     if not isinstance(url, str) or not url:
         return None
     cleaned = _URL_IGNORED.sub("", url)
-    scheme = _URL_SCHEME.match(cleaned)
-    if scheme is not None and scheme.group(1).lower() not in _URL_SCHEMES:
-        return None
+    for read in (cleaned, _URL_IGNORED.sub("", html.unescape(cleaned))):
+        scheme = _URL_SCHEME.match(read)
+        if scheme is not None and scheme.group(1).lower() not in _URL_SCHEMES:
+            return None
+        if _URL_HOST.match(read):
+            return None
     return cleaned or None
 
 
@@ -1050,13 +1092,9 @@ def _texts(
 def _edge_lines(
     edge: Mapping[str, Any], fields: Iterable[str], labels: _Labels
 ) -> list[str]:
-    """The tooltip of an edge: its description, its ``locator``, then the
-    attributes of ``fields``."""
-    lines = (
-        [str(edge["description"])] if isinstance(edge.get("description"), str) else []
-    )
-    if edge.get("locator"):
-        lines.append(f"locator: {edge['locator']}")
+    """The tooltip of an edge: its ``locator``, then the attributes of
+    ``fields``."""
+    lines = [f"locator: {edge['locator']}"] if edge.get("locator") else []
     return lines + _field_lines(edge, fields, labels, "edge")
 
 
@@ -1144,8 +1182,8 @@ def to_dot(
     tooltip : iterable of str
         Attributes whose values the tooltips of the nodes and of the edges
         add, one line each: the label of a declared value, or the value
-        itself. An edge has a tooltip when it has a description, a
-        ``locator`` or one of these attributes.
+        itself. An edge has a tooltip when it has a ``locator`` or one of
+        these attributes.
 
     Returns
     -------
@@ -1233,7 +1271,7 @@ def render_svg(
     legend: str | None = "right",
     legend_values: str = "declared",
     tooltip: Iterable[str] = (),
-    footer: bytes | None = None,
+    footer: Buffer | None = None,
     footer_height: float | None = None,
 ) -> str:
     """An SVG drawing of a document, laid out by Graphviz (``dot``).
@@ -1260,7 +1298,7 @@ def render_svg(
         :func:`render_legend_svg`, laid out apart and drawn under the
         graph, centred or at the left; it widens the figure only when it is
         wider than the graph. ``None``: no legend.
-    footer : bytes, optional
+    footer : bytes-like, optional
         The bytes of a PNG or SVG image (an SVG needs a ``viewBox``), drawn
         under the graph at the right, the legend below at the left. It is
         embedded in the drawing (a ``data:`` URI), never linked.
@@ -1279,8 +1317,9 @@ def render_svg(
         If pygraphviz is not installed (the optional extra ``viz``).
     ValueError, TypeError
         As :func:`to_dot`, or if ``legend`` is not one of its values, the
-        footer is not a PNG or SVG image, or it has no height (no legend
-        below and no ``footer_height``).
+        footer is not a PNG or SVG image, ``footer_height`` is not a
+        positive number, or the footer has no height (no legend below and
+        no ``footer_height``).
     RuntimeError
         If Graphviz stops while laying out orthogonal edges, or the child
         process cannot be started.
@@ -1307,7 +1346,9 @@ def render_svg(
         tooltip=tooltip,
     )
     graph_attributes, node_base, edge_base = _layout(attributes)
-    drawing = _svg(graphviz, dot, apart=graph_attributes.get("splines") == "ortho")
+    # Graphviz reads the value without regard to case.
+    splines = graph_attributes.get("splines", "").strip().lower()
+    drawing = _svg(graphviz, dot, apart=splines == "ortho")
     below = None
     if legend in ("below", "below-left"):
         doc = _document(data)
@@ -1356,7 +1397,8 @@ def render_legend_svg(
     data : mapping
         A ``protee-node-link/0`` document.
     styles, attributes, theme : optional
-        As :func:`to_dot`; the graph attributes do not apply to the legend.
+        As :func:`to_dot`; the graph attributes are checked, but do not
+        apply to the legend.
     values : {"declared", "present"}
         All the declared values, or only those that a node or an edge of
         the document carries.
@@ -1373,7 +1415,9 @@ def render_legend_svg(
     ValueError
         If the document does not follow the format or the legend shows no
         value, two node identifiers write the same, a style or an attribute
-        names an invalid Graphviz attribute, or ``values`` is unknown.
+        names an invalid Graphviz attribute, a kind of element is unknown,
+        the graph attributes set more than the layout, or ``values`` is
+        unknown.
     """
     graphviz = _pygraphviz("render_legend_svg")
     doc = _document(data)
@@ -1400,10 +1444,10 @@ def render_legend_svg(
 #: path of the parent as arguments, the text on its input, the SVG on its
 #: output, in bytes.
 _CHILD = (
-    "import sys\n"
-    "sys.path[:0] = sys.argv[1:]\n"
+    "import json, sys\n"
+    "path, _, dot = sys.stdin.buffer.read().decode('utf-8').partition('\\n')\n"
+    "sys.path[:0] = json.loads(path)\n"
     "import pygraphviz\n"
-    "dot = sys.stdin.buffer.read().decode('utf-8')\n"
     "svg = pygraphviz.AGraph(string=dot).draw(format='svg', prog='dot')\n"
     "sys.stdout.buffer.write(svg)\n"
 )
@@ -1411,18 +1455,25 @@ _CHILD = (
 
 def _drawn_apart(dot: str) -> bytes:
     """The SVG of a DOT text, laid out by Graphviz in a child process."""
-    if getattr(sys, "frozen", False) or not sys.executable:
-        raise RuntimeError(
-            "orthogonal edges are laid out in a child Python process, which "
-            "this program cannot start; splines='polyline' draws without it"
-        )
-    done = subprocess.run(
-        [sys.executable, "-I", "-c", _CHILD, *(p for p in sys.path if p)],
-        input=dot.encode("utf-8"),
-        capture_output=True,
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    cannot = (
+        "orthogonal edges are laid out in a child Python process, which "
+        "this program cannot start; splines='polyline' draws without it"
     )
+    if getattr(sys, "frozen", False) or not sys.executable:
+        raise RuntimeError(cannot)
+    # The import path of the parent goes on the input, before the DOT text:
+    # a command line has a bounded length.
+    path = json.dumps([os.fsdecode(p) for p in sys.path if p])
+    try:
+        done = subprocess.run(
+            [sys.executable, "-I", "-c", _CHILD],
+            input=f"{path}\n{dot}".encode(),
+            capture_output=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as err:
+        raise RuntimeError(f"{cannot} ({err})") from err
     if done.returncode != 0 or b"<svg" not in done.stdout:
         detail = done.stderr.decode("utf-8", "replace").strip()
         raise RuntimeError(
@@ -1449,9 +1500,10 @@ def _svg(graphviz: Any, dot: str, *, apart: bool = False) -> str:
 
 
 #: The gradients of a fill or a colour list: Graphviz numbers them with a
-#: counter of its process, ``<element>_l_<n>`` or ``<element>_r_<n>``.
+#: counter of its process, ``<element>_l_<n>`` or ``<element>_r_<n>``. Only
+#: attributes are read: in a text, Graphviz writes a quote ``&quot;``.
 _GRADIENT = re.compile(
-    r'(?<=id=")((?:\w+_)?[lr]_)(\d+)(?=")|(?<=url\(#)((?:\w+_)?[lr]_)(\d+)(?=\))'
+    r'(?<=id=")((?:\w+_)?[lr]_)(\d+)(?=")|(?<="url\(#)((?:\w+_)?[lr]_)(\d+)(?=\))'
 )
 
 
@@ -1488,7 +1540,7 @@ _SVG_NS = "http://www.w3.org/2000/svg"
 
 def _image(footer: object) -> _Image:
     """The image of a footer, read from its bytes: a PNG or an SVG."""
-    if not isinstance(footer, (bytes, bytearray, memoryview)):
+    if not isinstance(footer, Buffer):
         raise TypeError(
             "footer must be the bytes of a PNG or SVG image, never a file name "
             f"or a URL; got {type(footer).__name__}"
@@ -1577,7 +1629,8 @@ def _stack(
     legend = None
     if bottom is not None:
         root, w, h, inner = _root(bottom)
-        for mark in (' id="', "url(#", 'href="#'):
+        # In attributes only: in a text, Graphviz writes a quote &quot;.
+        for mark in (' id="', '="url(#', 'href="#'):
             inner = inner.replace(mark, mark + "protee-legend-")
         legend = (root, w, h, inner)
     image = None
@@ -1836,7 +1889,8 @@ _FORMULA = frozenset(
         "mroot",
     }
 )
-_FORMULA_SIZE = 2000
+_FORMULA_SIZE = 4000  # elements and texts
+_FORMULA_TEXT = 20_000  # characters of text
 _FORMULA_DEPTH = 32
 
 
@@ -1847,14 +1901,22 @@ def _asset(name: str) -> str:
 def _formula(tree: object, where: str) -> Any:
     """A formula, checked: ``["math", {}, children…]``, each child a text or
     a node ``[name, {}, children…]`` of a MathML element of the closed list
-    :data:`_FORMULA`, without attributes, at most 2000 elements and 32
-    levels deep."""
+    :data:`_FORMULA`, without attributes; at most 4000 elements and texts,
+    20,000 characters of text, 32 levels deep."""
     if not (isinstance(tree, list) and tree and tree[0] == "math"):
         raise ValueError(f"{where}: a formula is a list ['math', {{}}, ...]")
-    count = 0
+    count = characters = 0
     stack: list[tuple[object, int, str]] = [(tree, 1, "")]
     while stack:
         node, depth, path = stack.pop()
+        count += 1
+        if isinstance(node, str):
+            characters += len(node)
+        if count > _FORMULA_SIZE or characters > _FORMULA_TEXT:
+            raise ValueError(
+                f"{where}: a formula has at most {_FORMULA_SIZE} elements and "
+                f"texts, {_FORMULA_TEXT} characters of text"
+            )
         if isinstance(node, str):
             continue
         if not (isinstance(node, list) and len(node) >= 2 and isinstance(node[0], str)):
@@ -1868,11 +1930,9 @@ def _formula(tree: object, where: str) -> Any:
             )
         if node[1] != {}:
             raise ValueError(f"{where}{path}: an element of a formula has no attribute")
-        count += 1
-        if count > _FORMULA_SIZE or depth > _FORMULA_DEPTH:
+        if depth > _FORMULA_DEPTH:
             raise ValueError(
-                f"{where}: a formula has at most {_FORMULA_SIZE} elements, "
-                f"{_FORMULA_DEPTH} levels deep"
+                f"{where}: a formula is at most {_FORMULA_DEPTH} levels deep"
             )
         stack.extend(
             (child, depth + 1, f"{path}[{k}]") for k, child in enumerate(node) if k > 1
@@ -1888,7 +1948,7 @@ def _groups(doc: dict[str, Any], group_by: str | None) -> list[tuple[str, list[A
     if group_by == "loop":
         loops = _components(doc, _successors(doc["edges"]))
         return [(f"⟳ {len(ids)}", ids) for ids in loops if len(ids) > 1]
-    members: dict[Any, list[Any]] = {}
+    members: dict[tuple[bool, Any], list[Any]] = {}
     for node in doc["nodes"]:
         value = node.get(group_by)
         if isinstance(value, (dict, list)):
@@ -1896,8 +1956,9 @@ def _groups(doc: dict[str, Any], group_by: str | None) -> list[tuple[str, list[A
                 f"group_by {group_by!r}: {value!r} is not a text or a number"
             )
         if value is not None:
-            members.setdefault(value, []).append(node["id"])
-    return [(str(v), ids) for v, ids in members.items() if len(ids) > 1]
+            # true and 1 are two values of JSON, equal in Python.
+            members.setdefault((isinstance(value, bool), value), []).append(node["id"])
+    return [(str(v), ids) for (_, v), ids in members.items() if len(ids) > 1]
 
 
 def _font_size(style: Mapping[str, str], out: dict[str, object]) -> None:
@@ -1992,7 +2053,7 @@ def render_html(
     math: str | None = None,
     matrix: bool = False,
     legend_values: str = "declared",
-    footer: bytes | None = None,
+    footer: Buffer | None = None,
 ) -> str:
     """A page to explore a document, which opens offline by a double click.
 
@@ -2004,8 +2065,8 @@ def render_html(
     extension, with their MIT notices: the reader collapses or expands a
     group with the cue at its corner, or all of them with the buttons. A
     tooltip shows the description of a node, its ``iri`` and its ``url``;
-    that of an edge, its label, its declared values, its description and
-    its ``locator``; both add the attributes named by ``tooltip``. A double
+    that of an edge, its label, its declared values and its ``locator``;
+    both add the attributes named by ``tooltip``. A double
     click opens the ``url`` of a node when it opens no script. The legend of
     :func:`render_legend_svg` shows the declared values; below it, a box for
     each declared value and each family, with its description, hides the
@@ -2034,15 +2095,15 @@ def render_html(
         MathML tree written as data, ``["math", {}, child, …]``, each child
         a text or ``[name, {}, child, …]`` with a name among ``math``,
         ``mrow``, ``mi``, ``mn``, ``mo``, ``mfrac``, ``msup``, ``msub``,
-        ``msubsup``, ``msqrt`` and ``mroot``, without attributes, at most
-        2000 elements and 32 levels deep. The page builds its elements one
-        by one, and never reads markup.
+        ``msubsup``, ``msqrt`` and ``mroot``, without attributes; at most
+        4000 elements and texts, 20,000 characters of text, 32 levels deep.
+        The page builds its elements one by one, and never reads markup.
     matrix : bool
         Add the matrix of :func:`render_matrix_svg` (``order_by`` needed),
         shown under the graph with a button: a node chosen in the graph
         lights its row and its column; a cell chosen in the matrix marks its
         edges in the graph.
-    footer : bytes, optional
+    footer : bytes-like, optional
         A PNG or SVG image, as for :func:`render_svg`, shown under the
         legend (a logo, an attribution).
 
@@ -2058,7 +2119,8 @@ def render_html(
     ValueError, TypeError
         As :func:`to_dot`, or if a formula does not follow its form, a value
         of ``group_by`` is neither a text nor a number, ``matrix`` is asked
-        without ``order_by``, or the footer is not a PNG or SVG image.
+        without ``order_by`` or no node carries it, or the footer is not a
+        PNG or SVG image.
     """
     graphviz = _pygraphviz("render_html")
     doc = _document(data)
@@ -2145,12 +2207,17 @@ def render_html(
         if edge.get("label"):
             values["label"] = edge["label"]
         lines = [str(edge["label"])] if edge.get("label") else []
-        lines += [
-            f"{attribute}: {labels[(attribute, 'edge', edge[attribute])]}"
+        shown = [
+            attribute
             for attribute in vocabulary
             if (attribute, "edge", edge.get(attribute)) in labels
         ]
-        if lines := lines + _edge_lines(edge, fields, labels):
+        lines += [
+            f"{attribute}: {labels[(attribute, 'edge', edge[attribute])]}"
+            for attribute in shown
+        ]
+        rest = [name for name in fields if name not in shown]
+        if lines := lines + _edge_lines(edge, rest, labels):
             values["tooltip"] = "\n".join(lines)
         if filtered := _filtered(edge, filters):
             values["values"] = filtered

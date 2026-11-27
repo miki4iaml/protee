@@ -78,9 +78,9 @@
       }
     },
     "term": {
-      "description": "prefix:name, with a prefix declared in graph.prefixes.",
+      "description": "prefix:name, without spaces, with a prefix declared in graph.prefixes.",
       "type": "string",
-      "pattern": "^[^:]+:.+$"
+      "pattern": "^(?!.*\\s)[^:]+:.+$"
     },
     "mapping": {
       "description": "A correspondence of a declared value to a term of another vocabulary, as in SSSOM: a relation (a SKOS mapping relation, such as skos:exactMatch), the term, and an optional justification (a SEMAPV term).",
