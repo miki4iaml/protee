@@ -37,6 +37,19 @@ and this project adheres to
   document carries; a value with `mappings` lists them in its tooltip.
 - A footer for `render_svg`: a PNG or SVG image, given as bytes, embedded
   under the figure at the right of the legend.
+- `protee.viz.mark_vocabularies`: each node with an `iri` marked with the
+  vocabulary of that IRI (a declared prefix, or its authority), declared
+  so that the default styles fill the nodes by vocabulary and the legend
+  lists the vocabularies.
+- Tooltips: `tooltip=` of `to_dot`, `render_svg` and `render_html` adds
+  attributes to the tooltips of nodes and edges; an edge shows its
+  description and its `locator`.
+- The exploration page (`render_html`) gains `attributes`, `theme`,
+  `legend_values` and a `footer` image; tooltips on edges; formulas drawn
+  from a MathML tree written as data (`math=`), built element by element
+  from a closed list, never from markup; the matrix under the graph
+  (`matrix=True`), coordinated with it; and groups by any node attribute
+  (`group_by`).
 - Orthogonal edges (`splines="ortho"`) are laid out in a child process of
   the same Python: when Graphviz stops in their routing, `render_svg`
   raises a `RuntimeError` instead of stopping the caller's process.
@@ -52,6 +65,8 @@ and this project adheres to
   credited in its notice.
 - A kind of element other than `node` or `edge` in `styles` raises a
   `ValueError`; it was ignored.
+- `render_html` accepts any node attribute as `group_by`; an unknown one
+  raised a `ValueError`. Its tooltips keep their line breaks.
 - `protee.viz.CONTAINS` and `MEMBERS` name the nodes of the original
   document that a node stands for: the members of a group, and now the
   ends of contracted edges.
