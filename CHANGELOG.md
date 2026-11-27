@@ -18,6 +18,28 @@ and this project adheres to
   number, an article, a clause). `protee.io.check_node_link` and the JSON
   Schema check them; the format documentation advises producers to prefix
   the keys that only they read.
+- `protee.viz.contract`: the two ends of each edge of a type shown as one
+  node, which keeps the attributes of the chosen end, completed by the
+  other's, and the trace of the nodes it stands for; it undoes a split of
+  nodes.
+- `protee.viz.render_matrix_svg`: the matrix of a document (N² chart, or
+  design structure matrix), written in SVG without Graphviz: the nodes
+  ordered on the diagonal, a row gives and a column reads, the feedbacks
+  below the diagonal, the inputs counted, ties and loops framed.
+- Themes: `protee.viz.Theme`, with `LIGHT` and `DARK`, sets the background,
+  the ink and a muted grey of `to_dot`, `render_svg`, `render_legend_svg`
+  and `render_matrix_svg`.
+- `attributes` of `to_dot`, `render_svg` and `render_legend_svg`: Graphviz
+  attributes of the graph (layout only: `splines`, `ranksep`, `nodesep`,
+  `pad`) and of all nodes and all edges, the legend included.
+- Legend options: `legend="below-left"`, and `legend_values="present"` (in
+  `render_legend_svg`, `values="present"`) for only the values that the
+  document carries; a value with `mappings` lists them in its tooltip.
+- A footer for `render_svg`: a PNG or SVG image, given as bytes, embedded
+  under the figure at the right of the legend.
+- Orthogonal edges (`splines="ortho"`) are laid out in a child process of
+  the same Python: when Graphviz stops in their routing, `render_svg`
+  raises a `RuntimeError` instead of stopping the caller's process.
 - `docs/security-and-compliance.md`: how protee runs, is developed and
   published, what it ships and under which licences, the regulatory
   landmarks, the known limits and a checklist, for those who assess its
@@ -28,6 +50,17 @@ and this project adheres to
 - The licence expression of the distribution declares the Licence Ouverte
   2.0 of the embedded value set (`BSD-3-Clause AND MIT AND etalab-2.0`),
   credited in its notice.
+- A kind of element other than `node` or `edge` in `styles` raises a
+  `ValueError`; it was ignored.
+- `protee.viz.CONTAINS` and `MEMBERS` name the nodes of the original
+  document that a node stands for: the members of a group, and now the
+  ends of contracted edges.
+
+### Fixed
+
+- The text on a filled node is black or white, whichever contrasts more
+  with the fill (WCAG 2): it was white on vermilion, below a ratio of
+  4.5:1.
 
 ## [0.1.0] - 2026-11-22
 

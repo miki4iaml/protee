@@ -45,8 +45,8 @@ then names a fixed text that can be checked.
 
 | Area | Finding |
 |---|---|
-| Running | No network access, no subprocess, no telemetry, no file written unless the caller asks. Works entirely offline. |
-| Input data | Graphs and node-link documents are data: checked against the format, never executed; the package uses neither `eval` nor `exec`. Texts drawn in SVG or HTML are escaped, and links that would open a script are dropped. |
+| Running | No network access, no telemetry, no file written unless the caller asks. Works entirely offline. One subprocess only: orthogonal edges are laid out by a child process of the same Python, without a shell. |
+| Input data | Graphs and node-link documents are data: checked against the format, never executed; the package uses neither `eval` nor `exec`. Texts drawn in SVG or HTML are escaped, and links that would open a script are dropped. An image given for the footer of a figure is embedded as an image, never linked. |
 | Dependencies | Two runtime dependencies (NumPy, SciPy), under permissive licences; pygraphviz with its bundled Graphviz (EPL-2.0) in the optional extra `viz`. |
 | Approach | DevSecOps principles applied from planning to publication on PyPI, with the security means GitHub offers to public repositories (section 12). |
 | Development | Protected branches, owner review, signed and verified commits, blocking automatic checks, code scanning (CodeQL), secret detection. |
@@ -100,9 +100,19 @@ section 7 for an installation at locked versions.
 - no network access: the package imports no network module; the rule
   "works on an offline workstation" is part of the project's rules
   (`AGENTS.md`);
-- no subprocess and no system call; the drawing calls the Graphviz library
-  that pygraphviz loads into the same process, and never the Graphviz
-  programs its wheels also contain;
+- one subprocess, and no other system call: the drawing calls the
+  Graphviz library that pygraphviz loads into the same process, and never
+  the Graphviz programs its wheels also contain, except for orthogonal
+  edges (`splines="ortho"`). Their routing in Graphviz can stop the
+  process that runs it, so `protee.viz.render_svg` lays them out in a
+  child process of the same Python (`sys.executable -I`, its arguments as
+  a list, no shell), which reads the DOT text and writes the SVG, and
+  raises an error if that child stops;
+- an image given as the footer of a figure (`render_svg(footer=...)`) is
+  bytes, never a file name or a URL: only a PNG or an SVG with a
+  `viewBox` is read (an SVG with a DOCTYPE is refused), and it is embedded
+  whole in an `image` element (a `data:` URI), which browsers draw without
+  running its scripts or fetching anything;
 - no telemetry and no data collection;
 - no file written unless the caller asks: `protee.io.write_node_link`,
   `write_arcs_csv` and `write_dimacs_min` write the file they are given;
