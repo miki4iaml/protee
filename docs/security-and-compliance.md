@@ -113,6 +113,11 @@ section 7 for an installation at locked versions.
   `viewBox` is read (an SVG with a DOCTYPE is refused), and it is embedded
   whole in an `image` element (a `data:` URI), which browsers draw without
   running its scripts or fetching anything;
+- a formula shown in the exploration page (`render_html(math=...)`) is
+  data, never markup: a tree checked in Python (eleven MathML elements of
+  a closed list, no attribute, at most 2000 elements and 32 levels), then
+  built by the page element by element (`createElementNS`), its texts as
+  text nodes; the page script uses neither `innerHTML` nor `setAttribute`;
 - no telemetry and no data collection;
 - no file written unless the caller asks: `protee.io.write_node_link`,
   `write_arcs_csv` and `write_dimacs_min` write the file they are given;

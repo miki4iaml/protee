@@ -769,14 +769,25 @@ def test_render_html_translates_the_graphviz_styles() -> None:
     assert both["source-arrow-shape"] == "diamond"
 
 
-def test_render_html_refuses_unknown_groupings_and_needs_the_extra(
+def test_render_html_groups_by_an_attribute_and_needs_the_extra(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    page = viz.render_html(chain(), group_by=None)
-    nodes, _ = page_parts(page)
-    assert all("position" in n for n in nodes)  # no group
-    with pytest.raises(ValueError, match="group_by must be"):
-        viz.render_html(chain(), group_by="kind")
+    for group_by in (None, "kind"):  # no node carries "kind"
+        nodes, _ = page_parts(viz.render_html(chain(), group_by=group_by))
+        assert all("position" in n for n in nodes)  # no group
+    doc = chain()
+    for node in doc["nodes"]:
+        node["kind"] = "first" if node["id"] in "abc" else "second"
+    nodes, _ = page_parts(viz.render_html(doc, group_by="kind"))
+    groups = {n["data"]["label"]: n["data"]["id"] for n in nodes if "position" not in n}
+    assert set(groups) == {"first", "second"}
+    members = {
+        n["data"]["id"] for n in nodes if n["data"].get("parent") == groups["first"]
+    }
+    assert members == {"a", "b", "c"}
+    doc["nodes"][0]["kind"] = ["first"]
+    with pytest.raises(TypeError, match="is not a text or a number"):
+        viz.render_html(doc, group_by="kind")
     monkeypatch.setitem(sys.modules, "pygraphviz", None)
     with pytest.raises(ImportError, match=r"protee\[viz\]"):
         viz.render_html(chain())

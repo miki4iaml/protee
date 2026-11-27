@@ -18,8 +18,9 @@ CLOSING = {
 
 `viz.render_html` writes a page to explore the same documents offline
 (groups folded and unfolded, filters by declared value and by family, a
-search in the labels, tooltips, and links for the nodes that have a
-`url`); it is not shown here, as it embeds the JavaScript of
+search in the labels, tooltips on nodes and edges, formulas, links for
+the nodes that have a `url`, and the matrix under the graph, coordinated
+with it); it is not shown here, as it embeds the JavaScript of
 cytoscape.js.
 
 This page and its drawings are written by
@@ -128,6 +129,21 @@ viz.render_svg(viz.collapse(kinds), direction="RL", legend="below")
 ```
 
 ![The same forest, one node per family](humidity-families.svg)
+
+## The same forest, coloured by vocabulary
+
+Each node with an IRI is marked with the vocabulary of that IRI (QUDT, the CF standard names, Wikidata), named after a declared prefix, or after the authority of the IRI when none begins it; the fill tells the vocabulary, and the legend lists them.
+
+```python
+viz.render_svg(
+    viz.mark_vocabularies(kinds),
+    direction="RL",
+    legend="below",
+    legend_values="present",
+)
+```
+
+![The same forest, coloured by vocabulary](humidity-vocabularies.svg)
 
 ## A legend alone
 

@@ -66,12 +66,14 @@ __all__ = [
     "OKABE_ITO",
     "OUTSIDE",
     "SELECTION",
+    "VOCABULARY",
     "Attributes",
     "Styles",
     "Theme",
     "collapse",
     "condense",
     "contract",
+    "mark_vocabularies",
     "reduce",
     "render_html",
     "render_legend_svg",
@@ -98,6 +100,9 @@ MERGED = "protee:merged"
 #: Key listing the identifiers of the nodes of the original document that a
 #: node stands for: the members of a group, the ends of contracted edges.
 CONTAINS = "protee:contains"
+#: Attribute naming the vocabulary of the IRI of a node
+#: (:func:`mark_vocabularies`).
+VOCABULARY = "protee:vocabulary"
 
 #: A palette told apart with the common colour vision deficiencies (Okabe
 #: and Ito): orange, sky blue, bluish green, yellow, blue, vermilion,
@@ -439,6 +444,96 @@ def condense(data: Mapping[str, Any]) -> dict[str, Any]:
         if len(ids) > 1
     ]
     return _merge(doc, groups, LOOP)
+
+
+def mark_vocabularies(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Each node with an ``iri``, marked with the vocabulary of that IRI.
+
+    The vocabulary of an IRI is the declared prefix whose IRI begins it (the
+    longest, when several do); without one, the authority of the IRI
+    (``qudt.org`` for ``http://qudt.org/vocab/quantitykind/Pressure``), or
+    its scheme when it has none (``urn``). It is written under
+    :data:`VOCABULARY` and declared in ``graph.vocabulary``, labelled with
+    the prefix and its IRI, or with the authority, second among the
+    attributes of the nodes (first when they have none): the default styles
+    then fill the nodes by vocabulary (or shape them), and the legend lists
+    the vocabularies, as VOWL and Graffoo colour the terms of each
+    vocabulary. A node without ``iri`` has no vocabulary.
+
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+
+    Returns
+    -------
+    dict
+        A new document.
+
+    Raises
+    ------
+    ValueError
+        If the document does not follow the format.
+    """
+    doc = _document(data)
+    block = doc["graph"]
+    prefixes = [
+        (prefix, base)
+        for prefix, base in (block.get("prefixes") or {}).items()
+        if isinstance(base, str) and base
+    ]
+    found: dict[str, str] = {}  # value -> label, in the order of first use
+    for node in doc["nodes"]:
+        node.pop(VOCABULARY, None)
+        iri = node.get("iri")
+        if not isinstance(iri, str):
+            continue
+        matches = [
+            (len(base), prefix, base)
+            for prefix, base in prefixes
+            if iri.startswith(base)
+        ]
+        if matches:
+            _, value, base = max(matches)
+            label = f"{value}: {base}"
+        else:
+            value = label = _authority(iri)
+        node[VOCABULARY] = value
+        found.setdefault(value, label)
+    vocabulary = {
+        k: v for k, v in (block.get("vocabulary") or {}).items() if k != VOCABULARY
+    }
+    if found:
+        items = list(vocabulary.items())
+        first = next(
+            (
+                k
+                for k, (attribute, values) in enumerate(items)
+                if attribute not in (DISPLAY, SELECTION)
+                and any(v["on"] == "node" for v in values or ())
+            ),
+            -1,
+        )
+        declared = [
+            {"id": value, "on": "node", "label": label}
+            for value, label in found.items()
+        ]
+        items.insert(first + 1, (VOCABULARY, declared))
+        vocabulary = dict(items)
+        block["prefixes"] = {**(block.get("prefixes") or {}), "protee": None}
+    block["vocabulary"] = vocabulary
+    return doc
+
+
+def _authority(iri: str) -> str:
+    """The authority of an IRI without its port, or its scheme."""
+    scheme, _, rest = iri.partition(":")
+    if rest.startswith("//"):
+        host = re.split(r"[/?#]", rest[2:], maxsplit=1)[0].rpartition("@")[2]
+        host = host.split(":", 1)[0]
+        if host:
+            return host
+    return scheme
 
 
 def _successors(edges: Iterable[Mapping[str, Any]]) -> dict[Any, list[Any]]:
@@ -908,14 +1003,61 @@ def _layout(
     return checked[0], checked[1], checked[2]
 
 
-def _texts(node: Mapping[str, Any]) -> tuple[str, str]:
+type _Labels = dict[tuple[str, str, str], str]
+
+
+def _labels(vocabulary: Mapping[str, Any]) -> _Labels:
+    """The label of each declared value: (attribute, on, value) -> label."""
+    return {
+        (attribute, v["on"], v["id"]): str(v["label"])
+        for attribute, values in vocabulary.items()
+        for v in values or ()
+    }
+
+
+def _field_lines(
+    item: Mapping[str, Any], fields: Iterable[str], labels: _Labels, on: str
+) -> list[str]:
+    """One line per attribute of ``fields`` that the element carries: the
+    label of a declared value, or the value itself."""
+    lines = []
+    for name in fields:
+        value = item.get(name)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = labels.get((name, on, value), value)
+        elif isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False)
+        lines.append(f"{name}: {value}")
+    return lines
+
+
+def _texts(
+    node: Mapping[str, Any], fields: Iterable[str] = (), labels: _Labels | None = None
+) -> tuple[str, str]:
     """The label of a node (with ``+n`` hidden neighbours) and its tooltip:
-    its description (its label without one), then its ``iri`` and ``url``."""
+    its description (its label without one), then its ``iri`` and ``url``,
+    then the attributes of ``fields``."""
     label = str(node.get("label") or node["id"])
     hidden = (node.get("metrics") or {}).get(HIDDEN)
     tooltip = [str(node.get("description") or label)]
     tooltip += [str(node[k]) for k in ("iri", "url") if node.get(k)]
+    tooltip += _field_lines(node, fields, labels or {}, "node")
     return (f"{label}\n+{hidden}" if hidden else label), "\n".join(tooltip)
+
+
+def _edge_lines(
+    edge: Mapping[str, Any], fields: Iterable[str], labels: _Labels
+) -> list[str]:
+    """The tooltip of an edge: its description, its ``locator``, then the
+    attributes of ``fields``."""
+    lines = (
+        [str(edge["description"])] if isinstance(edge.get("description"), str) else []
+    )
+    if edge.get("locator"):
+        lines.append(f"locator: {edge['locator']}")
+    return lines + _field_lines(edge, fields, labels, "edge")
 
 
 def _heads(theme: Theme | None) -> tuple[dict[str, str], dict[str, str]]:
@@ -938,6 +1080,7 @@ def to_dot(
     direction: str = "TB",
     legend: bool = True,
     legend_values: str = "declared",
+    tooltip: Iterable[str] = (),
 ) -> str:
     """The Graphviz DOT text of a document.
 
@@ -998,6 +1141,11 @@ def to_dot(
     legend_values : {"declared", "present"}
         The values the legend shows: all the declared values, or only those
         that a node or an edge of the document carries.
+    tooltip : iterable of str
+        Attributes whose values the tooltips of the nodes and of the edges
+        add, one line each: the label of a declared value, or the value
+        itself. An edge has a tooltip when it has a description, a
+        ``locator`` or one of these attributes.
 
     Returns
     -------
@@ -1036,9 +1184,11 @@ def to_dot(
         f"  node [{_attributes(element)}];",
         f"  edge [{_attributes(element)}];",
     ]
+    fields = tuple(tooltip)
+    labels = _labels(block.get("vocabulary") or {})
     for node in doc["nodes"]:
-        label, tooltip = _texts(node)
-        values: dict[str, object] = {"label": label, "tooltip": tooltip}
+        label, text = _texts(node, fields, labels)
+        values: dict[str, object] = {"label": label, "tooltip": text}
         if url := _safe_url(node.get("url")):
             values["URL"] = url
         values.update(_style(node, node_defaults, given["node"], node_base))
@@ -1047,6 +1197,8 @@ def to_dot(
         values = {}
         if edge.get("label"):
             values["label"] = edge["label"]
+        if notes := _edge_lines(edge, fields, labels):
+            values["tooltip"] = "\n".join(notes)
         values.update(_style(edge, edge_defaults, given["edge"], edge_base))
         lines.append(
             f"  {_quote(edge['source'])} -> {_quote(edge['target'])}"
@@ -1080,6 +1232,7 @@ def render_svg(
     direction: str = "TB",
     legend: str | None = "right",
     legend_values: str = "declared",
+    tooltip: Iterable[str] = (),
     footer: bytes | None = None,
     footer_height: float | None = None,
 ) -> str:
@@ -1099,7 +1252,7 @@ def render_svg(
 
     Parameters
     ----------
-    data, styles, attributes, theme, order_by, direction, legend_values
+    data, styles, attributes, theme, order_by, direction, legend_values, tooltip
         As :func:`to_dot`.
     legend : {"right", "below", "below-left"} or None
         ``"right"``: the cluster of :func:`to_dot`, placed by Graphviz
@@ -1151,6 +1304,7 @@ def render_svg(
         direction=direction,
         legend=legend == "right",
         legend_values=legend_values,
+        tooltip=tooltip,
     )
     graph_attributes, node_base, edge_base = _layout(attributes)
     drawing = _svg(graphviz, dot, apart=graph_attributes.get("splines") == "ortho")
@@ -1481,7 +1635,6 @@ def _pygraphviz(function: str) -> Any:
     return pygraphviz
 
 
-_GROUP_BY = ("family", "loop", None)
 _CY_SHAPES = {
     "box": "rectangle",
     "diamond": "diamond",
@@ -1500,25 +1653,39 @@ _CY_ARROWS = {
     "box": ("square", "filled"),
     "obox": ("square", "hollow"),
 }
+#: The colours of the page without a theme: background, ink, muted grey,
+#: rules, notes and tooltips.
+_PAGE_COLOURS = ("#FFFFFF", "#000000", "#7F7F7F", "#CCCCCC", "#555555", "#FFFFE8")
 _PAGE_STYLE = """
-body { margin: 0; font-family: Helvetica, Arial, sans-serif; font-size: 14px; }
+body { margin: 0; font-family: Helvetica, Arial, sans-serif; font-size: 14px;
+  background: var(--bg); color: var(--ink); }
 header { position: absolute; top: 0; left: 0; right: 0; height: 2.6em;
   display: flex; gap: .6em; align-items: center; padding: 0 .8em;
-  border-bottom: 1px solid #ccc; }
+  border-bottom: 1px solid var(--rule); }
 #cy { position: absolute; top: 2.6em; left: 0; right: 20em; bottom: 0; }
+#matrix { display: none; position: absolute; top: 50%; left: 0; right: 20em;
+  bottom: 0; overflow: auto; border-top: 1px solid var(--rule); }
+body.matrix #cy { bottom: 50%; }
+body.matrix #matrix { display: block; }
+#matrix g.protee-cell, #matrix g.protee-diagonal { cursor: pointer; }
+#matrix g.hl rect, #matrix g.hl circle { stroke: #F0E442; stroke-width: 4px; }
 aside { position: absolute; top: 2.6em; right: 0; width: 19em; bottom: 0;
-  overflow: auto; padding: .5em; border-left: 1px solid #ccc; }
+  overflow: auto; padding: .5em; border-left: 1px solid var(--rule); }
 aside h2 { font-size: 1em; margin: .8em 0 .3em; }
 aside ul { list-style: none; margin: 0; padding: 0; }
 aside li { margin: .25em 0; }
-aside svg { max-width: 100%; height: auto; }
-.note { color: #555; font-size: .9em; }
+aside svg, aside img { max-width: 100%; height: auto; }
+.note { color: var(--note); font-size: .9em; }
 #tip { position: absolute; display: none; max-width: 24em; padding: .3em .5em;
-  background: #ffffe8; border: 1px solid #999; pointer-events: none; }
+  white-space: pre-line; background: var(--tip); border: 1px solid var(--muted);
+  pointer-events: none; }
+#tip math { display: block; margin-top: .3em; }
 """
 _PAGE_SCRIPT = """
 (function () {
   var elements = JSON.parse(document.getElementById("protee-elements").textContent);
+  var look = JSON.parse(document.getElementById("protee-look").textContent);
+  var order = JSON.parse(document.getElementById("protee-order").textContent);
   var cy = cytoscape({
     container: document.getElementById("cy"),
     elements: elements,
@@ -1529,17 +1696,18 @@ _PAGE_SCRIPT = """
         "label": "data(label)", "text-wrap": "wrap", "text-valign": "center",
         "text-halign": "center", "font-family": "Helvetica, Arial, sans-serif",
         "font-size": 10, "width": "data(w)", "height": "data(h)",
-        "background-color": "#FFFFFF", "border-width": 1, "border-color": "#000000" } },
+        "background-color": look.background, "border-width": 1,
+        "border-color": look.ink, "color": look.ink } },
       { selector: ":parent", style: {
         "text-valign": "top", "background-opacity": 0.04, "border-style": "dashed",
-        "border-color": "#7F7F7F" } },
+        "border-color": look.muted } },
       { selector: "edge", style: {
-        "curve-style": "bezier", "width": 1, "line-color": "#000000",
-        "target-arrow-shape": "triangle", "target-arrow-color": "#000000",
-        "label": "data(label)", "font-size": 9 } },
+        "curve-style": "bezier", "width": 1, "line-color": look.ink,
+        "target-arrow-shape": "triangle", "target-arrow-color": look.ink,
+        "label": "data(label)", "font-size": 9, "color": look.ink } },
       { selector: "node.cy-expand-collapse-collapsed-node", style: {
         "shape": "round-rectangle", "border-style": "double", "border-width": 4 } },
-      { selector: "node.match", style: {
+      { selector: ".match", style: {
         "overlay-color": "#D55E00", "overlay-opacity": 0.3, "overlay-padding": 6 } },
       { selector: ".faded", style: { "opacity": 0.2 } }
     ]
@@ -1549,20 +1717,71 @@ _PAGE_SCRIPT = """
   document.getElementById("collapse").onclick = function () { api.collapseAll(); };
   document.getElementById("expand").onclick = function () { api.expandAll(); };
   document.getElementById("fit").onclick = function () { cy.fit(); };
+  // A formula is data: elements of a closed list, and texts; no markup is
+  // ever read, and no attribute is ever set.
+  var MATHML = "http://www.w3.org/1998/Math/MathML";
+  var FORMULA = { "math": 1, "mrow": 1, "mi": 1, "mn": 1, "mo": 1, "mfrac": 1,
+    "msup": 1, "msub": 1, "msubsup": 1, "msqrt": 1, "mroot": 1 };
+  function formula(tree) {
+    if (typeof tree === "string") { return document.createTextNode(tree); }
+    if (!Object.prototype.hasOwnProperty.call(FORMULA, tree[0])) {
+      return document.createTextNode("");
+    }
+    var element = document.createElementNS(MATHML, tree[0]);
+    for (var k = 2; k < tree.length; k++) { element.appendChild(formula(tree[k])); }
+    return element;
+  }
   var tip = document.getElementById("tip");
-  cy.on("mouseover", "node", function (event) {
+  cy.on("mouseover", "node, edge", function (event) {
     var text = event.target.data("tooltip");
-    if (!text) { return; }
-    tip.textContent = text;
+    var math = event.target.data("math");
+    if (!text && !math) { return; }
+    tip.textContent = text || "";
+    if (math) { tip.appendChild(formula(math)); }
     tip.style.left = (event.renderedPosition.x + 14) + "px";
     tip.style.top = (event.renderedPosition.y + 44) + "px";
     tip.style.display = "block";
   });
-  cy.on("mouseout", "node", function () { tip.style.display = "none"; });
+  cy.on("mouseout", "node, edge", function () { tip.style.display = "none"; });
   cy.on("dbltap", "node", function (event) {
     var url = event.target.data("url");
     if (url) { window.open(url, "_blank", "noopener"); }
   });
+  // The matrix: a node chosen in the graph lights its row and its column; a
+  // cell chosen in the matrix marks its edges in the graph.
+  var matrix = document.getElementById("matrix");
+  if (matrix) {
+    var cells = Array.prototype.slice.call(
+      matrix.querySelectorAll("g.protee-cell, g.protee-diagonal"));
+    var light = function (test) {
+      cells.forEach(function (g) { g.classList.toggle("hl", test(g.dataset)); });
+    };
+    document.getElementById("matrix-toggle").onclick = function () {
+      document.body.classList.toggle("matrix");
+      cy.resize();
+    };
+    cy.on("tap", "node", function (event) {
+      var i = order.indexOf(event.target.id());
+      light(function (d) {
+        return i >= 0 && (+d.row === i || +d.col === i || +d.index === i);
+      });
+    });
+    matrix.addEventListener("click", function (event) {
+      var g = event.target.closest("g.protee-cell, g.protee-diagonal");
+      if (!g) { return; }
+      var d = g.dataset;
+      cy.elements().removeClass("match");
+      if (d.index !== undefined) {
+        cy.getElementById(order[+d.index]).addClass("match");
+      } else {
+        var source = order[+d.row], target = order[+d.col];
+        cy.edges().filter(function (edge) {
+          return edge.data("source") === source && edge.data("target") === target;
+        }).addClass("match");
+      }
+      light(function (other) { return other === d; });
+    });
+  }
   // Filters: an unchecked value hides the nodes or the edges that carry it
   // (and the edges of a hidden node); the search marks the matching labels.
   var boxes = Array.prototype.slice.call(
@@ -1601,24 +1820,94 @@ _PAGE_SCRIPT = """
   };
 })();
 """
+#: The elements of a formula (MathML), without attributes, and its bounds.
+_FORMULA = frozenset(
+    {
+        "math",
+        "mrow",
+        "mi",
+        "mn",
+        "mo",
+        "mfrac",
+        "msup",
+        "msub",
+        "msubsup",
+        "msqrt",
+        "mroot",
+    }
+)
+_FORMULA_SIZE = 2000
+_FORMULA_DEPTH = 32
 
 
 def _asset(name: str) -> str:
     return files("protee").joinpath("_assets", name).read_text(encoding="utf-8")
 
 
+def _formula(tree: object, where: str) -> Any:
+    """A formula, checked: ``["math", {}, children…]``, each child a text or
+    a node ``[name, {}, children…]`` of a MathML element of the closed list
+    :data:`_FORMULA`, without attributes, at most 2000 elements and 32
+    levels deep."""
+    if not (isinstance(tree, list) and tree and tree[0] == "math"):
+        raise ValueError(f"{where}: a formula is a list ['math', {{}}, ...]")
+    count = 0
+    stack: list[tuple[object, int, str]] = [(tree, 1, "")]
+    while stack:
+        node, depth, path = stack.pop()
+        if isinstance(node, str):
+            continue
+        if not (isinstance(node, list) and len(node) >= 2 and isinstance(node[0], str)):
+            raise ValueError(
+                f"{where}{path}: an element of a formula is [name, {{}}, children...]"
+            )
+        if node[0] not in _FORMULA:
+            raise ValueError(
+                f"{where}{path}: {node[0]!r} is not an element of a formula "
+                f"({', '.join(sorted(_FORMULA))})"
+            )
+        if node[1] != {}:
+            raise ValueError(f"{where}{path}: an element of a formula has no attribute")
+        count += 1
+        if count > _FORMULA_SIZE or depth > _FORMULA_DEPTH:
+            raise ValueError(
+                f"{where}: a formula has at most {_FORMULA_SIZE} elements, "
+                f"{_FORMULA_DEPTH} levels deep"
+            )
+        stack.extend(
+            (child, depth + 1, f"{path}[{k}]") for k, child in enumerate(node) if k > 1
+        )
+    return tree
+
+
 def _groups(doc: dict[str, Any], group_by: str | None) -> list[tuple[str, list[Any]]]:
-    """(label, members) of the groups shown as compound nodes."""
-    members: dict[Any, list[Any]] = {}
-    if group_by == "family":
-        for node in doc["nodes"]:
-            if node.get("family") is not None:
-                members.setdefault(node["family"], []).append(node["id"])
-        return [(str(v), ids) for v, ids in members.items() if len(ids) > 1]
+    """(label, members) of the groups shown as compound nodes: the loops, or
+    the nodes that share a value of an attribute."""
+    if group_by is None:
+        return []
     if group_by == "loop":
         loops = _components(doc, _successors(doc["edges"]))
         return [(f"⟳ {len(ids)}", ids) for ids in loops if len(ids) > 1]
-    return []
+    members: dict[Any, list[Any]] = {}
+    for node in doc["nodes"]:
+        value = node.get(group_by)
+        if isinstance(value, (dict, list)):
+            raise TypeError(
+                f"group_by {group_by!r}: {value!r} is not a text or a number"
+            )
+        if value is not None:
+            members.setdefault(value, []).append(node["id"])
+    return [(str(v), ids) for v, ids in members.items() if len(ids) > 1]
+
+
+def _font_size(style: Mapping[str, str], out: dict[str, object]) -> None:
+    """The font size of Graphviz, in the points of cytoscape.js."""
+    try:
+        size = float(style.get("fontsize", ""))
+    except ValueError:
+        return
+    if math.isfinite(size) and size > 0:
+        out["font-size"] = size
 
 
 def _cy_node(style: Mapping[str, str]) -> dict[str, object]:
@@ -1642,6 +1931,7 @@ def _cy_node(style: Mapping[str, str]) -> dict[str, object]:
         out["color"] = style["fontcolor"]
     if _OUTSIDE_CLASS in style.get("class", "").split():
         out["font-style"] = "italic"
+    _font_size(style, out)
     return out
 
 
@@ -1668,45 +1958,93 @@ def _cy_edge(style: Mapping[str, str]) -> dict[str, object]:
         out["source-arrow-fill"] = tail_fill
         if "color" in style:
             out["source-arrow-color"] = style["color"]
+    _font_size(style, out)
     return out
+
+
+def _page_colours(theme: Theme | None) -> tuple[str, dict[str, str]]:
+    """The CSS variables of the page, and the colours of cytoscape.js."""
+    if theme is None:
+        background, ink, muted, rule, note, tip = _PAGE_COLOURS
+    else:
+        background, ink, muted = theme.background, theme.ink, theme.muted
+        rule = note = muted
+        tip = background
+    scheme = "dark" if _luminance(background) < 0.5 else "light"
+    css = (
+        f":root {{ --bg: {background}; --ink: {ink}; --muted: {muted}; "
+        f"--rule: {rule}; --note: {note}; --tip: {tip}; color-scheme: {scheme}; }}"
+    )
+    return css, {"background": background, "ink": ink, "muted": muted}
 
 
 def render_html(
     data: Mapping[str, Any],
     *,
     styles: Styles | None = None,
+    attributes: Attributes | None = None,
+    theme: Theme | None = None,
     order_by: str | None = None,
     direction: str = "TB",
     group_by: str | None = "family",
     title: str | None = None,
+    tooltip: Iterable[str] = (),
+    math: str | None = None,
+    matrix: bool = False,
+    legend_values: str = "declared",
+    footer: bytes | None = None,
 ) -> str:
     """A page to explore a document, which opens offline by a double click.
 
     The nodes keep the positions of the Graphviz layout of
     :func:`render_svg`, with each group drawn together. They keep the
-    shapes, fills, colours, lines and heads of :func:`to_dot` that
-    cytoscape.js can draw: an unknown shape is an ellipse, an unknown head
-    a triangle. The page embeds cytoscape.js and its expand-collapse
+    shapes, fills, colours, lines, heads and font sizes of :func:`to_dot`
+    that cytoscape.js can draw: an unknown shape is an ellipse, an unknown
+    head a triangle. The page embeds cytoscape.js and its expand-collapse
     extension, with their MIT notices: the reader collapses or expands a
-    group with the cue at its corner, or all of them with the buttons; a
-    tooltip shows the description of a node, its ``iri`` and its ``url``,
-    and a double click opens its ``url`` when it opens no script. The
-    legend of :func:`render_legend_svg` shows the declared values; below
-    it, a box for each declared value and each family, with its
-    description, hides the nodes or the edges that carry it when unchecked
-    (and the edges of a hidden node). A search marks the nodes whose label
-    holds a text; "Show all" undoes the filters and the search. Nothing is
-    fetched.
+    group with the cue at its corner, or all of them with the buttons. A
+    tooltip shows the description of a node, its ``iri`` and its ``url``;
+    that of an edge, its label, its declared values, its description and
+    its ``locator``; both add the attributes named by ``tooltip``. A double
+    click opens the ``url`` of a node when it opens no script. The legend of
+    :func:`render_legend_svg` shows the declared values; below it, a box for
+    each declared value and each family, with its description, hides the
+    nodes or the edges that carry it when unchecked (and the edges of a
+    hidden node). A search marks the nodes whose label holds a text; "Show
+    all" undoes the filters and the search. Nothing is fetched.
 
     Parameters
     ----------
-    data, styles, order_by, direction
+    data, styles, theme, order_by, direction, legend_values
         As :func:`to_dot`.
-    group_by : {"family", "loop", None}
-        The groups shown as compound nodes: the nodes sharing a ``family``,
-        the loops (strongly connected components), or none.
+    attributes : mapping, optional
+        As :func:`to_dot`. The page keeps the positions of the layout, not
+        the routes of the edges: ``splines`` is left out.
+    group_by : str or None
+        The groups shown as compound nodes: ``"loop"`` for the loops
+        (strongly connected components), or a node attribute (``"family"``,
+        by default) for the nodes that share a value; ``None`` for none.
     title : str, optional
         The title of the page; the label of the graph without one.
+    tooltip : iterable of str
+        Attributes whose values the tooltips add, one line each: the label
+        of a declared value, or the value itself.
+    math : str, optional
+        A node attribute that holds a formula, drawn in the tooltip: a
+        MathML tree written as data, ``["math", {}, child, …]``, each child
+        a text or ``[name, {}, child, …]`` with a name among ``math``,
+        ``mrow``, ``mi``, ``mn``, ``mo``, ``mfrac``, ``msup``, ``msub``,
+        ``msubsup``, ``msqrt`` and ``mroot``, without attributes, at most
+        2000 elements and 32 levels deep. The page builds its elements one
+        by one, and never reads markup.
+    matrix : bool
+        Add the matrix of :func:`render_matrix_svg` (``order_by`` needed),
+        shown under the graph with a button: a node chosen in the graph
+        lights its row and its column; a cell chosen in the matrix marks its
+        edges in the graph.
+    footer : bytes, optional
+        A PNG or SVG image, as for :func:`render_svg`, shown under the
+        legend (a logo, an attribution).
 
     Returns
     -------
@@ -1718,14 +2056,32 @@ def render_html(
     ImportError
         If pygraphviz is not installed (the optional extra ``viz``).
     ValueError, TypeError
-        As :func:`to_dot`, or if ``group_by`` is unknown.
+        As :func:`to_dot`, or if a formula does not follow its form, a value
+        of ``group_by`` is neither a text nor a number, ``matrix`` is asked
+        without ``order_by``, or the footer is not a PNG or SVG image.
     """
-    if group_by not in _GROUP_BY:
-        raise ValueError(f"group_by must be one of {_GROUP_BY}, got {group_by!r}")
     graphviz = _pygraphviz("render_html")
     doc = _document(data)
+    if matrix and order_by is None:
+        raise ValueError("the matrix needs order_by")
+    if legend_values not in _LEGEND_VALUES:
+        raise ValueError(
+            f"legend_values must be one of {_LEGEND_VALUES}, got {legend_values!r}"
+        )
+    image = None if footer is None else _image(footer)
+    fields = tuple(tooltip)
+    graph_attributes, node_base, edge_base = _layout(attributes)
+    # The page keeps the positions only: the routes of the edges, whose
+    # orthogonal kind can stop the process, are left to Graphviz's default.
+    graph_attributes.pop("splines", None)
     dot = to_dot(
-        doc, styles=styles, order_by=order_by, direction=direction, legend=False
+        doc,
+        styles=styles,
+        attributes={"graph": graph_attributes, "node": node_base, "edge": edge_base},
+        theme=theme,
+        order_by=order_by,
+        direction=direction,
+        legend=False,
     )
     groups = _groups(doc, group_by)
     clusters = [
@@ -1740,7 +2096,9 @@ def render_html(
     end = dot.rstrip().rfind("}")
     layout = graphviz.AGraph(string=dot[:end] + "\n".join(clusters) + "\n}\n")
     layout.layout(prog="dot")
-    node_defaults, edge_defaults, given = _style_tables(doc, styles)
+    node_defaults, edge_defaults, given = _style_tables(doc, styles, theme)
+    vocabulary = doc["graph"].get("vocabulary") or {}
+    labels = _labels(vocabulary)
     filters = _filters(doc)
     taken = {str(n["id"]) for n in doc["nodes"]}
     parent: dict[Any, str] = {}
@@ -1757,21 +2115,23 @@ def render_html(
     # matched by place, as a name may be written otherwise in DOT.
     for node, drawn in zip(doc["nodes"], layout.nodes(), strict=False):
         x, y = (float(v) for v in drawn.attr["pos"].split(","))
-        label, tooltip = _texts(node)
+        label, text = _texts(node, fields, labels)
         values: dict[str, Any] = {
             "id": str(node["id"]),
             "label": label,
-            "tooltip": tooltip,
+            "tooltip": text,
             "w": round(float(drawn.attr["width"]) * 72, 2),
             "h": round(float(drawn.attr["height"]) * 72, 2),
         }
+        if math is not None and node.get(math) is not None:
+            values["math"] = _formula(node[math], f"node {node['id']!r}, {math}")
         if url := _safe_url(node.get("url")):
             values["url"] = url
         if node["id"] in parent:
             values["parent"] = parent[node["id"]]
         if filtered := _filtered(node, filters):
             values["values"] = filtered
-        style = _style(node, node_defaults, given["node"])
+        style = _style(node, node_defaults, given["node"], node_base)
         elements.append(
             {"data": values, "position": {"x": x, "y": -y}, "style": _cy_node(style)}
         )
@@ -1784,23 +2144,54 @@ def render_html(
         }
         if edge.get("label"):
             values["label"] = edge["label"]
+        lines = [str(edge["label"])] if edge.get("label") else []
+        lines += [
+            f"{attribute}: {labels[(attribute, 'edge', edge[attribute])]}"
+            for attribute in vocabulary
+            if (attribute, "edge", edge.get(attribute)) in labels
+        ]
+        if lines := lines + _edge_lines(edge, fields, labels):
+            values["tooltip"] = "\n".join(lines)
         if filtered := _filtered(edge, filters):
             values["values"] = filtered
-        style = _style(edge, edge_defaults, given["edge"])
+        style = _style(edge, edge_defaults, given["edge"], edge_base)
         elements.append({"data": values, "style": _cy_edge(style)})
     block = doc["graph"]
     heading = title or block.get("label") or "graph"
-    payload = json.dumps(elements, ensure_ascii=False, separators=(",", ":"))
-    # No "<" at all, so that no text can close or comment out the element.
-    payload = payload.replace("<", "\\u003c")
-    entries = _legend_entries(doc, node_defaults, edge_defaults, given)
-    legend = _legend_html(
-        filters, _svg(graphviz, _legend_dot(entries)) if entries else ""
+    entries = _legend_entries(
+        doc,
+        node_defaults,
+        edge_defaults,
+        given,
+        node_base=node_base,
+        edge_base=edge_base,
+        present=legend_values == "present",
     )
+    legend = _legend_html(
+        filters, _svg(graphviz, _legend_dot(entries, theme)) if entries else ""
+    )
+    if image is not None:
+        encoded = base64.b64encode(image.data).decode("ascii")
+        legend += f'<p><img alt="" src="data:{image.media};base64,{encoded}"></p>'
+    order: list[str] = []
+    panel = ""
+    if matrix:
+        assert order_by is not None, "checked above"
+        order = [str(node["id"]) for _, _, node in _ordered(doc, order_by)]
+        drawing = render_matrix_svg(doc, order_by=order_by, theme=theme)
+        panel = f'<div id="matrix">{drawing[drawing.index("<svg") :]}</div>'
+    css, look = _page_colours(theme)
     notices = "\n".join(
         _asset(n)
         for n in ("cytoscape.LICENSE.txt", "cytoscape-expand-collapse.LICENSE.md")
     ).replace("--", "- -")
+
+    def data_script(name: str, value: object) -> str:
+        # No "<" at all, so that no text can close or comment out the element.
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        text = text.replace("<", "\\u003c")
+        return f'<script type="application/json" id="protee-{name}">{text}</script>'
+
     return "\n".join(
         [
             "<!doctype html>",
@@ -1808,7 +2199,7 @@ def render_html(
             "<head>",
             '<meta charset="utf-8">',
             f"<title>{html.escape(str(heading))}</title>",
-            f"<style>{_PAGE_STYLE}</style>",
+            f"<style>{css}{_PAGE_STYLE}</style>",
             "</head>",
             "<body>",
             "<header>",
@@ -1816,16 +2207,20 @@ def render_html(
             '<button id="collapse">Collapse all</button>',
             '<button id="expand">Expand all</button>',
             '<button id="fit">Fit</button>',
+            *(['<button id="matrix-toggle">Matrix</button>'] if matrix else []),
             '<input type="search" id="search" placeholder="Find a label">',
             '<button id="all">Show all</button>',
             "</header>",
             '<div id="cy"></div>',
+            *([panel] if panel else []),
             f"<aside>{legend}</aside>",
             '<div id="tip"></div>',
             f"<!-- Third-party code embedded below, under the MIT licence:\n{notices}\n-->",
             f"<script>{_asset('cytoscape.min.js')}</script>",
             f"<script>{_asset('cytoscape-expand-collapse.js')}</script>",
-            f'<script type="application/json" id="protee-elements">{payload}</script>',
+            data_script("elements", elements),
+            data_script("look", look),
+            data_script("order", order),
             f"<script>{_PAGE_SCRIPT}</script>",
             "</body>",
             "</html>",
@@ -2114,6 +2509,22 @@ _FORWARD = "#0072B2"  # blue: read later in the order
 _FEEDBACK = "#D55E00"  # vermilion: read earlier, a feedback
 
 
+def _ordered(
+    doc: Mapping[str, Any], order_by: str
+) -> list[tuple[int | float, int, dict[str, Any]]]:
+    """The nodes that carry ``order_by``, with their value and place, in
+    increasing order (in the order of the document for equal values)."""
+    ordered = []
+    for k, node in enumerate(doc["nodes"]):
+        value = _order_value(node, order_by)
+        if value is not None:
+            ordered.append((value, k, node))
+    if not ordered:
+        raise ValueError(f"no node carries {order_by!r}: the matrix is empty")
+    ordered.sort(key=lambda t: (t[0], t[1]))
+    return ordered
+
+
 def _xml(text: object) -> str:
     """A text escaped for XML, refused if XML cannot carry it."""
     raw = str(text)
@@ -2177,14 +2588,7 @@ def render_matrix_svg(
         If a value of ``order_by`` is not a number.
     """
     doc = _document(data)
-    ordered = []
-    for k, node in enumerate(doc["nodes"]):
-        value = _order_value(node, order_by)
-        if value is not None:
-            ordered.append((value, k, node))
-    if not ordered:
-        raise ValueError(f"no node carries {order_by!r}: the matrix is empty")
-    ordered.sort(key=lambda t: (t[0], t[1]))
+    ordered = _ordered(doc, order_by)
     nodes = [node for _, _, node in ordered]
     index = {node["id"]: i for i, node in enumerate(nodes)}
     cells: Counter[tuple[int, int]] = Counter()
