@@ -8,8 +8,8 @@ abstract: >-
   diagnostics.
 authors:
   - alias: Miki
-version: 0.1.0
-date-released: "2026-11-22"
+version: 0.2.0
+date-released: "2026-11-27"
 license: BSD-3-Clause
 repository-code: "https://github.com/miki4iaml/protee"
 keywords:

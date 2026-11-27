@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
+Rendering for the producers of node-link documents. The format
+`protee-node-link/0` gains two optional keys, `mappings` and `locator`.
+`protee.viz` gains:
+
+- the contraction of the edges of a type, the matrix of a document (N²
+  chart) and colour by vocabulary;
+- light and dark themes, layout attributes, a legend at the left showing
+  only the values present, and a footer image;
+- orthogonal edges laid out in a separate process;
+- a richer exploration page: tooltips on edges, formulas built from data,
+  and the matrix coordinated with the graph.
+
+Links and texts drawn in SVG are read as a browser reads them. The
+version also brings a document on security, supply chain and compliance.
+
 ### Added
 
 - Two optional keys in the `protee-node-link/0` format, which stays `/0`:
