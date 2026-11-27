@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- Two optional keys in the `protee-node-link/0` format, which stays `/0`:
+  `mappings` on a declared value of `graph.vocabulary`, its
+  correspondences to terms of other vocabularies (as in SSSOM:
+  `predicate`, `object`, optional `justification`), and `locator` on an
+  edge, the place in the target that the edge points to (an equation
+  number, an article, a clause). `protee.io.check_node_link` and the JSON
+  Schema check them; the format documentation advises producers to prefix
+  the keys that only they read.
 - `docs/security-and-compliance.md`: how protee runs, is developed and
   published, what it ships and under which licences, the regulatory
   landmarks, the known limits and a checklist, for those who assess its

@@ -77,6 +77,21 @@
         }
       }
     },
+    "term": {
+      "description": "prefix:name, with a prefix declared in graph.prefixes.",
+      "type": "string",
+      "pattern": "^[^:]+:.+$"
+    },
+    "mapping": {
+      "description": "A correspondence of a declared value to a term of another vocabulary, as in SSSOM: a relation (a SKOS mapping relation, such as skos:exactMatch), the term, and an optional justification (a SEMAPV term).",
+      "type": "object",
+      "required": ["predicate", "object"],
+      "properties": {
+        "predicate": {"$ref": "#/$defs/term"},
+        "object": {"$ref": "#/$defs/term"},
+        "justification": {"anyOf": [{"$ref": "#/$defs/term"}, {"type": "null"}]}
+      }
+    },
     "declaration": {
       "type": "object",
       "required": ["id", "on", "label"],
@@ -89,7 +104,11 @@
         "on": {"enum": ["node", "edge"]},
         "label": {"type": "string"},
         "description": {"$ref": "#/$defs/text"},
-        "symmetric": {"type": ["boolean", "null"]}
+        "symmetric": {"type": ["boolean", "null"]},
+        "mappings": {
+          "type": ["array", "null"],
+          "items": {"$ref": "#/$defs/mapping"}
+        }
       },
       "if": {"properties": {"on": {"const": "node"}}},
       "then": {
@@ -118,6 +137,10 @@
         "target": {"$ref": "#/$defs/nodeId"},
         "key": {"type": ["integer", "null"]},
         "label": {"$ref": "#/$defs/text"},
+        "locator": {
+          "description": "The place in the target that the edge points to: an equation number, an article, a clause.",
+          "$ref": "#/$defs/text"
+        },
         "metrics": {"$ref": "#/$defs/metrics"}
       }
     }

@@ -405,6 +405,8 @@ _LANGUAGE = re.compile(
 )
 #: The start of an absolute IRI: its scheme, then a colon (as the schema).
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+#: A term of a vocabulary: ``prefix:name`` (as the schema).
+_TERM = re.compile(r"[^:]+:.+")
 
 
 def _absolute(iri: object) -> bool:
@@ -529,6 +531,8 @@ class _Checker:
             on != "edge" or not isinstance(entry["symmetric"], bool)
         ):
             self.bad(where, "'symmetric' is a boolean, for edges only")
+        if entry.get("mappings") is not None:
+            self.mappings(f"{where}.mappings", entry["mappings"])
         ident = entry.get("id")
         if self.identifier(f"{where}.id", ident):
             assert isinstance(ident, str)
@@ -536,11 +540,34 @@ class _Checker:
                 self.bad(where, f"{ident!r} is declared twice for {on}s")
             sets[on].add(ident)
 
+    def term(self, where: str, value: object) -> None:
+        """A term ``prefix:name``, with a declared prefix."""
+        if not (isinstance(value, str) and _TERM.fullmatch(value)):
+            self.bad(where, "must be a term prefix:name")
+        elif (prefix := value.split(":", 1)[0]) not in self.prefixes:
+            self.bad(where, f"prefix {prefix!r} is not declared in graph.prefixes")
+
+    def mappings(self, where: str, mappings: object) -> None:
+        if not isinstance(mappings, list):
+            self.bad(where, "must be a list")
+            return
+        for j, mapping in enumerate(mappings):
+            here = f"{where}[{j}]"
+            if not isinstance(mapping, Mapping):
+                self.bad(here, "must be an object")
+                continue
+            self.term(f"{here}.predicate", mapping.get("predicate"))
+            self.term(f"{here}.object", mapping.get("object"))
+            if mapping.get("justification") is not None:
+                self.term(f"{here}.justification", mapping["justification"])
+
     def common(self, where: str, item: Mapping[str, Any], on: str) -> None:
-        # The format defines description, family and url for nodes only: on
-        # an edge, they are free keys.
+        # The format defines description, family and url for nodes only, and
+        # locator for edges only: elsewhere, they are free keys.
         texts = (
-            ("label", "description", "family", "url") if on == "node" else ("label",)
+            ("label", "description", "family", "url")
+            if on == "node"
+            else ("label", "locator")
         )
         for key in texts:
             if item.get(key) is not None and not isinstance(item[key], str):
@@ -633,12 +660,14 @@ def check_node_link(data: object) -> tuple[str, ...]:
     prefixes; for every attribute declared in ``graph.vocabulary``
     (``type``, ``status``, ``role``…), each value used by a node or an edge
     declared there, for nodes or for edges, a declared value being
-    ``prefix:name`` with a declared prefix or a plain name; unique node
-    identifiers, opaque texts (an IRI is allowed) or integers, never
-    expanded; edges between existing nodes, with integer keys unique
-    between the same two nodes; metrics that are finite numbers, ``"inf"``,
-    ``"-inf"`` or ``null``. Other keys are allowed. ``links`` is read in
-    place of ``edges``.
+    ``prefix:name`` with a declared prefix or a plain name; the ``mappings``
+    of a declaration, whose ``predicate``, ``object`` and optional
+    ``justification`` are terms ``prefix:name`` with declared prefixes;
+    unique node identifiers, opaque texts (an IRI is allowed) or integers,
+    never expanded; edges between existing nodes, with integer keys unique
+    between the same two nodes, and a text ``locator``; metrics that are
+    finite numbers, ``"inf"``, ``"-inf"`` or ``null``. Other keys are
+    allowed. ``links`` is read in place of ``edges``.
 
     Parameters
     ----------
