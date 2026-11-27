@@ -32,9 +32,11 @@ poste hors ligne (aucun solveur, service ou moteur en ligne).
 
 Les graphes typés s'échangent avec d'autres projets au format node-link
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`, page en
-anglais), et se dessinent par `protee.viz` : sélection, groupes et
-boucles sans dépendance, SVG et page à explorer hors ligne avec l'extra
-facultatif `viz` (voir la [galerie](docs/gallery/README.md)).
+anglais), et se dessinent par `protee.viz` : sélection, groupes,
+boucles, contraction et vue en matrice (diagramme N²) sans dépendance ;
+figures SVG, claires ou sombres, avec leur légende et un pied de figure,
+et page à explorer hors ligne, avec l'extra facultatif `viz` (voir la
+[galerie](docs/gallery/README.md)).
 
 ## Pourquoi protee
 

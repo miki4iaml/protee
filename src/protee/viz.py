@@ -9,31 +9,43 @@ of documents does not need protee's model. Nothing here depends on a
 producer: the legend comes from the vocabulary declared in the document,
 the styles from a table given by the caller.
 
-- :func:`select`, :func:`collapse`, :func:`condense` and :func:`reduce`
-  turn a document into a document that follows the format; the marks they
-  add are declared under the ``protee`` prefix (:data:`DISPLAY`,
-  :data:`SELECTION`);
+- :func:`select`, :func:`collapse`, :func:`condense`, :func:`reduce` and
+  :func:`contract` turn a document into a document that follows the
+  format; the marks they add are declared under the ``protee`` prefix
+  (:data:`DISPLAY`, :data:`SELECTION`);
 - :func:`to_dot` writes the Graphviz DOT text of a document, without any
   dependency;
 - :func:`render_svg` lays it out and draws it in SVG through Graphviz,
-  with the optional extra ``viz`` (pygraphviz, which bundles Graphviz);
+  with the optional extra ``viz`` (pygraphviz, which bundles Graphviz),
+  its legend beside or below and an image as a footer;
   :func:`render_legend_svg` draws its legend alone;
+- :func:`render_matrix_svg` draws its matrix (N² chart), without any
+  dependency;
 - :func:`render_html` writes a page to explore it, which opens offline,
   with the same layout and styles.
+
+A :class:`Theme` (:data:`LIGHT`, :data:`DARK`) sets the background and the
+ink of the drawings.
 
 Provisional API (until version 1.0).
 """
 
 from __future__ import annotations
 
+import base64
 import copy
 import html
 import itertools
 import json
 import math
 import re
-from collections import deque
+import struct
+import subprocess
+import sys
+import xml.parsers.expat
+from collections import Counter, deque
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any
 
@@ -43,21 +55,27 @@ from protee.structure import strong_components
 
 __all__ = [
     "CONTAINS",
+    "DARK",
     "DISPLAY",
     "GROUP",
     "HIDDEN",
+    "LIGHT",
     "LOOP",
     "MEMBERS",
     "MERGED",
     "OKABE_ITO",
     "OUTSIDE",
     "SELECTION",
+    "Attributes",
     "Styles",
+    "Theme",
     "collapse",
     "condense",
+    "contract",
     "reduce",
     "render_html",
     "render_legend_svg",
+    "render_matrix_svg",
     "render_svg",
     "select",
     "to_dot",
@@ -71,12 +89,14 @@ GROUP = "protee:group"
 LOOP = "protee:loop"
 SELECTION = "protee:selection"
 OUTSIDE = "protee:outside"
-#: Metrics protee adds: the neighbours not shown, the members of a group,
-#: the edges merged into one.
+#: Metrics protee adds: the neighbours not shown, the nodes of the original
+#: document that a node stands for (the members of a group, the ends of
+#: contracted edges), the edges merged into one.
 HIDDEN = "protee:hidden"
 MEMBERS = "protee:members"
 MERGED = "protee:merged"
-#: Key listing the identifiers of the members of a group.
+#: Key listing the identifiers of the nodes of the original document that a
+#: node stands for: the members of a group, the ends of contracted edges.
 CONTAINS = "protee:contains"
 
 #: A palette told apart with the common colour vision deficiencies (Okabe
@@ -95,6 +115,37 @@ OKABE_ITO = (
 
 #: Graphviz attributes by kind of element, then by (attribute, value).
 type Styles = Mapping[str, Mapping[tuple[str, Any], Mapping[str, str]]]
+#: Graphviz attributes of the graph, and of all its nodes and all its edges:
+#: ``{"graph": {...}, "node": {...}, "edge": {...}}``.
+type Attributes = Mapping[str, Mapping[str, str]]
+
+_HEX = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
+@dataclass(frozen=True, slots=True)
+class Theme:
+    """The colours of a drawing: its background, its ink and a muted grey.
+
+    The ink draws the lines and texts that no style colours; the muted grey
+    draws the nodes outside a selection and the frame of the legend. Each
+    colour is written ``#RRGGBB``.
+    """
+
+    background: str
+    ink: str
+    muted: str
+
+    def __post_init__(self) -> None:
+        for name in ("background", "ink", "muted"):
+            value = getattr(self, name)
+            if not (isinstance(value, str) and _HEX.fullmatch(value)):
+                raise ValueError(f"Theme.{name} must be written #RRGGBB, got {value!r}")
+
+
+#: Black ink on white.
+LIGHT = Theme(background="#FFFFFF", ink="#000000", muted="#767676")
+#: Light ink on a dark background.
+DARK = Theme(background="#0D1117", ink="#E6EDF3", muted="#8B949E")
 
 _SHAPES = ("ellipse", "box", "diamond", "hexagon", "octagon", "house", "trapezium")
 # Dashes are left to the marks (nodes) and to the absence of a value
@@ -106,7 +157,11 @@ _ARROWS = ("normal", "empty", "dot", "odot", "diamond", "odiamond", "box", "obox
 _LINE_COLOURS = tuple(c for c in OKABE_ITO if c != "#F0E442")
 _FONT = "Helvetica,Arial,sans-serif"
 _DIRECTIONS = ("TB", "LR", "BT", "RL")
-_LEGEND_PLACES = ("right", "below", None)
+_LEGEND_PLACES = ("right", "below", "below-left", None)
+_LEGEND_VALUES = ("declared", "present")
+#: The graph attributes that ``attributes`` may set: layout only.
+_GRAPH_ATTRIBUTES = ("splines", "ranksep", "nodesep", "pad")
+_KINDS = ("graph", "node", "edge")
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _MARKS: dict[str, dict[str, str]] = {
     OUTSIDE: {
@@ -517,11 +572,7 @@ def _merge(
                 kept.append({"source": s, "target": t})
                 merged[(s, t, e.get("type"))] = [kept[-1]]
             merged[(s, t, e.get("type"))].append(e)
-    used: dict[tuple[Any, Any], set[int]] = {}
-    for e in kept:
-        if isinstance(e.get("key"), int):
-            used.setdefault((e["source"], e["target"]), set()).add(e["key"])
-    for (s, t, _), (edge, *originals) in merged.items():
+    for edge, *originals in merged.values():
         common = {
             k: v
             for k, v in originals[0].items()
@@ -539,14 +590,144 @@ def _merge(
             metrics[MERGED] = len(originals)
         if metrics:
             edge["metrics"] = metrics
-        keys = used.setdefault((s, t), set())
-        edge["key"] = next(k for k in range(len(keys) + 1) if k not in keys)
-        keys.add(edge["key"])
+    _free_keys(kept, [edge for edge, *_ in merged.values()])
     doc["edges"] = kept
-    pairs = [(e["source"], e["target"]) for e in kept]
-    doc["multigraph"] = bool(doc["multigraph"]) or len(set(pairs)) < len(pairs)
+    _multigraph(doc)
     _declare(doc, mark)
     return doc
+
+
+def _free_keys(edges: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> None:
+    """Give each edge of ``fresh``, in turn, the smallest key free between
+    its two nodes among the integer keys of the other ``edges``."""
+    new = {id(e) for e in fresh}
+    used: dict[tuple[Any, Any], set[int]] = {}
+    for e in edges:
+        if id(e) not in new and isinstance(e.get("key"), int):
+            used.setdefault((e["source"], e["target"]), set()).add(e["key"])
+    for e in fresh:
+        keys = used.setdefault((e["source"], e["target"]), set())
+        e["key"] = next(k for k in range(len(keys) + 1) if k not in keys)
+        keys.add(e["key"])
+
+
+def _multigraph(doc: dict[str, Any]) -> None:
+    """A multigraph as soon as two edges join the same two nodes."""
+    pairs = [(e["source"], e["target"]) for e in doc["edges"]]
+    doc["multigraph"] = bool(doc["multigraph"]) or len(set(pairs)) < len(pairs)
+
+
+def contract(
+    data: Mapping[str, Any], *, edge_type: str, keep: str = "target"
+) -> dict[str, Any]:
+    """The two ends of each edge of a type, shown as one node.
+
+    Each edge of type ``edge_type`` disappears, and its two ends become one
+    node: the end named by ``keep``, at its place, with its identifier and
+    its attributes, completed by those of the other end (for an attribute
+    both carry, the kept end wins; ``metrics`` are merged name by name, and
+    the counts of hidden neighbours are added). The kept node lists the
+    nodes of the original document that it stands for under
+    :data:`CONTAINS`, with their number in ``metrics[MEMBERS]``; it is
+    outside a selection only if both ends were, and keeps its own mark under
+    :data:`DISPLAY`. The edges of the other end are joined to the kept node,
+    in both directions; the other edges stay distinct, even when parallel,
+    and an edge between the two ends becomes a loop. An edge joined to the
+    kept node takes the smallest key free between its two nodes. The label
+    and the metrics of a contracted edge are lost.
+
+    It undoes a split of nodes (:func:`protee.transforms.split_nodes`):
+    contracting the edges between the two halves of each node, keeping the
+    half that the other edges enter, gives the graph back.
+
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+    edge_type : str
+        The ``type`` of the edges to contract. They must not touch: no node
+        is the end of two of them, and none is a loop.
+    keep : {"target", "source"}
+        The end of each edge that stays.
+
+    Returns
+    -------
+    dict
+        A new document; a copy when no edge has that type.
+
+    Raises
+    ------
+    ValueError
+        If the document does not follow the format, ``keep`` is unknown, or
+        two edges of that type touch.
+    """
+    if keep not in ("target", "source"):
+        raise ValueError(f"keep must be 'target' or 'source', got {keep!r}")
+    doc = _document(data)
+    into: dict[Any, Any] = {}  # the end that goes -> the end that stays
+    ends: set[Any] = set()
+    for e in doc["edges"]:
+        if e.get("type") != edge_type:
+            continue
+        s, t = e["source"], e["target"]
+        if s == t:
+            raise ValueError(
+                f"an edge of type {edge_type!r} is a loop on node {s!r}: "
+                "it cannot be contracted"
+            )
+        for end in (s, t):
+            if end in ends:
+                raise ValueError(
+                    f"the edges of type {edge_type!r} touch at node {end!r}: "
+                    "they cannot be contracted"
+                )
+            ends.add(end)
+        stays, goes = (t, s) if keep == "target" else (s, t)
+        into[goes] = stays
+    if not into:
+        return doc
+    by_id = {n["id"]: n for n in doc["nodes"]}
+    for goes, stays in into.items():
+        _absorb(by_id[stays], by_id[goes])
+    doc["nodes"] = [n for n in doc["nodes"] if n["id"] not in into]
+    edges: list[dict[str, Any]] = []
+    moved: list[dict[str, Any]] = []
+    for e in doc["edges"]:
+        if e.get("type") == edge_type:
+            continue
+        s, t = into.get(e["source"], e["source"]), into.get(e["target"], e["target"])
+        if (s, t) != (e["source"], e["target"]):
+            e = {k: v for k, v in e.items() if k != "key"} | {"source": s, "target": t}
+            moved.append(e)
+        edges.append(e)
+    _free_keys(edges, moved)
+    doc["edges"] = edges
+    _multigraph(doc)
+    return doc
+
+
+def _absorb(stays: dict[str, Any], goes: Mapping[str, Any]) -> None:
+    """The node ``stays`` takes in the node ``goes``, which disappears."""
+    for k, v in goes.items():
+        if k in ("id", "metrics") or k.startswith("protee:"):
+            continue
+        if stays.get(k) is None:
+            stays[k] = v
+    metrics = {**(goes.get("metrics") or {}), **(stays.get("metrics") or {})}
+    hidden = [
+        m[HIDDEN]
+        for m in (goes.get("metrics") or {}, stays.get("metrics") or {})
+        if isinstance(m.get(HIDDEN), int)
+    ]
+    if hidden:
+        metrics[HIDDEN] = sum(hidden)
+    members = list(stays.get(CONTAINS) or [stays["id"]])
+    members += list(goes.get(CONTAINS) or [goes["id"]])
+    stays[CONTAINS] = members
+    metrics[MEMBERS] = len(members)
+    stays["metrics"] = metrics
+    if stays.get(SELECTION) == OUTSIDE and goes.get(SELECTION) != OUTSIDE:
+        del stays[SELECTION]
 
 
 def _quote(text: object) -> str:
@@ -578,13 +759,29 @@ def _attributes(values: Mapping[str, object]) -> str:
     return ", ".join(f"{k}={_quote(v)}" for k, v in values.items())
 
 
-def _dark(colour: str) -> bool:
-    r, g, b = (int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.45
+def _luminance(colour: str) -> float:
+    """The relative luminance of a colour ``#RRGGBB`` (WCAG 2)."""
+    channels = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (
+        c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels
+    )
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    """The contrast ratio of two colours (WCAG 2), from 1 to 21."""
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _text_on(fill: str) -> str:
+    """Black or white, whichever contrasts more with a fill."""
+    black, white = _contrast(fill, "#000000"), _contrast(fill, "#FFFFFF")
+    return "#000000" if black >= white else "#FFFFFF"
 
 
 def _defaults(
-    vocabulary: Mapping[str, Any], on: str
+    vocabulary: Mapping[str, Any], on: str, theme: Theme | None = None
 ) -> dict[tuple[str, Any], dict[str, str]]:
     """Styles drawn from the declared values, in the order of declaration."""
     attributes = [
@@ -603,10 +800,15 @@ def _defaults(
                 fill = OKABE_ITO[i % 7]  # black is no fill
                 line = _NODE_LINES[i % len(_NODE_LINES)]
                 style = {"style": f"filled,{line}", "fillcolor": fill}
-                if _dark(fill):
-                    style["fontcolor"] = "#FFFFFF"
+                # Without a theme, the text is black unless told otherwise;
+                # with one, the ink would be lost on a light fill.
+                text = _text_on(fill)
+                if theme is not None or text != "#000000":
+                    style["fontcolor"] = text
             elif rank == 0:
                 colour = _LINE_COLOURS[i % len(_LINE_COLOURS)]
+                if theme is not None and colour == "#000000":
+                    colour = theme.ink
                 style = {"color": colour, "fontcolor": colour}
                 style["arrowhead"] = _ARROWS[i % len(_ARROWS)]
             else:
@@ -624,21 +826,29 @@ def _style(
     item: Mapping[str, Any],
     defaults: Mapping[tuple[str, Any], Mapping[str, str]],
     given: Mapping[tuple[str, Any], Mapping[str, str]],
+    base: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    """The attributes of an element: those of all elements (``base``), then
+    the default styles of its values, then the caller's."""
     style: dict[str, str] = {}
+
+    def put(attributes: Mapping[str, str]) -> None:
+        for k, v in attributes.items():
+            # A line style replaces the line of a filled node, which stays
+            # filled.
+            if (
+                k == "style"
+                and "filled" in style.get("style", "")
+                and "filled" not in v
+            ):
+                v = f"filled,{v}"
+            style[k] = v
+
+    put(base or {})
     for table in (defaults, given):
         for (attribute, value), attributes in table.items():
             if item.get(attribute) == value:
-                for k, v in attributes.items():
-                    # A line style replaces the line of a filled node,
-                    # which stays filled.
-                    if (
-                        k == "style"
-                        and "filled" in style.get("style", "")
-                        and "filled" not in v
-                    ):
-                        v = f"filled,{v}"
-                    style[k] = v
+                put(attributes)
     return style
 
 
@@ -646,7 +856,7 @@ type _Table = dict[tuple[str, Any], dict[str, str]]
 
 
 def _style_tables(
-    doc: Mapping[str, Any], styles: Styles | None
+    doc: Mapping[str, Any], styles: Styles | None, theme: Theme | None = None
 ) -> tuple[_Table, _Table, dict[str, Mapping[tuple[str, Any], Mapping[str, str]]]]:
     """The default styles of nodes and edges, and the caller's, checked."""
     given: dict[str, Mapping[tuple[str, Any], Mapping[str, str]]] = {
@@ -654,6 +864,10 @@ def _style_tables(
         "edge": {},
         **(styles or {}),
     }
+    if unknown := sorted(set(given) - {"node", "edge"}):
+        raise ValueError(
+            f"styles: unknown kinds of element {unknown!r}, expected 'node' or 'edge'"
+        )
     for kind in given.values():
         for attributes in kind.values():
             if bad := [k for k in attributes if not _NAME.fullmatch(k)]:
@@ -662,12 +876,36 @@ def _style_tables(
     if len(set(names)) < len(names):
         raise ValueError("two node identifiers write the same in DOT")
     vocabulary = doc["graph"].get("vocabulary") or {}
-    node_defaults = _defaults(vocabulary, "node")
+    node_defaults = _defaults(vocabulary, "node", theme)
     # Grey, and the label in italics: the line of the node stays its own.
-    node_defaults[(SELECTION, OUTSIDE)] = {"color": "#7F7F7F", "class": _OUTSIDE_CLASS}
+    grey = "#7F7F7F" if theme is None else theme.muted
+    node_defaults[(SELECTION, OUTSIDE)] = {"color": grey, "class": _OUTSIDE_CLASS}
     node_defaults[(DISPLAY, GROUP)] = {"peripheries": "2"}
     node_defaults[(DISPLAY, LOOP)] = {"peripheries": "3"}
-    return node_defaults, _defaults(vocabulary, "edge"), given
+    return node_defaults, _defaults(vocabulary, "edge", theme), given
+
+
+def _layout(
+    attributes: Attributes | None,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """The attributes of the graph, of all nodes and of all edges, checked."""
+    given = dict(attributes or {})
+    if unknown := sorted(set(given) - set(_KINDS)):
+        raise ValueError(
+            f"attributes: unknown kinds {unknown!r}, expected 'graph', 'node' or 'edge'"
+        )
+    checked: list[dict[str, str]] = []
+    for kind in _KINDS:
+        values = dict(given.get(kind) or {})
+        if bad := [k for k in values if not _NAME.fullmatch(k)]:
+            raise ValueError(f"invalid Graphviz attribute names {bad!r}")
+        if kind == "graph" and (bad := sorted(set(values) - set(_GRAPH_ATTRIBUTES))):
+            raise ValueError(
+                f"attributes['graph'] sets the layout only {_GRAPH_ATTRIBUTES}, "
+                f"not {bad!r}"
+            )
+        checked.append({k: str(v) for k, v in values.items()})
+    return checked[0], checked[1], checked[2]
 
 
 def _texts(node: Mapping[str, Any]) -> tuple[str, str]:
@@ -680,13 +918,26 @@ def _texts(node: Mapping[str, Any]) -> tuple[str, str]:
     return (f"{label}\n+{hidden}" if hidden else label), "\n".join(tooltip)
 
 
+def _heads(theme: Theme | None) -> tuple[dict[str, str], dict[str, str]]:
+    """The attributes of the graph and of every element that a theme sets."""
+    graph = {"fontname": _FONT}
+    element = {"fontname": _FONT}
+    if theme is not None:
+        graph.update(bgcolor=theme.background, fontcolor=theme.ink, color=theme.ink)
+        element.update(color=theme.ink, fontcolor=theme.ink)
+    return graph, element
+
+
 def to_dot(
     data: Mapping[str, Any],
     *,
     styles: Styles | None = None,
+    attributes: Attributes | None = None,
+    theme: Theme | None = None,
     order_by: str | None = None,
     direction: str = "TB",
     legend: bool = True,
+    legend_values: str = "declared",
 ) -> str:
     """The Graphviz DOT text of a document.
 
@@ -698,7 +949,8 @@ def to_dot(
     declaration:
 
     - nodes: the first declared attribute sets the shape, the second the
-      fill colour (:data:`OKABE_ITO`) and the border line;
+      fill colour (:data:`OKABE_ITO`), with a black or white text, whichever
+      contrasts more, and the border line;
     - edges: the first declared attribute sets the colour (yellow aside)
       and the arrowhead, the second the line (dashed, dotted, bold); a
       symmetric value draws its head at both ends;
@@ -710,8 +962,8 @@ def to_dot(
     The distinctions hold without the colours up to 7 values of the first
     node attribute, 3 of the second, 8 heads for the first edge attribute
     and 3 lines for the second; beyond, the cues repeat and only the colours
-    tell the values apart. The caller's styles complete and override the
-    defaults.
+    tell the values apart. The caller's ``attributes`` come first, then the
+    defaults, then the caller's ``styles``.
 
     Parameters
     ----------
@@ -722,6 +974,15 @@ def to_dot(
         "edge": {...}}``. For instance ``{"edge": {("role", "x:closing"):
         {"style": "dashed", "constraint": "false"}}}`` draws an edge dashed
         and lets it not constrain the layout.
+    attributes : mapping, optional
+        ``{"graph": {...}, "node": {...}, "edge": {...}}``: Graphviz
+        attributes of the graph, and of all nodes and all edges, the legend
+        included (``{"node": {"fontsize": "11"}}``). The graph takes layout
+        attributes only: ``splines``, ``ranksep``, ``nodesep`` and ``pad``.
+    theme : Theme, optional
+        The background, ink and muted grey (:data:`LIGHT`, :data:`DARK`, or
+        a :class:`Theme` of one's own); the defaults of Graphviz without
+        one.
     order_by : str, optional
         A numeric node attribute: the nodes that carry it are drawn in
         increasing order along ``direction``, the others placed by Graphviz.
@@ -732,7 +993,11 @@ def to_dot(
         A cluster, placed by Graphviz, that shows each declared value with
         its style and label. A node value that sets no shape is shown with
         the shape of the nodes that carry it when they share one, and as a
-        rounded box otherwise.
+        rounded box otherwise. A value with ``mappings`` lists them in its
+        tooltip.
+    legend_values : {"declared", "present"}
+        The values the legend shows: all the declared values, or only those
+        that a node or an edge of the document carries.
 
     Returns
     -------
@@ -741,19 +1006,26 @@ def to_dot(
     Raises
     ------
     ValueError
-        If the document does not follow the format, the direction is
-        unknown, a value of ``order_by`` is not finite, two node
-        identifiers write the same, or a style names an invalid Graphviz
-        attribute.
+        If the document does not follow the format, the direction or
+        ``legend_values`` is unknown, a value of ``order_by`` is not finite,
+        two node identifiers write the same, a style or an attribute names
+        an invalid Graphviz attribute, a kind of element is unknown, or the
+        graph attributes set more than the layout.
     TypeError
         If a value of ``order_by`` is not a number.
     """
     doc = _document(data)
     if direction not in _DIRECTIONS:
         raise ValueError(f"direction must be one of {_DIRECTIONS}, got {direction!r}")
-    node_defaults, edge_defaults, given = _style_tables(doc, styles)
+    if legend_values not in _LEGEND_VALUES:
+        raise ValueError(
+            f"legend_values must be one of {_LEGEND_VALUES}, got {legend_values!r}"
+        )
+    graph_attributes, node_base, edge_base = _layout(attributes)
+    node_defaults, edge_defaults, given = _style_tables(doc, styles, theme)
     block = doc["graph"]
-    head = {"rankdir": direction, "fontname": _FONT}
+    themed, element = _heads(theme)
+    head = {"rankdir": direction, **themed, **graph_attributes}
     if block.get("label"):
         head.update(label=block["label"], labelloc="t")
     if block.get("description"):
@@ -761,21 +1033,21 @@ def to_dot(
     lines = [
         f"digraph {_quote(block.get('label') or 'graph')} {{",
         f"  graph [{_attributes(head)}];",
-        f"  node [{_attributes({'fontname': _FONT})}];",
-        f"  edge [{_attributes({'fontname': _FONT})}];",
+        f"  node [{_attributes(element)}];",
+        f"  edge [{_attributes(element)}];",
     ]
     for node in doc["nodes"]:
         label, tooltip = _texts(node)
         values: dict[str, object] = {"label": label, "tooltip": tooltip}
         if url := _safe_url(node.get("url")):
             values["URL"] = url
-        values.update(_style(node, node_defaults, given["node"]))
+        values.update(_style(node, node_defaults, given["node"], node_base))
         lines.append(f"  {_quote(node['id'])} [{_attributes(values)}];")
     for edge in doc["edges"]:
         values = {}
         if edge.get("label"):
             values["label"] = edge["label"]
-        values.update(_style(edge, edge_defaults, given["edge"]))
+        values.update(_style(edge, edge_defaults, given["edge"], edge_base))
         lines.append(
             f"  {_quote(edge['source'])} -> {_quote(edge['target'])}"
             + (f" [{_attributes(values)}]" if values else "")
@@ -784,8 +1056,16 @@ def to_dot(
     if order_by is not None:
         lines += _ordering(doc["nodes"], order_by)
     if legend:
-        entries = _legend_entries(doc, node_defaults, edge_defaults, given)
-        lines += _legend(entries, {str(n["id"]) for n in doc["nodes"]})
+        entries = _legend_entries(
+            doc,
+            node_defaults,
+            edge_defaults,
+            given,
+            node_base=node_base,
+            edge_base=edge_base,
+            present=legend_values == "present",
+        )
+        lines += _legend(entries, {str(n["id"]) for n in doc["nodes"]}, theme)
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -794,9 +1074,14 @@ def render_svg(
     data: Mapping[str, Any],
     *,
     styles: Styles | None = None,
+    attributes: Attributes | None = None,
+    theme: Theme | None = None,
     order_by: str | None = None,
     direction: str = "TB",
     legend: str | None = "right",
+    legend_values: str = "declared",
+    footer: bytes | None = None,
+    footer_height: float | None = None,
 ) -> str:
     """An SVG drawing of a document, laid out by Graphviz (``dot``).
 
@@ -807,16 +1092,28 @@ def render_svg(
     Labels stay text, in system fonts. With the same document, the same
     versions and the same fonts, the SVG is the same, byte for byte.
 
+    Orthogonal edges (``attributes={"graph": {"splines": "ortho"}}``) are
+    laid out in a child process of the same Python: their routing in
+    Graphviz can stop the process that runs it, which then raises a
+    ``RuntimeError`` instead of stopping the caller's.
+
     Parameters
     ----------
-    data, styles, order_by, direction
+    data, styles, attributes, theme, order_by, direction, legend_values
         As :func:`to_dot`.
-    legend : {"right", "below"} or None
+    legend : {"right", "below", "below-left"} or None
         ``"right"``: the cluster of :func:`to_dot`, placed by Graphviz
-        beside the graph. ``"below"``: the legend of
+        beside the graph. ``"below"``, ``"below-left"``: the legend of
         :func:`render_legend_svg`, laid out apart and drawn under the
-        graph, centred; it widens the figure only when it is wider than the
-        graph. ``None``: no legend.
+        graph, centred or at the left; it widens the figure only when it is
+        wider than the graph. ``None``: no legend.
+    footer : bytes, optional
+        The bytes of a PNG or SVG image (an SVG needs a ``viewBox``), drawn
+        under the graph at the right, the legend below at the left. It is
+        embedded in the drawing (a ``data:`` URI), never linked.
+    footer_height : float, optional
+        The height of the footer in points; that of the legend below by
+        default.
 
     Returns
     -------
@@ -828,43 +1125,87 @@ def render_svg(
     ImportError
         If pygraphviz is not installed (the optional extra ``viz``).
     ValueError, TypeError
-        As :func:`to_dot`, or if ``legend`` is not one of its values.
+        As :func:`to_dot`, or if ``legend`` is not one of its values, the
+        footer is not a PNG or SVG image, or it has no height (no legend
+        below and no ``footer_height``).
+    RuntimeError
+        If Graphviz stops while laying out orthogonal edges, or the child
+        process cannot be started.
     """
     if legend not in _LEGEND_PLACES:
         raise ValueError(f"legend must be one of {_LEGEND_PLACES}, got {legend!r}")
+    image = None if footer is None else _image(footer)
+    if footer_height is not None and not (
+        math.isfinite(footer_height) and footer_height > 0
+    ):
+        raise ValueError(
+            f"footer_height must be a positive number, got {footer_height!r}"
+        )
     graphviz = _pygraphviz("render_svg")
     dot = to_dot(
         data,
         styles=styles,
+        attributes=attributes,
+        theme=theme,
         order_by=order_by,
         direction=direction,
         legend=legend == "right",
+        legend_values=legend_values,
     )
-    drawing = _svg(graphviz, dot)
-    if legend == "below":
+    graph_attributes, node_base, edge_base = _layout(attributes)
+    drawing = _svg(graphviz, dot, apart=graph_attributes.get("splines") == "ortho")
+    below = None
+    if legend in ("below", "below-left"):
         doc = _document(data)
-        entries = _legend_entries(doc, *_style_tables(doc, styles))
+        entries = _legend_entries(
+            doc,
+            *_style_tables(doc, styles, theme),
+            node_base=node_base,
+            edge_base=edge_base,
+            present=legend_values == "present",
+        )
         if entries:
-            return _stack(drawing, _svg(graphviz, _legend_dot(entries)))
-    return drawing
+            below = _svg(graphviz, _legend_dot(entries, theme))
+    if image is not None and footer_height is None and below is None:
+        raise ValueError("footer_height is needed when no legend is drawn below")
+    if below is None and image is None:
+        return drawing
+    return _stack(
+        drawing,
+        below,
+        left=legend == "below-left",
+        footer=None if image is None else (image, footer_height),
+        background=None if theme is None else theme.background,
+    )
 
 
-def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) -> str:
+def render_legend_svg(
+    data: Mapping[str, Any],
+    *,
+    styles: Styles | None = None,
+    attributes: Attributes | None = None,
+    theme: Theme | None = None,
+    values: str = "declared",
+) -> str:
     """The legend of a document alone, in SVG, laid out by Graphviz.
 
     Each declared value with the style it takes in :func:`render_svg` with
-    the same ``styles``, so that a figure can carry its legend apart: one
-    column per attribute and per kind of element (nodes, edges), in the
-    order of declaration. A node value that sets no shape is shown with the
-    shape of the nodes that carry it when they share one, and as a rounded
-    box when they have several or none carries it.
+    the same ``styles`` and ``attributes``, so that a figure can carry its
+    legend apart: one column per attribute and per kind of element (nodes,
+    edges), in the order of declaration. A node value that sets no shape is
+    shown with the shape of the nodes that carry it when they share one,
+    and as a rounded box when they have several or none carries it. A value
+    with ``mappings`` lists them in its tooltip.
 
     Parameters
     ----------
     data : mapping
         A ``protee-node-link/0`` document.
-    styles : mapping, optional
-        As :func:`to_dot`.
+    styles, attributes, theme : optional
+        As :func:`to_dot`; the graph attributes do not apply to the legend.
+    values : {"declared", "present"}
+        All the declared values, or only those that a node or an edge of
+        the document carries.
 
     Returns
     -------
@@ -876,20 +1217,75 @@ def render_legend_svg(data: Mapping[str, Any], *, styles: Styles | None = None) 
     ImportError
         If pygraphviz is not installed (the optional extra ``viz``).
     ValueError
-        If the document does not follow the format or declares no value,
-        two node identifiers write the same, or a style names an invalid
-        Graphviz attribute.
+        If the document does not follow the format or the legend shows no
+        value, two node identifiers write the same, a style or an attribute
+        names an invalid Graphviz attribute, or ``values`` is unknown.
     """
     graphviz = _pygraphviz("render_legend_svg")
     doc = _document(data)
-    entries = _legend_entries(doc, *_style_tables(doc, styles))
+    if values not in _LEGEND_VALUES:
+        raise ValueError(f"values must be one of {_LEGEND_VALUES}, got {values!r}")
+    _, node_base, edge_base = _layout(attributes)
+    entries = _legend_entries(
+        doc,
+        *_style_tables(doc, styles, theme),
+        node_base=node_base,
+        edge_base=edge_base,
+        present=values == "present",
+    )
     if not entries:
-        raise ValueError("the document declares no value: there is no legend")
-    return _svg(graphviz, _legend_dot(entries))
+        raise ValueError(
+            "the document declares no value: there is no legend"
+            if values == "declared"
+            else "no node or edge carries a declared value: there is no legend"
+        )
+    return _svg(graphviz, _legend_dot(entries, theme))
 
 
-def _svg(graphviz: Any, dot: str) -> str:
-    drawing: bytes = graphviz.AGraph(string=dot).draw(format="svg", prog="dot")
+#: The program of the child process that lays out a DOT text: the import
+#: path of the parent as arguments, the text on its input, the SVG on its
+#: output, in bytes.
+_CHILD = (
+    "import sys\n"
+    "sys.path[:0] = sys.argv[1:]\n"
+    "import pygraphviz\n"
+    "dot = sys.stdin.buffer.read().decode('utf-8')\n"
+    "svg = pygraphviz.AGraph(string=dot).draw(format='svg', prog='dot')\n"
+    "sys.stdout.buffer.write(svg)\n"
+)
+
+
+def _drawn_apart(dot: str) -> bytes:
+    """The SVG of a DOT text, laid out by Graphviz in a child process."""
+    if getattr(sys, "frozen", False) or not sys.executable:
+        raise RuntimeError(
+            "orthogonal edges are laid out in a child Python process, which "
+            "this program cannot start; splines='polyline' draws without it"
+        )
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", _CHILD, *(p for p in sys.path if p)],
+        input=dot.encode("utf-8"),
+        capture_output=True,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if done.returncode != 0 or b"<svg" not in done.stdout:
+        detail = done.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            "Graphviz stopped while routing orthogonal edges "
+            f"(exit code {done.returncode})"
+            + (f": {detail}" if detail else "")
+            + "; splines='polyline' draws without it"
+        )
+    return done.stdout
+
+
+def _svg(graphviz: Any, dot: str, *, apart: bool = False) -> str:
+    drawing: bytes = (
+        _drawn_apart(dot)
+        if apart
+        else graphviz.AGraph(string=dot).draw(format="svg", prog="dot")
+    )
     svg = _renumbered(drawing.decode("utf-8"))
     if _OUTSIDE_CLASS in svg:
         root = _SVG_ROOT.search(svg)
@@ -919,39 +1315,157 @@ def _renumbered(svg: str) -> str:
 
 
 _SVG_ROOT = re.compile(r'<svg width="[^"]*" height="[^"]*"\s+viewBox="([^"]*)"([^>]*)>')
+_GAP = 12.0
 
 
-def _stack(top: str, bottom: str) -> str:
-    """One SVG: the drawing ``top`` above ``bottom``, both centred.
+@dataclass(frozen=True, slots=True)
+class _Image:
+    """An image to embed: its media type, its bytes, its width over its
+    height."""
+
+    media: str
+    data: bytes
+    ratio: float
+
+
+_PNG = b"\x89PNG\r\n\x1a\n"
+_SVG_NS = "http://www.w3.org/2000/svg"
+
+
+def _image(footer: object) -> _Image:
+    """The image of a footer, read from its bytes: a PNG or an SVG."""
+    if not isinstance(footer, (bytes, bytearray, memoryview)):
+        raise TypeError(
+            "footer must be the bytes of a PNG or SVG image, never a file name "
+            f"or a URL; got {type(footer).__name__}"
+        )
+    data = bytes(footer)
+    if data.startswith(_PNG):
+        if len(data) < 24 or data[12:16] != b"IHDR":
+            raise ValueError("footer: a PNG image without its IHDR header")
+        width, height = struct.unpack(">II", data[16:24])
+        if not (width and height):
+            raise ValueError("footer: a PNG image of zero width or height")
+        return _Image("image/png", data, width / height)
+    if data.startswith(b"\x1f\x8b"):
+        raise ValueError("footer: a compressed SVG image is not read; give it plain")
+    width, height = _svg_size(data)
+    return _Image("image/svg+xml", data, width / height)
+
+
+class _Found(Exception):
+    """The root element of an SVG image is read: the rest is not."""
+
+
+def _svg_size(data: bytes) -> tuple[float, float]:
+    """The width and height of the ``viewBox`` of an SVG image."""
+    parser = xml.parsers.expat.ParserCreate(namespace_separator=" ")
+    root: dict[str, Any] = {}
+
+    def start(name: str, attributes: dict[str, str]) -> None:
+        root.update(name=name, attributes=attributes)
+        raise _Found
+
+    def refuse(*_: object) -> None:
+        raise ValueError("footer: an SVG image with a DOCTYPE is not read")
+
+    parser.StartElementHandler = start
+    parser.StartDoctypeDeclHandler = refuse
+    parser.EntityDeclHandler = refuse
+    try:
+        parser.Parse(data, True)
+    except _Found:
+        pass
+    except xml.parsers.expat.ExpatError as err:
+        raise ValueError(f"footer: neither a PNG nor an SVG image ({err})") from err
+    if root.get("name") != f"{_SVG_NS} svg":
+        raise ValueError("footer: neither a PNG nor an SVG image")
+    box = str(root["attributes"].get("viewBox", ""))
+    try:
+        numbers = [float(v) for v in re.split(r"[\s,]+", box.strip())]
+    except ValueError:
+        numbers = []
+    if not (
+        len(numbers) == 4
+        and all(math.isfinite(v) for v in numbers)
+        and numbers[2] > 0
+        and numbers[3] > 0
+    ):
+        raise ValueError("footer: an SVG image needs a viewBox of positive size")
+    return numbers[2], numbers[3]
+
+
+def _root(svg: str) -> tuple[re.Match[str], float, float, str]:
+    """The root of an SVG of Graphviz, its width, its height, its content."""
+    root = _SVG_ROOT.search(svg)
+    assert root is not None, "Graphviz writes the root of its SVG so"
+    width, height = (float(x) for x in root.group(1).split()[2:])
+    return root, width, height, svg[root.end() : svg.rindex("</svg>")]
+
+
+def _stack(
+    top: str,
+    bottom: str | None = None,
+    *,
+    left: bool = False,
+    footer: tuple[_Image, float | None] | None = None,
+    background: str | None = None,
+) -> str:
+    """One SVG: the drawing ``top``, centred, above a row that holds the
+    drawing ``bottom`` (a legend), centred or at the left, and the image of
+    ``footer`` at the right, at its height or at that of ``bottom``.
 
     The identifiers of ``bottom``, and the references to them, are
-    prefixed, so that none is repeated.
+    prefixed, so that none is repeated; the image is embedded whole, so its
+    own identifiers stay in it.
     """
-    parts = []
-    for svg in (top, bottom):
-        root = _SVG_ROOT.search(svg)
-        assert root is not None, "Graphviz writes the root of its SVG so"
-        width, height = (float(x) for x in root.group(1).split()[2:])
-        parts.append((root, width, height, svg[root.end() : svg.rindex("</svg>")]))
-    gap = 12.0
-    width = max(p[1] for p in parts)
-    height = parts[0][2] + gap + parts[1][2]
-    first = parts[0][0]
+    first, top_width, top_height, top_inner = _root(top)
+    legend = None
+    if bottom is not None:
+        root, w, h, inner = _root(bottom)
+        for mark in (' id="', "url(#", 'href="#'):
+            inner = inner.replace(mark, mark + "protee-legend-")
+        legend = (root, w, h, inner)
+    image = None
+    if footer is not None:
+        picture, wanted = footer
+        height = wanted if wanted is not None else legend[2] if legend else None
+        assert height is not None, "render_svg checks that the footer has a height"
+        image = (picture, height * picture.ratio, height)
+    widths = [p[1] for p in (legend, image) if p is not None]
+    row_width = sum(widths) + _GAP * (len(widths) - 1)
+    row_height = max((p[2] for p in (legend, image) if p is not None), default=0.0)
+    width = max(top_width, row_width)
+    height = top_height + (_GAP + row_height if widths else 0.0)
     lines = [
         top[: first.start()]
         + f'<svg width="{width:.0f}pt" height="{height:.0f}pt"\n'
         + f' viewBox="0.00 0.00 {width:.2f} {height:.2f}"{first.group(2)}>'
     ]
-    y = 0.0
-    for k, (root, w, h, inner) in enumerate(parts):
-        if k:
-            for mark in (' id="', "url(#", 'href="#'):
-                inner = inner.replace(mark, mark + "protee-legend-")
+    if background is not None:
         lines.append(
-            f'<svg x="{(width - w) / 2:.2f}" y="{y:.2f}" width="{w:.2f}"'
+            f'<rect width="{width:.2f}" height="{height:.2f}" fill="{background}"/>'
+        )
+    lines.append(
+        f'<svg x="{(width - top_width) / 2:.2f}" y="0.00" width="{top_width:.2f}"'
+        f' height="{top_height:.2f}" viewBox="{first.group(1)}">{top_inner}</svg>'
+    )
+    y = top_height + _GAP
+    if legend is not None:
+        root, w, h, inner = legend
+        x = 0.0 if left or image is not None else (width - w) / 2
+        lines.append(
+            f'<svg x="{x:.2f}" y="{y + (row_height - h) / 2:.2f}" width="{w:.2f}"'
             f' height="{h:.2f}" viewBox="{root.group(1)}">{inner}</svg>'
         )
-        y += h + gap
+    if image is not None:
+        picture, w, h = image
+        encoded = base64.b64encode(picture.data).decode("ascii")
+        lines.append(
+            f'<image x="{width - w:.2f}" y="{y + (row_height - h) / 2:.2f}"'
+            f' width="{w:.2f}" height="{h:.2f}" preserveAspectRatio="xMidYMid meet"'
+            f' xlink:href="data:{picture.media};base64,{encoded}"/>'
+        )
     lines.append("</svg>\n")
     return "\n".join(lines)
 
@@ -1380,18 +1894,25 @@ def _legend_html(filters: list[_Filter], drawing: str) -> str:
     return "".join(parts)
 
 
+def _order_value(node: Mapping[str, Any], attribute: str) -> int | float | None:
+    """The value of a node for ``order_by``: a finite number, or None."""
+    value = node.get(attribute)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"order_by {attribute!r}: {value!r} is not a number")
+    if not math.isfinite(value):
+        raise ValueError(f"order_by {attribute!r}: {value!r} is not finite")
+    return value
+
+
 def _ordering(nodes: list[dict[str, Any]], attribute: str) -> list[str]:
     """Same rank for equal values; invisible heavy edges between ranks."""
     ranks: dict[float, list[Any]] = {}
     for node in nodes:
-        value = node.get(attribute)
-        if value is None:
-            continue
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError(f"order_by {attribute!r}: {value!r} is not a number")
-        if not math.isfinite(value):
-            raise ValueError(f"order_by {attribute!r}: {value!r} is not finite")
-        ranks.setdefault(value, []).append(node["id"])
+        value = _order_value(node, attribute)
+        if value is not None:
+            ranks.setdefault(value, []).append(node["id"])
     order = [ranks[v] for v in sorted(ranks)]
     lines = [
         "  { rank=same; " + " ".join(_quote(i) for i in ids) + " }" for ids in order
@@ -1411,25 +1932,50 @@ def _legend_entries(
     node_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
     edge_defaults: Mapping[tuple[str, Any], Mapping[str, str]],
     given: Mapping[str, Mapping[tuple[str, Any], Mapping[str, str]]],
+    *,
+    node_base: Mapping[str, str] | None = None,
+    edge_base: Mapping[str, str] | None = None,
+    present: bool = False,
 ) -> list[_Entry]:
     """Each declared value: its attribute, ``on``, and its swatch.
 
     A node value that sets no shape takes the shape of the nodes that carry
     it when they share one, and a rounded box otherwise: a swatch never
-    shows a shape that its nodes do not have.
+    shows a shape that its nodes do not have. With ``present``, only the
+    values that a node or an edge carries: the styles stay those of the
+    whole vocabulary, as in the drawing.
     """
     vocabulary = doc["graph"].get("vocabulary") or {}
     shapes = [
-        (node, _style(node, node_defaults, given["node"]).get("shape", "ellipse"))
+        (
+            node,
+            _style(node, node_defaults, given["node"], node_base).get(
+                "shape", "ellipse"
+            ),
+        )
         for node in doc["nodes"]
     ]
+    carried = {
+        (attribute, on, item[attribute])
+        for on, items in (("node", doc["nodes"]), ("edge", doc["edges"]))
+        for item in items
+        for attribute in vocabulary
+        if item.get(attribute) is not None
+    }
     entries: list[_Entry] = []
     for attribute, values in vocabulary.items():
         for v in values or ():  # a null entry declares nothing
+            if present and (attribute, v["on"], v["id"]) not in carried:
+                continue
             item = {attribute: v["id"]}
             swatch = {"label": str(v["label"])}
+            if v.get("mappings"):
+                swatch["tooltip"] = "\n".join(
+                    [str(v.get("description") or v["label"])]
+                    + [f"{m['predicate']} {m['object']}" for m in v["mappings"]]
+                )
             if v["on"] == "node":
-                swatch.update(_style(item, node_defaults, given["node"]))
+                swatch.update(_style(item, node_defaults, given["node"], node_base))
                 if "shape" not in swatch:
                     found = {s for n, s in shapes if n.get(attribute) == v["id"]}
                     if len(found) == 1:
@@ -1439,7 +1985,7 @@ def _legend_entries(
                         line = swatch.get("style")
                         swatch["style"] = f"rounded,{line}" if line else "rounded"
             else:
-                swatch.update(_style(item, edge_defaults, given["edge"]))
+                swatch.update(_style(item, edge_defaults, given["edge"], edge_base))
             entries.append((attribute, v["on"], swatch))
     return entries
 
@@ -1457,8 +2003,23 @@ def _free(prefix: str, taken: set[str]) -> str:
     return free
 
 
+def _point(theme: Theme | None) -> str:
+    """The attributes of the ends of an edge swatch."""
+    return _POINT if theme is None else f'{_POINT}, color="{theme.ink}"'
+
+
+def _frame(theme: Theme | None) -> str:
+    """The attributes of the frame of the legend."""
+    frame = '    label=""; style="dashed";'
+    return frame if theme is None else f'{frame} color="{theme.muted}";'
+
+
 def _swatch(
-    k: int, on: str, swatch: Mapping[str, str], prefix: str = "protee:legend:"
+    k: int,
+    on: str,
+    swatch: Mapping[str, str],
+    prefix: str = "protee:legend:",
+    point: str = _POINT,
 ) -> tuple[list[str], str, str]:
     """The DOT lines of one swatch, and its first and last node."""
     name = f"{prefix}{k}"
@@ -1470,7 +2031,7 @@ def _swatch(
     spaced = {**swatch, "label": f" {swatch['label']} \n"}
     return (
         [
-            f"    {_quote(a)} [{_POINT}]; {_quote(b)} [{_POINT}];",
+            f"    {_quote(a)} [{point}]; {_quote(b)} [{point}];",
             f"    {_quote(a)} -> {_quote(b)} [{_attributes(spaced)}];",
         ],
         a,
@@ -1478,29 +2039,32 @@ def _swatch(
     )
 
 
-def _legend(entries: list[_Entry], taken: set[str]) -> list[str]:
+def _legend(
+    entries: list[_Entry], taken: set[str], theme: Theme | None = None
+) -> list[str]:
     """The legend as a cluster of the drawing, placed by Graphviz; its names
     are free among the ``taken`` names of the nodes."""
     if not entries:
         return []
     prefix = _free("protee:legend:", taken)
-    lines = ["  subgraph cluster_legend {", '    label=""; style="dashed";']
+    lines = ["  subgraph cluster_legend {", _frame(theme)]
     for k, (_, on, swatch) in enumerate(entries):
-        lines += _swatch(k, on, swatch, prefix)[0]
+        lines += _swatch(k, on, swatch, prefix, _point(theme))[0]
     lines.append("  }")
     return lines
 
 
-def _legend_dot(entries: list[_Entry]) -> str:
+def _legend_dot(entries: list[_Entry], theme: Theme | None = None) -> str:
     """The legend alone: one column per attribute, in the order of declaration."""
-    head = {"rankdir": "LR", "fontname": _FONT, "nodesep": "0.1", "ranksep": "0.3"}
+    themed, element = _heads(theme)
+    head = {"rankdir": "LR", **themed, "nodesep": "0.1", "ranksep": "0.3"}
     lines = [
         "digraph legend {",
         f"  graph [{_attributes(head)}];",
-        f"  node [{_attributes({'fontname': _FONT})}];",
-        f"  edge [{_attributes({'fontname': _FONT})}];",
+        f"  node [{_attributes(element)}];",
+        f"  edge [{_attributes(element)}];",
         "  subgraph cluster_legend {",
-        '    label=""; style="dashed";',
+        _frame(theme),
     ]
     columns: dict[tuple[str, str], list[tuple[int, dict[str, str]]]] = {}
     for k, (attribute, on, swatch) in enumerate(entries):
@@ -1520,7 +2084,7 @@ def _legend_dot(entries: list[_Entry]) -> str:
                     **{a: v for a, v in swatch.items() if a not in _LAYOUT_ONLY},
                     "weight": "10",
                 }
-            drawn, first, last = _swatch(k, on, swatch)
+            drawn, first, last = _swatch(k, on, swatch, point=_point(theme))
             lines += drawn
             firsts.append(first)
             lasts.append(last)
@@ -1535,3 +2099,260 @@ def _legend_dot(entries: list[_Entry]) -> str:
         previous = lasts[-1]
     lines += ["  }", "}"]
     return "\n".join(lines) + "\n"
+
+
+#: Characters that XML 1.0 cannot carry, even as references, and lone
+#: halves of surrogate pairs (which JSON can carry).
+_NOT_XML = re.compile(
+    "[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff" + chr(0xFFFE) + chr(0xFFFF) + "]"
+)
+_CELL = 24  # the side of a cell of the matrix, in points
+_MARGIN = 8
+_CHAR = 7  # the width of a character of the matrix, roughly, in points
+_ROW_LABEL = 40  # characters of a row label, beyond which it is cut
+_FORWARD = "#0072B2"  # blue: read later in the order
+_FEEDBACK = "#D55E00"  # vermilion: read earlier, a feedback
+
+
+def _xml(text: object) -> str:
+    """A text escaped for XML, refused if XML cannot carry it."""
+    raw = str(text)
+    if _NOT_XML.search(raw):
+        raise ValueError(f"{raw!r} holds a character that XML cannot carry")
+    return html.escape(raw, quote=True)
+
+
+def render_matrix_svg(
+    data: Mapping[str, Any],
+    *,
+    order_by: str,
+    theme: Theme | None = None,
+    loops: bool = False,
+) -> str:
+    """The matrix of a document (an N² chart, or design structure matrix).
+
+    The nodes that carry ``order_by`` stand on the diagonal, in increasing
+    order (in the order of the document for equal values, each block of
+    equal values framed). An edge from the node of a row to the node of a
+    column marks their cell: the row gives, the column reads, as in XDSM and
+    in the N² charts of OpenMDAO. Above the diagonal, the column comes later
+    in the order (a disc); below, it comes earlier, and the edge is a
+    feedback (a square). A cell counts its parallel edges; a loop on a node
+    is counted on the diagonal. A row above the matrix counts, for each
+    column, the edges that come from nodes without ``order_by`` (the
+    inputs); the edges between two such nodes, or from a node of the matrix
+    to one of them, are not shown.
+
+    Each cell is an element ``g`` of class ``protee-cell``, with its row,
+    column and count as ``data-row``, ``data-col`` and ``data-count``, and
+    its edges in its ``title``. The matrix is written by protee, without
+    Graphviz: it reads well up to about a hundred nodes; beyond, a
+    :func:`collapse` shows fewer.
+
+    Parameters
+    ----------
+    data : mapping
+        A ``protee-node-link/0`` document.
+    order_by : str
+        The numeric node attribute that orders the diagonal.
+    theme : Theme, optional
+        The background, ink and muted grey; black on white without one, as
+        Graphviz draws.
+    loops : bool
+        Frame the loops: the nodes of the matrix on a common cycle (strongly
+        connected components of its edges), from the first to the last.
+
+    Returns
+    -------
+    str
+        The SVG document.
+
+    Raises
+    ------
+    ValueError
+        If the document does not follow the format, no node carries
+        ``order_by``, a value of it is not finite, or a label holds a
+        character that XML cannot carry.
+    TypeError
+        If a value of ``order_by`` is not a number.
+    """
+    doc = _document(data)
+    ordered = []
+    for k, node in enumerate(doc["nodes"]):
+        value = _order_value(node, order_by)
+        if value is not None:
+            ordered.append((value, k, node))
+    if not ordered:
+        raise ValueError(f"no node carries {order_by!r}: the matrix is empty")
+    ordered.sort(key=lambda t: (t[0], t[1]))
+    nodes = [node for _, _, node in ordered]
+    index = {node["id"]: i for i, node in enumerate(nodes)}
+    cells: Counter[tuple[int, int]] = Counter()
+    inputs: Counter[int] = Counter()
+    for e in doc["edges"]:
+        s, t = index.get(e["source"]), index.get(e["target"])
+        if s is not None and t is not None:
+            cells[(s, t)] += 1
+        elif t is not None:
+            inputs[t] += 1
+    names = [str(node.get("label") or node["id"]) for node in nodes]
+    shown = [
+        name if len(name) <= _ROW_LABEL else name[: _ROW_LABEL - 1] + "…"
+        for name in names
+    ]
+    ink = "#000000" if theme is None else theme.ink
+    muted = "#7F7F7F" if theme is None else theme.muted
+    n, c, m = len(nodes), _CELL, _MARGIN
+    title = doc["graph"].get("label")
+    # The labels, then the numbers of the rows, then the matrix.
+    numbers = _CHAR * len(str(n)) + m
+    left = m + _CHAR * max(len(s) for s in [*shown, "inputs"]) + m + numbers
+    top = m + (2 * c if title else c) + c  # title, column numbers, inputs
+    notes = [
+        (_FORWARD, "disc: the column reads what the row gives, later in the order"),
+        (_FEEDBACK, "square: the column reads it earlier, a feedback"),
+        (muted, f"inputs: edges from nodes without {order_by}"),
+    ]
+    width = max(
+        left + n * c + m,
+        m + _CHAR * len(str(title or "")) + m,
+        m + 16 + _CHAR * max(len(text) for _, text in notes) + m,
+    )
+    legend_top = top + n * c + m
+    height = legend_top + 3 * 16 + m
+    root = (
+        f'<svg width="{width}pt" height="{height}pt" viewBox="0 0 {width} {height}"'
+        ' xmlns="http://www.w3.org/2000/svg"'
+        f' font-family="{_FONT}" font-size="11" fill="{ink}">'
+    )
+    out = ['<?xml version="1.0" encoding="UTF-8" standalone="no"?>', root]
+    if title:
+        out.append(f"<title>{_xml(title)}</title>")
+    background = "#FFFFFF" if theme is None else theme.background
+    out.append(f'<rect width="{width}" height="{height}" fill="{background}"/>')
+    if title:
+        out.append(
+            f'<text x="{width // 2}" y="{m + c // 2 + 4}" text-anchor="middle"'
+            f' font-size="13">{_xml(title)}</text>'
+        )
+    numbers_y, inputs_y = top - 2 * c, top - c
+    for i in range(n):
+        x = left + i * c + c // 2
+        out.append(
+            f'<text x="{x}" y="{numbers_y + c // 2 + 4}" text-anchor="middle">'
+            f"{i + 1}</text>"
+        )
+    out.append(
+        f'<text x="{left - numbers}" y="{inputs_y + c // 2 + 4}" text-anchor="end"'
+        f' fill="{muted}">inputs</text>'
+    )
+    for col, count in sorted(inputs.items()):
+        x = left + col * c + c // 2
+        out.append(
+            f'<g class="protee-input" data-col="{col}" data-count="{count}">'
+            f"<title>{count} input{'s' if count > 1 else ''} of {_xml(names[col])}"
+            f'</title><text x="{x}" y="{inputs_y + c // 2 + 4}" text-anchor="middle"'
+            f' fill="{muted}">{count}</text></g>'
+        )
+    grid = [f"M{left} {top + i * c}H{left + n * c}" for i in range(n + 1)]
+    grid += [f"M{left + i * c} {top}V{top + n * c}" for i in range(n + 1)]
+    out.append(
+        f'<path d="{"".join(grid)}" fill="none" stroke="{muted}" stroke-width="0.5"/>'
+    )
+    for i, label in enumerate(shown):
+        y = top + i * c
+        out.append(
+            f'<text x="{left - numbers}" y="{y + c // 2 + 4}" text-anchor="end">'
+            f"<title>{_xml(names[i])}</title>{_xml(label)}</text>"
+        )
+        out.append(
+            f'<text x="{left - m // 2}" y="{y + c // 2 + 4}" text-anchor="end">'
+            f"{i + 1}</text>"
+        )
+        loop = cells.get((i, i), 0)
+        out.append(
+            f'<g class="protee-diagonal" data-index="{i}" data-count="{loop}">'
+            f"<title>({i + 1}) {_xml(names[i])}</title>"
+            f'<rect x="{left + i * c + 2}" y="{y + 2}" width="{c - 4}"'
+            f' height="{c - 4}" fill="{ink}"/>'
+            + (
+                f'<text x="{left + i * c + c // 2}" y="{y + c // 2 + 4}"'
+                f' text-anchor="middle" fill="{_text_on(ink)}">{loop}</text>'
+                if loop
+                else ""
+            )
+            + "</g>"
+        )
+    for (row, col), count in sorted(cells.items()):
+        if row == col:
+            continue
+        x, y = left + col * c, top + row * c
+        colour = _FORWARD if row < col else _FEEDBACK
+        mark = (
+            f'<circle cx="{x + c // 2}" cy="{y + c // 2}" r="7" fill="{colour}"/>'
+            if row < col
+            else f'<rect x="{x + 5}" y="{y + 5}" width="{c - 10}"'
+            f' height="{c - 10}" fill="{colour}"/>'
+        )
+        if count > 1:
+            mark += (
+                f'<text x="{x + c // 2}" y="{y + c // 2 + 3}" text-anchor="middle"'
+                f' font-size="9" fill="{_text_on(colour)}">{count}</text>'
+            )
+        edges = "edges" if count > 1 else "edge"
+        out.append(
+            f'<g class="protee-cell" data-row="{row}" data-col="{col}"'
+            f' data-count="{count}"><title>{_xml(names[row])} → {_xml(names[col])}'
+            f" ({count} {edges})</title>{mark}</g>"
+        )
+    out += _matrix_frames(ordered, cells, n, left, top, ink, muted, loops)
+    for k, (colour, text) in enumerate(notes):
+        y = legend_top + 16 * k + 12
+        out.append(
+            f'<rect x="{m}" y="{y - 9}" width="10" height="10" fill="{colour}"/>'
+        )
+        out.append(f'<text x="{m + 16}" y="{y}">{_xml(text)}</text>')
+    out.append("</svg>\n")
+    return "\n".join(out)
+
+
+def _matrix_frames(
+    ordered: list[tuple[int | float, int, dict[str, Any]]],
+    cells: Counter[tuple[int, int]],
+    n: int,
+    left: int,
+    top: int,
+    ink: str,
+    muted: str,
+    loops: bool,
+) -> list[str]:
+    """The frames of the matrix: blocks of equal order, and loops."""
+    c = _CELL
+    frames: list[tuple[int, int, str, str, str]] = []
+    position = 0
+    for _, group in itertools.groupby(ordered, key=lambda t: t[0]):
+        size = len(list(group))
+        if size > 1:
+            frames.append((position, position + size - 1, "protee-tie", muted, "3 2"))
+        position += size
+    if loops:
+        arcs = sorted(cells)
+        component = strong_components(Digraph.from_arcs(n, arcs))
+        members: dict[int, list[int]] = {}
+        for i, k in enumerate(component):
+            members.setdefault(k, []).append(i)
+        frames += [
+            (min(ids), max(ids), "protee-loop", ink, "")
+            for ids in members.values()
+            if len(ids) > 1
+        ]
+    out = []
+    for first, last, kind, colour, dashes in frames:
+        side = (last - first + 1) * c
+        dash = f' stroke-dasharray="{dashes}"' if dashes else ""
+        out.append(
+            f'<rect class="{kind}" x="{left + first * c}" y="{top + first * c}"'
+            f' width="{side}" height="{side}" fill="none" stroke="{colour}"'
+            f' stroke-width="1.5"{dash}/>'
+        )
+    return out

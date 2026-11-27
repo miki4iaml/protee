@@ -28,9 +28,10 @@ online solver, service or engine).
 
 Typed graphs are exchanged with other projects in the node-link format
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`), and
-drawn by `protee.viz`: selection, groups and loops without dependency,
-SVG and a page to explore offline with the optional extra `viz` (see the
-[gallery](docs/gallery/README.md)).
+drawn by `protee.viz`: selection, groups, loops, contraction and a
+matrix view (N² chart) without dependency; SVG figures, light or dark,
+with their legend and a footer, and a page to explore offline, with the
+optional extra `viz` (see the [gallery](docs/gallery/README.md)).
 
 ## Why protee
 

@@ -27,7 +27,8 @@ GALLERY = Path(__file__).resolve().parent
 
 class Case(NamedTuple):
     """A drawing: its file, its title, what it shows, and the call that
-    writes it (evaluated with ``viz``, ``coare``, ``kinds`` and ``CLOSING``).
+    writes it (evaluated with ``viz``, ``coare``, ``kinds``, ``CLOSING`` and
+    ``MARK``).
     """
 
     stem: str
@@ -76,6 +77,65 @@ CASES = (
         ),
     ),
     Case(
+        stem="coare-contracted",
+        title="The same system, each equation joined with what it gives",
+        text=(
+            "Each equation and the variable it gives become one node, which "
+            "keeps the variable and the rank of its equation: the loop reads "
+            "from variable to variable. The legend, at the left, shows only the "
+            "values that the drawing carries."
+        ),
+        call=(
+            "viz.render_svg(\n"
+            '    viz.contract(coare, edge_type="nomogram:gives"),\n'
+            "    styles=CLOSING,\n"
+            '    order_by="rank",\n'
+            '    legend="below-left",\n'
+            '    legend_values="present",\n'
+            ")"
+        ),
+    ),
+    Case(
+        stem="coare-contracted-dark",
+        title="The same drawing, dark, with a footer",
+        text=(
+            "The dark theme, smaller texts for all nodes and edges, and an image "
+            "under the drawing at the right of the legend (here a mark made by "
+            "the script; a logo, or the attribution that a licence of open data "
+            "asks for). The image is embedded in the drawing."
+        ),
+        call=(
+            "viz.render_svg(\n"
+            '    viz.contract(coare, edge_type="nomogram:gives"),\n'
+            "    styles=CLOSING,\n"
+            '    attributes={"node": {"fontsize": "11"}, "edge": {"fontsize": "11"}},\n'
+            "    theme=viz.DARK,\n"
+            '    order_by="rank",\n'
+            '    legend="below-left",\n'
+            '    legend_values="present",\n'
+            "    footer=MARK,\n"
+            ")"
+        ),
+    ),
+    Case(
+        stem="coare-matrix",
+        title="The same system as a matrix",
+        text=(
+            "The N² chart of the contracted system: the nodes on the diagonal in "
+            "the order of their rank; a row gives, a column reads. The discs above "
+            "the diagonal follow the order, the squares below are feedbacks: "
+            "exactly the reads that close the loop, framed with the nodes they "
+            "join. The top row counts the inputs of each column."
+        ),
+        call=(
+            "viz.render_matrix_svg(\n"
+            '    viz.contract(coare, edge_type="nomogram:gives"),\n'
+            '    order_by="rank",\n'
+            "    loops=True,\n"
+            ")"
+        ),
+    ),
+    Case(
         stem="humidity-kinds",
         title="A forest of quantity kinds, from right to left",
         text=(
@@ -110,6 +170,16 @@ CLOSING: viz.Styles = {
     "edge": {("role", "nomogram:closing"): {"style": "dashed", "constraint": "false"}}
 }
 
+#: The image of a footer: a mark made here, in the colours of the dark theme.
+MARK = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 48">'
+    b'<rect x="1" y="1" width="158" height="46" rx="6" fill="none"'
+    b' stroke="#8B949E" stroke-width="2"/>'
+    b'<text x="80" y="30" font-family="Helvetica,Arial,sans-serif"'
+    b' font-size="16" text-anchor="middle" fill="#E6EDF3">protee gallery</text>'
+    b"</svg>"
+)
+
 HEADER = """\
 # Gallery of `protee.viz`
 
@@ -120,7 +190,8 @@ optional extra `viz`. The documents are written by the graph export of
 and kept in the tests of protee (`tests/data/node_link/`); `coare` and
 `kinds` are those documents, decoded from JSON. The styles come from the
 vocabulary each document declares; the only style given here is
-`CLOSING`:
+`CLOSING`, and `MARK` is the bytes of a small SVG image made by the
+script, drawn as a footer:
 
 ```python
 CLOSING = {
@@ -150,6 +221,7 @@ def write(folder: Path) -> None:
     namespace = {
         "viz": viz,
         "CLOSING": CLOSING,
+        "MARK": MARK,
         "coare": _load("nomogram-0.8.0-coare36-surface-layer.json"),
         "kinds": _load("nomogram-0.8.0-humidity-kinds.json"),
     }
