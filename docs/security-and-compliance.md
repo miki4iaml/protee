@@ -106,18 +106,21 @@ section 7 for an installation at locked versions.
   edges (`splines="ortho"`). Their routing in Graphviz can stop the
   process that runs it, so `protee.viz.render_svg` lays them out in a
   child process of the same Python (`sys.executable -I`, its arguments as
-  a list, no shell), which reads the DOT text and writes the SVG, and
-  raises an error if that child stops;
-- an image given as the footer of a figure (`render_svg(footer=...)`) is
-  bytes, never a file name or a URL: only a PNG or an SVG with a
-  `viewBox` is read (an SVG with a DOCTYPE is refused), and it is embedded
-  whole in an `image` element (a `data:` URI), which browsers draw without
-  running its scripts or fetching anything;
+  a list, no shell, the import path and the DOT text on its input), which
+  writes the SVG; it raises an error if that child stops or cannot start,
+  whatever the spelling of `ortho`;
+- an image given as the footer of a figure (`render_svg(footer=...)`, or
+  of the page, `render_html(footer=...)`) is bytes, never a file name or a
+  URL: only a PNG or an SVG with a `viewBox` is read (an SVG with a
+  DOCTYPE is refused), and it is embedded whole as an image (an `image`
+  element in the SVG, an `img` element in the page, with a `data:` URI),
+  which browsers draw without running its scripts or fetching anything;
 - a formula shown in the exploration page (`render_html(math=...)`) is
   data, never markup: a tree checked in Python (eleven MathML elements of
-  a closed list, no attribute, at most 2000 elements and 32 levels), then
-  built by the page element by element (`createElementNS`), its texts as
-  text nodes; the page script uses neither `innerHTML` nor `setAttribute`;
+  a closed list, no attribute; at most 4000 elements and texts, 20,000
+  characters of text, 32 levels), then built by the page element by
+  element (`createElementNS`), its texts as text nodes; the page script
+  uses neither `innerHTML` nor `setAttribute`;
 - no telemetry and no data collection;
 - no file written unless the caller asks: `protee.io.write_node_link`,
   `write_arcs_csv` and `write_dimacs_min` write the file they are given;
@@ -134,12 +137,17 @@ section 7 for an installation at locked versions.
 - the package contains no `eval` and no `exec`; no text of a document is
   executed;
 - the texts of a document are escaped where they are drawn: quoted in the
-  Graphviz DOT language (a NUL character is refused), escaped in HTML, and
+  Graphviz DOT language, every `&` written `&amp;` so that a character
+  reference is drawn as written and never decoded by the reader of the
+  SVG (a character that XML cannot carry is refused), escaped in HTML, and
   every `<` escaped in the data of the exploration page, so that no text
   can close or comment out an element;
 - a node's link is kept only for an `http`, `https` or `mailto` address
-  or a relative link: a `javascript:` or `data:` address is dropped from
-  the SVG and from the page;
+  or a link relative to the page, read as a browser reads it (character
+  references decoded): a `javascript:` or `data:` address, or a link to
+  another host without a scheme (`//host`, which a page opened from a
+  file reads as `file://host`), is dropped from the SVG and from the
+  page;
 - the exploration page fetches nothing: it embeds its scripts and opens
   offline.
 

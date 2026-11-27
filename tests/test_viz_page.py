@@ -114,9 +114,8 @@ def test_the_tooltips_add_the_attributes_asked_for() -> None:
     node = graph.get_node("eq")
     assert node.attr["tooltip"] == "eq\\nrole: input\\ntype: equation"
     (edge,) = graph.edges()
-    assert edge.attr["tooltip"] == (
-        "where the equation comes from\\nlocator: 11\\ntype: cites"
-    )
+    # The description of an edge is a free key of the format: not shown.
+    assert edge.attr["tooltip"] == "locator: 11\\ntype: cites"
     # A value that is not a text is written as JSON; an absent one is left.
     doc = cited()
     doc["nodes"][0]["sources"] = ["a", "b"]
@@ -134,9 +133,13 @@ def test_the_page_shows_tooltips_on_edges() -> None:
     found = elements(viz.render_html(cited(), tooltip=("role",)))
     assert found["eq"]["tooltip"] == "eq\nrole: input"
     (edge,) = (e for e in found.values() if "source" in e)
-    assert edge["tooltip"] == (
-        "cites\ntype: cites\nwhere the equation comes from\nlocator: 11"
-    )
+    assert edge["tooltip"] == "cites\ntype: cites\nlocator: 11"
+    # A declared value asked for again is not repeated.
+    found = elements(viz.render_html(cited(), tooltip=("type",)))
+    (edge,) = (e for e in found.values() if "source" in e)
+    assert edge["tooltip"] == "cites\ntype: cites\nlocator: 11"
+    # The tooltip keeps its line breaks.
+    assert "white-space: pre-line" in viz.render_html(cited())
 
 
 # Formulas --------------------------------------------------------------------
@@ -161,7 +164,9 @@ def test_a_formula_travels_as_data() -> None:
         (["math", {}, ["mi", {"href": "javascript:x"}, "a"]], "has no attribute"),
         (["math", {}, ["mi"]], "\\[name, \\{\\}, children"),
         (["math", {}, 3], "\\[name, \\{\\}, children"),
-        (["math", {}, *[["mi", {}, "a"]] * 2000], "at most 2000 elements"),
+        (["math", {}, *[["mi", {}, "a"]] * 2000], "at most 4000 elements and texts"),
+        (["math", {}, ["mi", {}, *["x"] * 4000]], "at most 4000 elements and texts"),
+        (["math", {}, ["mi", {}, "x" * 20_001]], "20000 characters of text"),
     ],
 )
 def test_a_formula_is_checked(formula: Any, message: str) -> None:
@@ -202,7 +207,16 @@ def test_the_page_holds_the_matrix_and_its_order() -> None:
     assert order == [i for _, _, i in ranks]
     assert '<div id="matrix"><svg' in page
     assert 'id="matrix-toggle"' in page
-    assert page.count("protee-cell") > 0
+    panel = page[page.index('<div id="matrix">') :]
+    panel = panel[: panel.index("</div>")]
+    cells = {
+        (order.index(str(e["source"])), order.index(str(e["target"])))
+        for e in loop["edges"]
+        if str(e["source"]) in order
+        and str(e["target"]) in order
+        and e["source"] != e["target"]
+    }
+    assert panel.count('<g class="protee-cell"') == len(cells) > 0
     with pytest.raises(ValueError, match="needs order_by"):
         viz.render_html(loop, matrix=True)
     plain = viz.render_html(loop, order_by="rank")
@@ -281,6 +295,9 @@ def test_a_declared_prefix_names_the_vocabulary() -> None:
             {"id": "d", "iri": "https://user@host.org:8080/x"},
             {"id": "e"},
             {"id": "f", "iri": "file:///tmp/x"},
+            {"id": "g", "iri": "HTTP://Host.ORG/y"},
+            {"id": "h", "iri": "http://[::1]:80/x"},
+            {"id": "i", "iri": "http://[::1/x"},
         ],
         [],
     )
@@ -288,9 +305,12 @@ def test_a_declared_prefix_names_the_vocabulary() -> None:
         "v": "http://example.org/v/",
         "sub": "http://example.org/v/sub/",
         "local": None,
+        "protee": "https://protee.example/",
     }
     marked = viz.mark_vocabularies(doc)
     found = {n["id"]: n.get(viz.VOCABULARY) for n in marked["nodes"]}
+    # Hosts are read without case; an IPv6 address, which a declared value
+    # cannot hold, or a broken one, gives the scheme.
     assert found == {
         "a": "sub",
         "b": "v",
@@ -298,7 +318,11 @@ def test_a_declared_prefix_names_the_vocabulary() -> None:
         "d": "host.org",
         "e": None,
         "f": "file",
+        "g": "host.org",
+        "h": "http",
+        "i": "http",
     }
+    assert marked["graph"]["prefixes"]["protee"] == "https://protee.example/"
     # Without any IRI, nothing is declared.
     bare = viz.mark_vocabularies(document([{"id": "e"}], []))
     assert viz.VOCABULARY not in (bare["graph"].get("vocabulary") or {})

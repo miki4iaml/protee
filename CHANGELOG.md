@@ -36,23 +36,25 @@ and this project adheres to
   `render_legend_svg`, `values="present"`) for only the values that the
   document carries; a value with `mappings` lists them in its tooltip.
 - A footer for `render_svg`: a PNG or SVG image, given as bytes, embedded
-  under the figure at the right of the legend.
+  under the figure at the right of the legend, at the height of the legend
+  or at `footer_height` points.
 - `protee.viz.mark_vocabularies`: each node with an `iri` marked with the
   vocabulary of that IRI (a declared prefix, or its authority), declared
   so that the default styles fill the nodes by vocabulary and the legend
   lists the vocabularies.
 - Tooltips: `tooltip=` of `to_dot`, `render_svg` and `render_html` adds
   attributes to the tooltips of nodes and edges; an edge shows its
-  description and its `locator`.
+  `locator`.
 - The exploration page (`render_html`) gains `attributes`, `theme`,
   `legend_values` and a `footer` image; tooltips on edges; formulas drawn
   from a MathML tree written as data (`math=`), built element by element
   from a closed list, never from markup; the matrix under the graph
   (`matrix=True`), coordinated with it; and groups by any node attribute
   (`group_by`).
-- Orthogonal edges (`splines="ortho"`) are laid out in a child process of
-  the same Python: when Graphviz stops in their routing, `render_svg`
-  raises a `RuntimeError` instead of stopping the caller's process.
+- Orthogonal edges (`splines="ortho"`, in any case) are laid out in a
+  child process of the same Python: when Graphviz stops in their routing,
+  or the child cannot start, `render_svg` raises a `RuntimeError` instead
+  of stopping the caller's process.
 - `docs/security-and-compliance.md`: how protee runs, is developed and
   published, what it ships and under which licences, the regulatory
   landmarks, the known limits and a checklist, for those who assess its
@@ -66,7 +68,10 @@ and this project adheres to
 - A kind of element other than `node` or `edge` in `styles` raises a
   `ValueError`; it was ignored.
 - `render_html` accepts any node attribute as `group_by`; an unknown one
-  raised a `ValueError`. Its tooltips keep their line breaks.
+  raised a `ValueError`.
+- A text that XML cannot carry (a control character, half of a surrogate
+  pair) in a label, a tooltip or a link raises a `ValueError` in `to_dot`:
+  the SVG would not open.
 - `protee.viz.CONTAINS` and `MEMBERS` name the nodes of the original
   document that a node stands for: the members of a group, and now the
   ends of contracted edges.
@@ -76,6 +81,17 @@ and this project adheres to
 - The text on a filled node is black or white, whichever contrasts more
   with the fill (WCAG 2): it was white on vermilion, below a ratio of
   4.5:1.
+- A node link written with a character reference (`javascript&#58;…`)
+  reached the SVG, where the reader decodes it into a script link: links
+  are checked as a browser reads them, and every `&` of a text is written
+  `&amp;` in the DOT text, so that the SVG shows the text as given.
+- A link to another host without a scheme (`//host`, `\\host`) is
+  dropped: a page or figure opened from a file read it as `file://host`.
+- The tooltips of the exploration page keep their line breaks.
+- `collapse`: the values `true` and `1` make two groups.
+- The identifiers of a legend drawn below, and the gradients that Graphviz
+  numbers, are rewritten in the attributes of the SVG only, never in a
+  label.
 
 ## [0.1.0] - 2026-11-22
 

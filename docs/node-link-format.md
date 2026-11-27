@@ -80,12 +80,12 @@ without protee.
 | edge | `locator` | no | a text: the place in the target that the edge points to, such as an equation number, an article or a clause (`"11"` on an edge from an equation to the article it comes from) |
 | anywhere | other keys | allowed | a consumer keeps them and may ignore them (protee writes its attribute columns there) |
 
-**Keys of a producer.** The names without a prefix belong to the format.
-A key that only its producer reads is best prefixed with the producer's
-prefix (`example:rank`), as protee prefixes the marks it adds
-(`protee:display`); it may serve `order_by` or a style all the same. The
-format never adopts, with another meaning, a name that a producer already
-publishes.
+**Keys of a producer.** The format may adopt new keys without a prefix,
+in optional additions. A key that only its producer reads is best
+prefixed with the producer's prefix (`example:rank`), as protee prefixes
+the marks it adds (`protee:display`), so that it never meets such a key;
+it may serve `order_by` or a style all the same. The format never adopts,
+with another meaning, a name that a producer already publishes.
 
 **Order.** The order of the nodes and of the edges is significant. A
 producer keeps it stable, for reproducible figures.

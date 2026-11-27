@@ -94,6 +94,16 @@ def legend_nodes(dot: str) -> dict[str, dict[str, str]]:
     }
 
 
+def hrefs(svg: str) -> list[str]:
+    """The links of an SVG, as a reader decodes them (Graphviz also writes
+    an ``a`` element without link around a tooltip)."""
+    return [
+        href
+        for a in ET.fromstring(svg).iter(f"{SVG}a")
+        if (href := a.get(f"{XLINK}href")) is not None
+    ]
+
+
 def texts(svg: str) -> list[str]:
     return [
         "".join(t.itertext()).strip() for t in ET.fromstring(svg).iter(f"{SVG}text")
@@ -699,3 +709,109 @@ def test_the_matrix_escapes_its_texts_and_needs_no_graphviz(
     doc["nodes"][0]["rank"] = "first"
     with pytest.raises(TypeError, match="is not a number"):
         viz.render_matrix_svg(doc, order_by="rank")
+
+
+# Findings of the review of the lot ----------------------------------------
+
+
+def test_any_spelling_of_ortho_is_drawn_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Graphviz reads the value without regard to case: the child must run.
+    monkeypatch.setattr(viz, "_CHILD", "import os; os._exit(3)")
+    for spelling in ("ORTHO", " Ortho "):
+        with pytest.raises(RuntimeError, match=re.escape("exit code 3)")):
+            viz.render_svg(
+                load(KINDS), attributes={"graph": {"splines": spelling}}, legend=None
+            )
+
+
+def test_a_child_that_cannot_start_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "executable", str(Path(__file__).parent / "no-python"))
+    with pytest.raises(RuntimeError, match="cannot start"):
+        viz.render_svg(load(KINDS), attributes=ORTHO, legend=None)
+
+
+def test_the_contrast_of_the_tests_follows_wcag() -> None:
+    # Published ratios: black on white, and the grey #767676 on white.
+    assert contrast("#000000", "#FFFFFF") == pytest.approx(21)
+    assert contrast("#767676", "#FFFFFF") == pytest.approx(4.54, abs=0.01)
+
+
+def test_a_legend_alone_takes_a_theme() -> None:
+    svg = viz.render_legend_svg(load(KINDS), theme=viz.DARK)
+    fills = {
+        p.get("fill", "").upper() for p in ET.fromstring(svg).iter(f"{SVG}polygon")
+    }
+    assert viz.DARK.background.upper() in fills
+
+
+def test_a_footer_may_be_any_bytes_like_object() -> None:
+    kinds = load(KINDS)
+    expected = viz.render_svg(kinds, legend="below", footer=LOGO)
+    assert viz.render_svg(kinds, legend="below", footer=bytearray(LOGO)) == expected
+    assert viz.render_svg(kinds, legend="below", footer=memoryview(LOGO)) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript&#58;alert(1)",
+        "&#106;avascript:alert(1)",
+        "javascript&#x3a;alert(1)",
+        "//attacker.example/share",
+        "\\\\attacker.example\\share",
+        "/\\attacker.example",
+    ],
+)
+def test_a_link_read_as_a_script_or_another_host_is_dropped(url: str) -> None:
+    doc = document([{"id": "a", "url": url}], [])
+    assert hrefs(viz.render_svg(doc, legend=None)) == []
+
+
+def test_the_texts_drawn_are_the_texts_given() -> None:
+    labels = ["a & b", "&lt;b&gt;", "x&#58;y", "see url(#l_7)"]
+    doc = document([{"id": k, "label": label} for k, label in enumerate(labels)], [])
+    shown = texts(viz.render_svg(doc, legend=None))
+    for label in labels:
+        assert label in shown
+    query = "https://example.org/?a=1&b=2"
+    doc = document([{"id": "q", "url": query}], [])
+    assert hrefs(viz.render_svg(doc, legend=None)) == [query]
+
+
+def test_a_legend_below_keeps_its_texts() -> None:
+    doc = document(
+        [{"id": "a", "type": "x:k"}],
+        [],
+        {"type": [{"id": "x:k", "on": "node", "label": "see url(#top)"}]},
+    )
+    assert "see url(#top)" in texts(viz.render_svg(doc, legend="below"))
+
+
+@pytest.mark.parametrize("label", ["x\x01y", "x\ud800"])
+def test_a_text_that_svg_cannot_carry_is_refused(label: str) -> None:
+    with pytest.raises(ValueError, match="SVG cannot carry"):
+        viz.to_dot(document([{"id": "a", "label": label}], []))
+
+
+def test_true_and_one_make_two_groups() -> None:
+    doc = document(
+        [
+            {"id": 1, "g": True},
+            {"id": 2, "g": True},
+            {"id": 3, "g": 1},
+            {"id": 4, "g": 1},
+        ],
+        [],
+    )
+    collapsed = viz.collapse(doc, by="g")
+    assert sorted(n["label"] for n in collapsed["nodes"]) == ["1", "True"]
+
+
+def test_contract_keeps_the_vocabulary_of_the_iri_it_takes() -> None:
+    doc = document(
+        [{"id": "a", "iri": "http://qudt.org/x"}, {"id": "b"}],
+        [{"source": "a", "target": "b", "type": "s"}],
+    )
+    out = viz.contract(viz.mark_vocabularies(doc), edge_type="s")
+    assert out["nodes"][0]["iri"] == "http://qudt.org/x"
+    assert out["nodes"][0][viz.VOCABULARY] == "qudt.org"

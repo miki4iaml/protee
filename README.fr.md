@@ -36,7 +36,7 @@ anglais), et se dessinent par `protee.viz` : sélection, groupes,
 boucles, contraction, couleur par vocabulaire et vue en matrice
 (diagramme N²) sans dépendance ; figures SVG, claires ou sombres, avec
 leur légende et un pied de figure, et page à explorer hors ligne
-(infobulles, formules, matrice à côté du graphe), avec l'extra
+(infobulles, formules, matrice sous le graphe), avec l'extra
 facultatif `viz` (voir la [galerie](docs/gallery/README.md)).
 
 ## Pourquoi protee
