@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Iterable
+from fractions import Fraction
 
 import networkx as nx
 import pytest
@@ -183,7 +185,8 @@ def test_several_sources_target_counters_and_errors() -> None:
 def test_weights_that_could_overflow_are_refused() -> None:
     # Finite weights whose sums overflow to inf would hide a reachable
     # node: their absolute sum must be finite, and an int beyond the float
-    # range is refused with a ValueError, not an OverflowError.
+    # range, among floats, is refused with a ValueError, not an
+    # OverflowError.
     g = Digraph.from_arcs(3, [(0, 1), (1, 2)])
     for run in (
         lambda w: dijkstra(g, w, 0),
@@ -192,8 +195,10 @@ def test_weights_that_could_overflow_are_refused() -> None:
     ):
         with pytest.raises(ValueError, match="sum beyond the float range"):
             run([1e308, 1e308])
+        with pytest.raises(ValueError, match="sum beyond the float range"):
+            run([10**400, 1.0])
         with pytest.raises(ValueError, match="arc 0 is beyond the float range"):
-            run([10**400, 1])
+            run([Fraction(10**400), 1])
     assert dijkstra(g, [10**300, 10**300], 0).distance == (0, 10**300, 2 * 10**300)
     assert dijkstra(g, [8e307, 8e307], 0).distance[2] == 1.6e308
     # On its way to a negative cycle, Bellman-Ford sums walks of up to
@@ -205,6 +210,39 @@ def test_weights_that_could_overflow_are_refused() -> None:
     found = bellman_ford(cycle, [-1e300, 0.0], 0)
     assert found.status is Status.UNBOUNDED
     assert found.certificate == NegativeCycle((0, 1), -1e300)
+
+
+def test_int_weights_are_exact_and_excluded_arcs_do_not_count() -> None:
+    # Python ints sum exactly, whatever their size: no sum overflows.
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    assert dijkstra(g, [10**308, 10**308, 3], 0).distance == (0, 10**308, 3)
+    line = Digraph.from_arcs(3, [(0, 1), (1, 2)])
+    huge = 10**400
+    assert dijkstra(line, [10**308] * 2, 0).distance == (0, 10**308, 2 * 10**308)
+    assert dijkstra(line, [huge, 1], 0).distance == (0, huge, huge + 1)
+    vectors = [(0, huge), (1, huge)]
+    assert lexicographic_dijkstra(line, vectors, 0).distance[2] == (1, 2 * huge)
+    assert bellman_ford(line, [huge, -1], 0).distance == (0, huge, huge - 1)
+    cycle = Digraph.from_arcs(20, [(0, 1), (1, 0)])
+    found = bellman_ford(cycle, [-huge, 0], 0)
+    assert found.status is Status.UNBOUNDED
+    assert found.certificate == NegativeCycle((0, 1), -huge)
+    # Beyond 2**53 too, where a float would round 2**53 + 1 to 2**53 and
+    # miss the shorter path through node 2.
+    detour = Digraph.from_arcs(3, [(0, 1), (0, 2), (2, 1)])
+    assert bellman_ford(detour, [2**53 + 1, 2**53, 0], 0).distance[1] == 2**53
+    # A positive tolerance compares the distances as floats.
+    with pytest.raises(ValueError, match="too large for bellman_ford"):
+        bellman_ford(line, [huge, -1], 0, tolerance=0.5)
+    # An excluded arc never enters a sum along a path.
+    top = sys.float_info.max
+    barred = dijkstra(g, [top, top, 1.0], 0, excluded={0, 1})
+    assert barred.distance == (0, math.inf, 1.0)
+    pairs = [(0, top), (0, top), (0, 1.0)]
+    tree = lexicographic_dijkstra(g, pairs, 0, excluded={0, 1})
+    assert tree.distance == ((0, 0), None, (0, 1.0))
+    with pytest.raises(ValueError, match="sum beyond the float range"):
+        dijkstra(g, [top, top, 1.0], 0, excluded={2})
 
 
 @pytest.mark.parametrize("tolerance", [-1.0, -1e-12, math.nan, math.inf])

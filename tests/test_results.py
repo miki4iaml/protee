@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import decimal
 import hashlib
 import pickle
 import struct
 import subprocess
 import sys
+import threading
+from array import array
+from collections import deque
 from decimal import Decimal
 from fractions import Fraction
 
@@ -231,9 +235,9 @@ def test_numbers_are_hashed_by_their_little_endian_bytes(
 
 
 def test_fingerprint_without_numpy(monkeypatch: pytest.MonkeyPatch) -> None:
-    with_numpy = _fingerprint.fingerprint([1.0, 2], {"a": (3,)})
+    with_numpy = _fingerprint.fingerprint([1.0, 2], {"a": (3,)}, ["b", True])
     monkeypatch.delitem(sys.modules, "numpy", raising=False)
-    assert _fingerprint.fingerprint([1.0, 2], {"a": (3,)}) == with_numpy
+    assert _fingerprint.fingerprint([1.0, 2], {"a": (3,)}, ["b", True]) == with_numpy
     assert _fingerprint.freeze({"a": [1]}) == {"a": (1,)}
     with pytest.raises(TypeError, match="no canonical form"):
         _fingerprint.fingerprint(object())
@@ -267,7 +271,6 @@ def test_numpy_scalars_and_exact_numbers_have_canonical_forms() -> None:
     assert canonical(np.float32(1.5)) == {"float": "1.5"}
     # Fractions and decimals: exact, tagged forms.
     assert canonical(Fraction(2, 4)) == {"fraction": "1/2"}
-    assert canonical(Decimal("0.10")) == {"decimal": "0.10"}
     assert len({fp(Fraction(1, 2)), fp(Decimal("0.5")), fp(0.5), fp("1/2")}) == 4
     halves = [Fraction(1, 2), Fraction(1, 3), Fraction(2)]
     exact = paths.dijkstra(g, halves, 0)  # type: ignore[arg-type]
@@ -281,6 +284,100 @@ def test_numpy_scalars_and_exact_numbers_have_canonical_forms() -> None:
     assert len(tenths.inputs) == 64
 
 
+@pytest.mark.parametrize(
+    ("dtype", "values"),
+    [
+        (np.int64, [1, 2, 5]),
+        (np.int32, [1, 2, 5]),
+        (np.float32, [0.5, 1.25, 4.0]),
+        (np.float64, [0.5, 1.25, 4.0]),
+    ],
+)
+def test_numpy_weights_fingerprint_like_the_same_python_numbers(
+    dtype: type[np.generic], values: list[int] | list[float]
+) -> None:
+    # A path function keeps tuple(weight): from an array, NumPy scalars,
+    # packed by their bytes like the Python numbers of the same value.
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    weights = np.array(values, dtype=dtype)
+    from_array = paths.dijkstra(g, weights, 0)  # type: ignore[arg-type]
+    assert from_array.inputs == paths.dijkstra(g, values, 0).inputs
+    packed = _fingerprint._canonical(tuple(weights))
+    assert packed == _fingerprint._canonical(values)
+    assert set(packed) == {"i8" if isinstance(values[0], int) else "f8"}
+
+
+def test_numpy_numbers_count_as_python_numbers() -> None:
+    canonical = _fingerprint._canonical
+    fp = _fingerprint.fingerprint
+    # A float32 is the double of the same value, not its decimal digits.
+    tenth = np.float32(0.1)
+    assert canonical(tenth) == {"float": repr(float(tenth))}
+    assert fp([tenth]) == fp([float(tenth)]) != fp([0.1])
+    # NumPy's and Python's numbers of one kind, mixed, are packed alike.
+    assert canonical([np.int64(1), 2, np.uint8(3)]) == canonical([1, 2, 3])
+    halves = [np.float16(0.5), 1.5, np.float32(2.0)]
+    assert canonical(halves) == canonical([0.5, 1.5, 2.0])
+    # Ints and floats stay apart; a boolean is not an int.
+    assert fp([np.int64(1), 2.0]) == fp([1, 2.0])
+    assert canonical(np.bool_(True)) is True
+    assert fp([np.bool_(True), np.bool_(False)]) == fp([True, False]) != fp([1, 0])
+    # Beyond 64 bits, item by item, like the Python int.
+    assert canonical([np.uint64(2**64 - 1)]) == [2**64 - 1] == canonical([2**64 - 1])
+
+
+def test_numpy_dates_and_durations_are_tagged_with_their_dtype() -> None:
+    canonical = _fingerprint._canonical
+    fp = _fingerprint.fingerprint
+    instant = np.datetime64("2020-01-01T00:00:00.000000000")
+    assert canonical(instant) == {
+        "numpy": "datetime64[ns]",
+        "value": 1577836800000000000,
+    }
+    assert fp(instant) != fp(1577836800000000000)
+    assert fp(np.timedelta64(5, "ns")) not in {fp(5), fp(np.datetime64(5, "ns"))}
+    durations = [np.timedelta64(5, "ns"), np.timedelta64(6, "ns")]
+    assert canonical(durations) == [canonical(d) for d in durations]
+    # In every unit, the unit included: 5 s and 5000 ms differ.
+    day = canonical(np.datetime64("2020-01-01"))
+    assert day == {"numpy": "datetime64[D]", "value": 18262}
+    assert fp(np.timedelta64(5, "s")) != fp(np.timedelta64(5000, "ms"))
+    # Other NumPy scalars have no Python number: an error names them.
+    for x in (np.longdouble(1), np.complex128(1), np.bytes_(b"a")):
+        name = type(x).__name__
+        with pytest.raises(TypeError, match=f"no canonical form for numpy.{name}:"):
+            fp(x)
+
+
+def test_decimal_fingerprint_ignores_the_decimal_context() -> None:
+    # str() of a decimal follows the context of its thread (an exponent
+    # written E or e); its sign, digits and exponent do not.
+    canonical = _fingerprint._canonical
+    fp = _fingerprint.fingerprint
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    weights = [Decimal("1E+2"), Decimal("1E-7"), Decimal(3)]
+
+    def fingerprints() -> tuple[str, str]:
+        shortest = paths.dijkstra(g, weights, 0)  # type: ignore[arg-type]
+        return fp(Decimal("1E+2")), shortest.inputs
+
+    here = fingerprints()
+    there: list[tuple[str, str]] = []
+
+    def in_another_context() -> None:
+        decimal.getcontext().capitals = 0
+        there.append(fingerprints())
+
+    thread = threading.Thread(target=in_another_context)
+    thread.start()
+    thread.join()
+    assert there == [here]
+    # Trailing zeros, signed zeros and special values stay apart.
+    assert canonical(Decimal("0.10")) == {"decimal": [0, "10", -2]}
+    specials = ["0.1", "0.10", "0", "-0", "Infinity", "-Infinity", "NaN", "sNaN"]
+    assert len({fp(Decimal(s)) for s in specials}) == len(specials)
+
+
 def test_inputs_without_canonical_form_name_their_type() -> None:
     # The computation accepts any hashable key; its fingerprint cannot.
     g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
@@ -291,3 +388,9 @@ def test_inputs_without_canonical_form_name_their_type() -> None:
     # A NumPy scalar without a Python counterpart: an error, not a recursion.
     with pytest.raises(TypeError, match="no canonical form for numpy.longdouble"):
         _fingerprint.fingerprint(np.longdouble(1))
+    # Lists and tuples are supported, not every sequence.
+    for sequence in (range(3), deque([1, 2]), array("d", [1.0])):
+        name = type(sequence).__name__
+        with pytest.raises(TypeError, match=f"for {name}: .* lists and tuples") as e:
+            _fingerprint.fingerprint(sequence)
+        assert "sequences" not in str(e.value)

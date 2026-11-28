@@ -43,8 +43,12 @@ only. Each change comes with its migration below.
   Equal fingerprints mean the same question on the same inputs (same
   status and, for an exact method, the same optimal value), not always the
   same solution: a warm-started problem may return another optimum, and
-  the callables of conflicts and relaxations are not fingerprinted.
+  neither the callables of conflicts and relaxations nor the decimal
+  context of decimal weights are fingerprinted.
   Conventions in [docs/results.md](docs/results.md).
+- `protee.constraints.fingerprint` reads fractions and decimals, each
+  exactly: a decimal by its sign, digits and exponent, whatever the
+  decimal context of the thread.
 - `FlowResult` is built on `ResultCore`: it gains `guarantee`,
   `parameters` (the effective options, defaults included) and `inputs`.
   `MethodInfo` gains `problem` and `guarantee`.
@@ -136,10 +140,28 @@ only. Each change comes with its migration below.
   unknown flow method before any computation.
 - The fingerprint of the inputs of a result also covers its type: a method
   name may serve several problems.
-- A sequence of floats only (NumPy's `float64` included), or of 64-bit
-  integers only, is fingerprinted by its bytes in little-endian order: the
-  first fingerprint of a Dijkstra on 577 019 arcs costs about 13 % of the
-  computation, instead of more than the computation itself.
+- A list or tuple of floats only, or of 64-bit integers only, NumPy's
+  included, is fingerprinted by its bytes in little-endian order: the first
+  fingerprint of a Dijkstra on 577 019 arcs costs about 13 % of the
+  computation, instead of more than the computation itself. The
+  `TypeError` of an input without a canonical form lists the supported
+  types (lists and tuples, not other sequences).
+- The shortest path and route functions refuse, with a `ValueError`,
+  weights whose absolute sum over the arcs not excluded is beyond the float
+  range when one of them is not an int: a float sum along a path could
+  overflow. `waypoint_route` refuses them when `k + 1` times that sum is
+  beyond it, and `bellman_ford` when `n m` times the largest absolute
+  weight is (the walks it sums on the way to a negative cycle), also for
+  int weights with a positive `tolerance`, which compares the distances as
+  floats. Python int weights otherwise sum and compare exactly, whatever
+  their size.
+- `FlowProblem` refuses, with a `ValueError`, float costs whose absolute
+  sum is beyond the float range, and an int cost beyond it among float
+  costs. Int costs alone are exact, whatever their size, in every method
+  and in `verify_flow`.
+- The cost of the route of `RouteSearch.solve` adds the weights of its
+  arcs from left to right, as the search does, instead of their
+  `math.fsum`: it is the distance of the target.
 - `bellman_ford` always returns `ShortestPaths`: when a negative cycle is
   reachable from the sources, the status is `unbounded`, the certificate is
   the cycle, the nodes that negative cycles reach are at `-inf` and the
@@ -192,36 +214,43 @@ only. Each change comes with its migration below.
 
 ### Fixed
 
-- The shortest path and route functions refuse, with a `ValueError`,
-  weights whose absolute sum is beyond the float range, so that no sum
-  along a path overflows; `waypoint_route` also refuses them when `k + 1`
-  times that sum is beyond it, and `bellman_ford` when `n m` times the
-  largest absolute weight is (the walks it sums on the way to a negative
-  cycle). Such sums used to overflow to `inf`: a reachable node was
-  reported out of reach, with a false `SeparatingCut`, free-order
-  waypoints raised `StopIteration`, and `bellman_ford` could return
-  `optimal` with a negative cycle.
-- An int weight or cost beyond the float range raises a `ValueError`
-  instead of an `OverflowError` (shortest paths, routes, `FlowProblem`);
-  `FlowProblem` also refuses costs whose absolute sum is beyond the float
-  range.
+- Finite float weights whose sum along a path overflowed to `inf`:
+  `dijkstra` reported a reachable node out of reach, `k_shortest_paths`,
+  `replacement_paths` and `waypoint_route` missed routes that exist, and
+  `bellman_ford` could miss a negative cycle. Such weights are refused
+  (see Changed).
+- An int weight or cost beyond the float range raised an `OverflowError`
+  (shortest paths, routes, `FlowProblem`): ints now sum exactly, whatever
+  their size, and a `ValueError` refuses one only where floats are summed
+  or compared (see Changed).
+- `bellman_ford` compared int distances as floats, rounded beyond `2**53`,
+  and could miss a shorter path; `verify_flow` converted int costs to
+  floats, and could declare optimal a flow that a cycle improves. Both
+  are exact on ints.
 - `bellman_ford` refuses a negative or non-finite `tolerance`, which gave
   a false negative cycle (an arc `-1`, of weight zero) or lost reachable
   nodes.
-- The fingerprint of a NumPy `float64` no longer depends on NumPy's print
-  options, and NumPy weights fingerprint like the list of the same
-  floats; fractions and decimals have exact forms; `numpy.longdouble`
-  raises a `TypeError` instead of a `RecursionError`, and every input
-  without a canonical form (a `bytes` key of `replacement_paths`, for
-  instance) gets a `TypeError` that names its type.
+- `k_shortest_paths` could list a route before a cheaper one: the first
+  cost added the weights from left to right, as Dijkstra does, the next
+  ones with `sum()`, which compensates the rounding of floats since Python
+  3.12. Every route cost now adds its weights from left to right, and the
+  costs do not decrease. `WaypointRoute.cost` adds its legs from left to
+  right too, as the free order compares them.
+- Fingerprints: a NumPy `float64` depended on NumPy's print options, and
+  a list of them did not fingerprint like the list of the same floats;
+  `numpy.longdouble` raised a `RecursionError` instead of a `TypeError`;
+  a NumPy `datetime64` or `timedelta64` in nanoseconds fingerprinted like
+  the int of its count, and in other units raised a `TypeError`. Dates and
+  durations now count by their dtype, unit included, and their count of
+  units.
 - Docstrings: the tie rules of `k_shortest_paths` and of `waypoint_route`
   in free order are stated as implemented (the order of the routes does
   not change); `ShortestPaths` says that with `bellman_ford` a source can
   get a negative distance and a predecessor.
-- The registry complexities of successive shortest paths (minimum cost
-  flow and disjoint paths) and of Yen's k shortest paths state the bounds
-  of the binary heap the implementation uses, `O((n + m) log n)` per
-  Dijkstra run, instead of those of a Fibonacci heap.
+- The registry complexity of successive shortest paths (minimum cost
+  flow) states the bound of the binary heap the implementation uses,
+  `O((n + m) log n)` per Dijkstra run, instead of that of a Fibonacci
+  heap.
 
 ## [0.2.0] - 2026-11-28
 
