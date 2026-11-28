@@ -44,32 +44,67 @@ and this project adheres to
   such an input out, under every policy.
 - `OnUnknown`, the policy of a derivation for the inputs without a value,
   stated without default (`UnknownRule`): `propagate` (the value is to be
-  set; only the last label of a `strictest` order decides despite unknown
-  inputs), `known_only` (with its justification; refused for `sum`, `mean`
-  and `threshold_count`, which it would shorten) and `assume` (a value
-  chosen with its justification, recorded with the members it replaces).
+  set; only the last label of a `strictest` order, or the highest rank of
+  a classification, decides despite unknown inputs), `known_only` (with
+  its justification; refused for `sum`, `mean`, `threshold_count` and
+  `column_length`, which it would shorten, and for `select_by_class`) and
+  `assume` (a value chosen with its justification, recorded with the
+  members it replaces).
 - The trace of a derived value: `Origin.DERIVED`, and `Value.derivation`,
   a `Derivation` that holds the rule, the members that fix the value,
   every input with its source and state (`DerivationInput`), the
   assumptions (`Assumption`), the members left out (`LeftOut`,
   `LeftOutCause`), the unknown inputs and, for an envelope (`max`, `min`,
-  `strictest`) to be set, the extreme of the known members as `bound`;
+  `strictest`) or a classification to be set, the extreme of the known
+  inputs as `bound`;
   `Conversion` records the conversion of an input into the unit of its
   parameter. A requirement whose derived value is to be set names the
   members without a value.
+- `classify_by_thresholds`, a derivation of the registry: the class of a
+  subject from thresholds on its characteristics (`Characteristic`), each
+  taken from a value set of a text, with the comparison that crosses them
+  declared without default (`above` keeps a value at the threshold in the
+  lower class, `at_least` moves it up; `below` and `at_most` for a
+  smaller value that is stronger). The rank of a characteristic is one plus
+  the thresholds it crosses, exactly; the strongest characteristic decides,
+  and the trace cites it with the thresholds and their sources. Under
+  `propagate`, a characteristic at the highest rank decides despite unknown
+  ones; otherwise the class is to be set, its derivation keeping the class
+  of the known characteristics as `bound`. It reads a value set, resolved
+  values or derived values, such as the envelope of a group.
+- `select_by_class`, a derivation of the registry: the value a class
+  selects in a table, with the class and the source of the value in its
+  trace. A class without a value of its own (`NotApplicable`, with its
+  reason) gives a value not applicable, never an infinite limit; a class
+  absent from the table is refused, and `known_only` too.
+- `column_length`, a derivation of the registry: the length a group
+  occupies in a column, level by level, from the lengths of its members
+  (`geometric`) or their number over a density (`density`), plus the gaps
+  between its units (`Gap`), counted between units or one per unit
+  (`GapCount`, without default), in distance or in time at a pace. The
+  values of a group are read on it, else on its nearest ancestor, else in
+  a context; a member whose length is not applicable is out of the
+  column. `known_only` is refused: it would shorten the column.
 - The optional extra `units` (pint 0.26 or later, imported on first use):
-  a derivation converts an input in another unit than its parameter (a
-  value of a member, the value assumed, a threshold) into the unit of the
-  parameter, exactly (a factor such as 5/18 from km/h to m/s), and records
-  each `Conversion`; a converted value is a float, rounded once. A unit
-  pint does not know, two units of different dimensions, a unit with an
-  offset (`degC`) and a calendar convention (a year or a month, which
-  pint counts as 365.25 days and a twelfth of it) are refused. Without the
-  extra, an input in another unit is refused with an `ImportError` that
-  names `protee[units]`; a value in the unit of its parameter never needs
-  it. `readable` shows a value as a person reads it: a duration in days,
-  hours and minutes (`"1 h 30 min"`), a length in km or m (`"12.4 km"`),
-  `"no limit"`, `"to be set"`, `"not applicable"`;
+  a derivation converts an input in another unit than the one it must
+  have into that unit, exactly (a factor such as 5/18 from km/h to m/s),
+  and records each `Conversion`; a converted value is a float, rounded
+  once, and comparisons stay exact. `aggregate` converts the values of
+  the members, the value assumed and a threshold into the unit of their
+  parameter; `classify_by_thresholds` converts each threshold into the
+  unit of its characteristic (72 t is the 2nd category against a
+  threshold of 72 000 kg); `select_by_class` converts the value selected
+  into the unit of the output; `column_length` converts the lengths and
+  the gaps in distance into the unit of the column, a density into its
+  inverse, and a gap in time at a pace into a distance (a gap in min at a
+  pace in km/h). A unit pint does not know, two units of different
+  dimensions, a unit with an offset (`degC`) and a calendar convention (a
+  year or a month, which pint counts as 365.25 days and a twelfth of it)
+  are refused. Without the extra, an input in another unit is refused
+  with an `ImportError` that names `protee[units]`; a value in the unit
+  it must have never needs it. `readable` shows a value as a person reads
+  it: a duration in days, hours and minutes (`"1 h 30 min"`), a length in
+  km or m (`"12.4 km"`), `"no limit"`, `"to be set"`, `"not applicable"`;
   `RequirementRow.to_dict(readable=True)` adds it to each value as
   `"shown"`, and the default output does not depend on the extras
   installed.

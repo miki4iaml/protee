@@ -10,20 +10,26 @@ client), never a dependency of a package. Its pattern turns it into a
 
 The phases come in a fixed order:
 
-0. **derive** (:func:`aggregate`): the values on the side of the subject,
-   from its description. A :class:`Member` is described by its sheets (value
-   sets of rulebooks of kind ``description``), a :class:`Group` holds
-   members or groups with their counts; a derivation of the closed registry
-   (:func:`derivations`) gives a value per parameter, each with its
-   :class:`Derivation`: the rule, the members that fix it and the source of
-   every input. A value of a member is known, unknown, assumed (by the
-   derivation, :class:`OnUnknown`) or not applicable (declared, with its
-   reason); the caller states the policy for the unknown, without default,
-   and the :class:`Derived` values count their unknowns. With the optional
-   extra ``units`` (pint), an input in another unit than its parameter is
-   converted into it, exactly, and each :class:`Conversion` is recorded;
-   without the extra, it is refused. A description produces no constraint:
-   its values enter :func:`resolve_values` like any other;
+0. **derive** (:func:`aggregate`, :func:`classify_by_thresholds`,
+   :func:`select_by_class`, :func:`column_length`): the values on the side
+   of the subject, from its description. A :class:`Member` is described by
+   its sheets (value sets of rulebooks of kind ``description``), a
+   :class:`Group` holds members or groups with their counts; a derivation
+   of the closed registry (:func:`derivations`) gives a value per
+   parameter, each with its :class:`Derivation`: the rule, the members (or
+   characteristics, or class) that fix it and the source of every input.
+   A value is known, unknown, assumed (by the derivation,
+   :class:`OnUnknown`) or not applicable (declared, with its reason); the
+   caller states the policy for the unknown, without default, and the
+   :class:`Derived` values count their unknowns. Derivations chain: the
+   envelope of a group is classified by thresholds taken from a text
+   (:class:`Characteristic`), and its class selects values in a table
+   (:class:`NotApplicable` for a class without a value of its own). With
+   the optional extra ``units`` (pint), an input in another unit than the
+   one it must have is converted into it, exactly, and each
+   :class:`Conversion` is recorded; without the extra, it is refused. A
+   description produces no constraint: its values enter
+   :func:`resolve_values` like any other;
 1. **evaluate** (:func:`evaluate`): one :class:`Effect` per requirement,
    from the arc attributes (:class:`ArcData`) and the values retained by
    precedence (:func:`resolve_values`); an arc without data gets the
@@ -64,6 +70,13 @@ Provisional API (until version 1.0).
 from __future__ import annotations
 
 from protee.constraints._aggregate import AggregateKind, Aggregation, aggregate
+from protee.constraints._classify import (
+    Characteristic,
+    NotApplicable,
+    classify_by_thresholds,
+    select_by_class,
+)
+from protee.constraints._column import Gap, GapCount, column_length
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData, Attribute
 from protee.constraints._derivations import DerivationInfo, derivations
@@ -133,6 +146,7 @@ __all__ = [
     "ArcData",
     "Assumption",
     "Attribute",
+    "Characteristic",
     "Comparison",
     "ComputationView",
     "Conflict",
@@ -146,6 +160,8 @@ __all__ = [
     "EffectKind",
     "Family",
     "FlowSearch",
+    "Gap",
+    "GapCount",
     "Group",
     "Impact",
     "InfeasibleSubset",
@@ -154,6 +170,7 @@ __all__ = [
     "LeftOut",
     "LeftOutCause",
     "Member",
+    "NotApplicable",
     "OnUnknown",
     "Origin",
     "Parameter",
@@ -188,6 +205,8 @@ __all__ = [
     "ZeroCount",
     "aggregate",
     "check_inputs",
+    "classify_by_thresholds",
+    "column_length",
     "compose",
     "derivations",
     "evaluate",
@@ -201,6 +220,7 @@ __all__ = [
     "relax_by_tiers",
     "requirement_table",
     "resolve_values",
+    "select_by_class",
     "verify_flow",
     "verify_route",
 ]

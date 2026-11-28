@@ -870,7 +870,9 @@ class DerivationInput:
     role : str
         What the input is to the rule: ``"member"`` (a value read on a
         member), ``"count"`` (the count of a member, for a rule that reads
-        no value), ``"threshold"``...
+        no value), ``"threshold"``, ``"characteristic"``, ``"class"``,
+        ``"chosen"`` (the value a class selects), ``"gap"``, ``"density"``,
+        ``"pace"``.
     parameter : str
         Canonical name.
     holder : str or None
@@ -882,7 +884,8 @@ class DerivationInput:
         when nothing is read: the key is absent (``unknown``), or the input
         is a count (``known``).
     instances : int
-        The multiplicity of the holder in the flattened group.
+        The multiplicity of the holder in the flattened group; for a value
+        of a group, the instances of the groups it serves.
     """
 
     role: str
@@ -951,17 +954,19 @@ class Derivation:
     conversions : tuple of Conversion
         The inputs converted into the unit of their parameter.
     unknown : tuple of str
-        The holders of the inputs without a value, whatever the policy. A
-        known value whose ``unknown`` is not empty was decided despite them
-        (the strictest label of an order already reached); a value assumed
-        or computed on the known inputs only says so in ``assumptions`` and
-        ``left_out``.
+        The holders of the inputs without a value, whatever the policy (an
+        input given directly is named by its parameter). A known value
+        whose ``unknown`` is not empty was decided despite them (the
+        strictest label of an order, or the highest rank of a
+        classification, already reached); a value assumed or computed on
+        the known inputs only says so in ``assumptions`` and ``left_out``.
     bound : int, float or str, optional
         For a value to be set by an envelope (``max``, ``min``,
-        ``strictest``) of which some inputs are known: the extreme of the
-        known inputs, which the unknown value reaches at least (``max``:
-        the value is at least the bound; ``min``: at most; ``strictest``:
-        at least as strict).
+        ``strictest``) or a classification by thresholds of which some
+        inputs are known: the extreme of the known inputs, which the
+        unknown value reaches at least (``max``: the value is at least the
+        bound; ``min``: at most; ``strictest`` and a classification: at
+        least as strict).
     bound_fixed_by : tuple of str
         The inputs that fix the bound.
 

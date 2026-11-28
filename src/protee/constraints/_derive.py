@@ -34,6 +34,7 @@ from protee.constraints._model import (
     LeftOutCause,
     Origin,
     Parameter,
+    ResolvedValues,
     Value,
     ValueSet,
     ValueState,
@@ -54,11 +55,12 @@ class UnknownRule(StrEnum):
 
     - ``propagate``: the derived value is to be set, and cites the inputs
       without a value; only when the known inputs already decide (the
-      strictest label of an order reached) is it computed, and the trace
-      says so;
+      strictest label of an order, or the highest rank of a
+      classification, reached) is it computed, and the trace says so;
     - ``known_only``: computed on the known inputs, the others left out
       and counted, with a justification; refused for additive rules (a sum,
-      a mean, a count beyond a threshold), which it would shorten;
+      a mean, a count beyond a threshold, the length of a column), which it
+      would shorten, and for the selection by a single class;
     - ``assume``: each input without a value takes the value assumed for
       its parameter, a declared choice, and the trace says for which
       members.
@@ -389,6 +391,74 @@ def _vocabulary(parameters: Iterable[Parameter]) -> _Vocabulary:
     return _Vocabulary(FrozenMap(by_name), FrozenMap(_aliases(by_name.values())))
 
 
+# Values given directly ------------------------------------------------------
+
+#: The values a derivation reads directly, not on the members of a group:
+#: a value set, read through the vocabulary, or resolved or derived values,
+#: by canonical name already.
+type ValuesLike = ValueSet | ResolvedValues | Derived
+
+
+def _check_unknown(unknown: object) -> OnUnknown:
+    """The policy for the unknown, checked.
+
+    Raises
+    ------
+    TypeError
+        If ``unknown`` is not an :class:`OnUnknown` policy.
+    """
+    if not isinstance(unknown, OnUnknown):
+        raise TypeError(f"unknown must be an OnUnknown policy, got {unknown!r}")
+    return unknown
+
+
+def _named(
+    values: ValuesLike, vocabulary: _Vocabulary, what: str
+) -> Mapping[str, Value]:
+    """The values given directly to a derivation, by canonical name.
+
+    A value set is read through the vocabulary: a key is a canonical name,
+    or the alias its rulebook uses. Resolved values and derived values are
+    by canonical name already.
+
+    Raises
+    ------
+    ValueError
+        If a key of a value set is not in the vocabulary, or two keys name
+        the same parameter.
+    TypeError
+        If ``values`` is none of the three.
+    """
+    if isinstance(values, Derived):
+        return values.values.values
+    if isinstance(values, ResolvedValues):
+        return values.values
+    if isinstance(values, ValueSet):
+        where = f"{what}: value set {values.rulebook} ({values.edition})"
+        names = _by_name(
+            values, vocabulary.by_name, vocabulary.aliases, where, _DECLARE
+        )
+        return {name: value for name, (_, value) in names.items()}
+    raise TypeError(
+        f"{what} must be a ValueSet, ResolvedValues or Derived, got {values!r}"
+    )
+
+
+def _assumptions(
+    found: Iterable[tuple[str, Value, str, int]],
+) -> tuple[Assumption, ...]:
+    """One assumption per parameter, from ``(parameter, value, holder,
+    instances)``: the holders gathered, their instances summed."""
+    gathered: dict[str, tuple[Value, set[str], int]] = {}
+    for parameter, value, holder, instances in found:
+        _, holders, total = gathered.get(parameter, (value, set(), 0))
+        gathered[parameter] = (value, holders | {holder}, total + instances)
+    return tuple(
+        Assumption(parameter, value, tuple(holders), total)
+        for parameter, (value, holders, total) in sorted(gathered.items())
+    )
+
+
 def _member_values(member: Member, vocabulary: _Vocabulary) -> dict[str, Value]:
     """The values of a member by canonical parameter, from all its sheets.
 
@@ -562,6 +632,86 @@ def _read(
     what = f"member {holder!r}: {parameter.name!r}"
     in_unit, converted = _in_unit(value, parameter, holder, what)
     return _Reading(holder, instances, value.state, in_unit, converted)
+
+
+def _converts(unit: str | None, to_unit: str | None, what: str) -> None:
+    """Check that a value in ``unit`` converts into ``to_unit``, before any
+    value is read; equal units need nothing.
+
+    Raises
+    ------
+    ImportError
+        If the units differ and pint is not installed.
+    ValueError
+        If one of the units is missing, or the units do not convert.
+    """
+    if unit == to_unit:
+        return
+    if unit is None or to_unit is None:
+        raise ValueError(
+            f"{what} in {unit!r}, the parameter is in {to_unit!r}: only a value "
+            "with a unit converts, into a parameter with a unit"
+        )
+    _factor(unit, to_unit, what)
+
+
+def _read_given(
+    where: str,
+    name: str,
+    values: Mapping[str, Value],
+    target: Parameter,
+    *,
+    holder: str | None = None,
+    instances: int = 1,
+) -> _Reading:
+    """The value of ``target`` given directly, or on a group, converted
+    into the unit of ``target``, which is the unit the derivation needs
+    (that of a characteristic for a threshold, of the output for a value
+    selected, of the column for a gap).
+
+    ``where`` names the place in a message, ``name`` the input in the
+    trace; ``holder`` is the group the value was read on, ``None`` for a
+    value given directly.
+
+    Raises
+    ------
+    ImportError, ValueError, TypeError
+        As :func:`_in_unit`.
+    """
+    value = values.get(target.name)
+    if value is None:
+        return _Reading(name, instances, ValueState.UNKNOWN, None)
+    what = f"{where}: {target.name!r}"
+    in_unit, converted = _in_unit(value, target, holder, what)
+    return _Reading(name, instances, value.state, in_unit, converted)
+
+
+def _assume(
+    reading: _Reading, target: Parameter, policy: OnUnknown, where: str
+) -> _Reading:
+    """Under ``assume``, an input without a value takes the value assumed
+    for its parameter, converted into the unit of ``target``; any other
+    input is returned as is.
+
+    Raises
+    ------
+    ValueError
+        If no value is assumed for the parameter, or it does not convert.
+    ImportError
+        If the value assumed is in another unit and pint is not installed.
+    """
+    if reading.state is not ValueState.UNKNOWN or policy.rule is not UnknownRule.ASSUME:
+        return reading
+    name = target.name
+    value = policy.assumed.get(name)
+    if value is None:
+        raise ValueError(f"{where}: no value for {name!r} and no value assumed for it")
+    in_unit, converted = _in_unit(
+        value, target, None, f"the value assumed for {name!r}"
+    )
+    return _Reading(
+        reading.holder, reading.instances, ValueState.ASSUMED, in_unit, converted
+    )
 
 
 @dataclass(frozen=True, slots=True)

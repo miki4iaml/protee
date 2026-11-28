@@ -209,7 +209,10 @@ def test_derivation_is_canonical_and_checked() -> None:
     assert trace(conversions=(tonnes, metres)).conversions == (metres, tonnes)
     with pytest.raises(
         ValueError,
-        match=re.escape("unknown derivation 'nothing'; one of ['aggregate']"),
+        match=re.escape(
+            "unknown derivation 'nothing'; one of ['aggregate', "
+            "'classify_by_thresholds', 'select_by_class', 'column_length']"
+        ),
     ):
         trace(name="nothing")
     with pytest.raises(
