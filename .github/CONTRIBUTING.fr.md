@@ -244,11 +244,14 @@ que dans `pyproject.toml`, et lue par `importlib.metadata`. Suivre ces
   provenance du build, puis avec
   `--predicate-type https://cyclonedx.org/bom` pour le SBOM, que la
   première commande ne vérifie pas.
-- La version publiée s'installe dans un environnement isolé, avec son
-  extra, sous la plus basse et la plus haute version de Python prises en
-  charge : `uv run --isolated --no-project --python 3.12 --with
-  "protee[viz]==x.y.z" python -c "import protee.viz"`, puis de même avec
-  `3.14`.
+- La version publiée s'installe dans un environnement isolé, avec ses
+  extras, sous la plus basse et la plus haute version de Python prises en
+  charge : `uv run --isolated --no-project --refresh-package protee
+  --python 3.12 --with "protee[viz,units]==x.y.z" python -c
+  "import protee.viz, pint"`, puis de même avec `3.14`.
+  `--refresh-package protee` fait relire l'index à uv : juste après une
+  publication, son cache peut garder l'ancien index, sans la nouvelle
+  version (constaté pour la 0.3.0).
 - Conclure d'après PyPI, pas d'après l'état qu'affiche GitHub : un job
   peut sembler encore en attente quand PyPI a déjà les fichiers.
 
