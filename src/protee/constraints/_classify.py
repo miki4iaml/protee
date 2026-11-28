@@ -220,7 +220,8 @@ def classify_by_thresholds(
         unknown when its value or one of its thresholds has no value.
         Under ``propagate``, an unknown characteristic leaves the class to
         be set, its derivation keeping the class of the known
-        characteristics as ``bound`` (the class is at least as strong);
+        characteristics as ``bound`` (the class is at least as strong),
+        which ``class_admissibility`` reads (see :func:`evaluate`);
         a known characteristic at the highest rank of the scale decides
         the class anyway, and the trace says so (``unknown`` filled).
         ``known_only`` classifies on the known characteristics, which may

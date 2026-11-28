@@ -55,6 +55,7 @@ PARAMETERS = (
     Parameter("occurrence_max"),
     Parameter("occurrence_min"),
     Parameter("unused_width", unit="m"),
+    Parameter("fording_depth", unit="m"),
 )
 
 
@@ -112,6 +113,15 @@ SPEED = requirement(
     attributes={"length": "length", "speed": "speed_limit"},
     scope=["road"],
 )
+#: A ford on a road: the depth of water the arc demands is at most the
+#: depth the vehicle can ford.
+CAPACITY = requirement(
+    "ADM-DEPTH",
+    "capacity_admissibility",
+    parameters={"capacity": "fording_depth"},
+    attributes={"demand": "water_depth"},
+    scope=["road"],
+)
 ROUTING = (MASS, HEIGHT, CLASS, ZONE, SPEED)
 VERDICT_REQUIREMENTS = (MASS, HEIGHT, CLASS, ZONE)
 
@@ -148,6 +158,14 @@ def resolved(
 ) -> ResolvedValues:
     reqs = requirement_set() if requirements is None else requirements
     return resolve_values([values(mass, height, load_class, speed)], reqs)
+
+
+def fording(depth: float | str | None) -> tuple[RequirementSet, ResolvedValues]:
+    """:data:`CAPACITY` alone, and the depth the vehicle can ford (``None``
+    to be set)."""
+    reqs = requirement_set((CAPACITY,))
+    vs = ValueSet("reg-a", "2006", {"fording_depth": value(depth, "m")})
+    return reqs, resolve_values([vs], reqs)
 
 
 @dataclass(frozen=True)

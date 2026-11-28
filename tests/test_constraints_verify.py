@@ -29,6 +29,7 @@ from constraints_cases import (
     ZONE,
     best_admissible,
     endpoints,
+    fording,
     occurrence,
     oracle_verdict,
     profile,
@@ -440,6 +441,39 @@ def test_check_inputs_says_what_can_be_proved() -> None:
     assert to_set["ADM-MASS"].missing_values == ("vehicle_mass",)
     with pytest.raises(ValueError, match="data for 5 arcs, graph of 1 arcs"):
         check_inputs(reqs, Digraph.from_arcs(2, [(0, 1)]), roads_data(), vals)
+
+
+def test_capacity_statuses_on_routes_and_in_the_inputs() -> None:
+    # A ford on each road: 0.5 m of water on a0, 0.9 m on a2, unknown on a4;
+    # the vehicle fords 0.75 m. The bridge and the underpass are out of
+    # scope.
+    reqs, vals = fording(0.75)
+    data = ArcData(
+        5,
+        (
+            Attribute.categorical(
+                "element", ["road", "bridge", "road", "underpass", "road"], LABELS
+            ),
+            Attribute.numeric("water_depth", [0.5, None, 0.9, None, None], unit="m"),
+        ),
+        element="element",
+    )
+    checks = {
+        route: verify_route(route, reqs, ROADS, data, vals)["ADM-DEPTH"]
+        for route in ((0, 1), (2, 3), (4,))
+    }
+    assert (checks[0, 1].status, checks[0, 1].reason) == (
+        S.APPLIED,
+        "verified on 1 arcs",
+    )
+    assert (checks[2, 3].status, checks[2, 3].failing) == (S.NOT_APPLIED, (2,))
+    assert (checks[(4,)].status, checks[(4,)].unknown_arcs) == (S.PARTIAL, (4,))
+    report = check_inputs(reqs, ROADS, data, vals)["ADM-DEPTH"]
+    assert (report.expected, report.provable) == (S.APPLIED, True)
+    assert (report.known, report.total) == (2, 3)
+    assert report.coverage == {"road": (2, 3)}
+    deeper = check_inputs(reqs, ROADS, data, fording(0.4)[1])["ADM-DEPTH"]
+    assert (deeper.expected, deeper.provable) == (S.PARTIAL, False)
 
 
 def _merged(extra: ValueSet) -> ValueSet:

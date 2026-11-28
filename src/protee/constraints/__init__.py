@@ -33,7 +33,11 @@ The phases come in a fixed order:
 1. **evaluate** (:func:`evaluate`): one :class:`Effect` per requirement,
    from the arc attributes (:class:`ArcData`) and the values retained by
    precedence (:func:`resolve_values`); an arc without data gets the
-   ``UNKNOWN`` verdict, never a presumed pass;
+   ``UNKNOWN`` verdict, never a presumed pass. An admissibility
+   requirement (a quantity at most a limit, a demand at most a capacity, a
+   class at least a required one) whose value is to be set by an envelope
+   reads the bound of the known members: the arcs it fails fail for
+   certain, the others are unknown;
 2. **compose** (:func:`compose`): the effects become a
    :class:`ComputationView` (arcs excluded, weights, travel times under
    the speed caps, flow bounds), independently of their order; the policy
@@ -45,9 +49,12 @@ The phases come in a fixed order:
    weights or costs the result was computed with, which gives its
    :class:`RequirementStatus`; the solver never writes a status;
 5. **explain** (:func:`requirement_table`): the table is generated from the
-   verification; :func:`readable` shows a value as a person reads it (a
-   duration in days, hours and minutes, a length in km or m), with the
-   optional extra ``units``.
+   verification; for a derived value, it shows its rule, the member (or
+   characteristic, or class) that fixes it with its source, its bound
+   when it is to be set, its assumptions, conversions and the inputs left
+   out, in words and as data. :func:`readable` shows a value as a person
+   reads it (a duration in days, hours and minutes, a length in km or m),
+   with the optional extra ``units``.
 
 :func:`check_inputs` says beforehand what the data allow to prove.
 When requirements cannot hold together, :func:`minimal_conflict`,
@@ -57,7 +64,8 @@ and propose relaxations, with their :class:`Impact`, on a
 the common model of :mod:`protee.results` (status, guarantee, counters,
 version, fingerprint of the inputs); :func:`methods` lists their methods,
 always named by the caller. :func:`provenance` records how a result was
-produced, with :func:`fingerprint` of its inputs.
+produced, with :func:`fingerprint` of its inputs and the derivations of
+the values it used.
 :class:`RulebookValues` reads rulebooks and values from TOML, and loads
 the ones embedded from public texts.
 

@@ -637,19 +637,40 @@ def test_the_table_shows_the_values_readably_on_demand() -> None:
     )
     plain = row.to_dict()
     assert "shown" not in plain["values"][0]
+    # The conversion is said in the summary of the value.
+    assert plain["values"][0]["derivation"]["summary"] == (
+        "max of 'vehicle_mass' over convoy: 40 t, fixed by A (Sheet (1), p. 4); "
+        "converted: A 40000 kg to 40 t (x1/1000)"
+    )
+    assert plain["values"][0]["derivation"]["conversions"] == [
+        {
+            "holder": "A",
+            "parameter": "vehicle_mass",
+            "value": 40000,
+            "unit": "kg",
+            "converted": 40.0,
+            "to_unit": "t",
+            "factor": "1/1000",
+        }
+    ]
     shown = row.to_dict(readable=True)["values"][0]
     assert (shown["value"], shown["shown"]) == (40.0, "40 t")
     assert [d["shown"] for d in shown["discarded"]] == ["44 t"]
+    # Each input is shown as read, in its own unit.
+    inputs = shown["derivation"]["inputs"]
+    assert [i["value"]["shown"] for i in inputs] == ["40000 kg", "30 t"]
     # The display adds a key, and changes nothing else.
     assert without_shown(shown) == plain["values"][0]
 
 
-def without_shown(entry: dict[str, Any]) -> dict[str, Any]:
-    return {
-        k: [without_shown(d) for d in v] if k == "discarded" else v
-        for k, v in entry.items()
-        if k != "shown"
-    }
+def without_shown(entry: Any) -> Any:
+    """The data without ``"shown"``, at every depth (a discarded value, the
+    inputs of a derivation)."""
+    if isinstance(entry, dict):
+        return {k: without_shown(v) for k, v in entry.items() if k != "shown"}
+    if isinstance(entry, list):
+        return [without_shown(v) for v in entry]
+    return entry
 
 
 def test_the_table_needs_the_extra_only_to_show(without_pint: None) -> None:
