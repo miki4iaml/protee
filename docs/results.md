@@ -17,7 +17,7 @@ the conventions; the docstrings give the fields of each result type.
 | `version` | the version of protee that produced the result |
 | `bound`, `gap` | a bound on the optimal value and the absolute gap to it, when the method computes one |
 | `certificate` | why there is no solution, when the status is `infeasible` or `unbounded` |
-| `inputs` | SHA-256 fingerprint of the inputs, the method and its parameters |
+| `inputs` | SHA-256 fingerprint of the inputs, the method and its parameters, and the type of the result |
 
 ## Statuses and the certificates they call for
 
@@ -54,7 +54,8 @@ this one stays defined when the value is zero.
 
 `inputs` is computed at its first reading and kept. The structure of a
 graph is hashed once per graph, and kept in it; the metric (bounds, costs,
-weights) is hashed with the method and its parameters. Two results with the
+weights) is hashed with the method, its parameters and the type of the
+result, since a method name may serve several problems. Two results with the
 same `inputs` and the same `version` come from the same computation: one
 can stand for the other. `protee.constraints.provenance` records the full
 provenance of a result built from requirements.

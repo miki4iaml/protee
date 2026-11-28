@@ -259,7 +259,8 @@ class ResultCore:
 
     @property
     def inputs(self) -> str:
-        """Fingerprint (SHA-256) of the inputs, the method and its parameters.
+        """Fingerprint (SHA-256) of the inputs, the method and its parameters,
+        and the type of the result.
 
         Computed at the first reading and kept; the fingerprint of a graph
         is computed once per graph. Two results with the same fingerprint
@@ -267,6 +268,8 @@ class ResultCore:
         """
         found = self._inputs
         if not found:
-            found = inputs_fingerprint(self.method, self.parameters, self._sources)
+            found = inputs_fingerprint(
+                type(self).__name__, self.method, self.parameters, self._sources
+            )
             object.__setattr__(self, "_inputs", found)
         return found

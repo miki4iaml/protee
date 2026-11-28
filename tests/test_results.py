@@ -130,6 +130,11 @@ def test_inputs_are_fingerprinted_once_and_kept() -> None:
         status=Status.OPTIMAL, method="n", guarantee=EXACT, _sources=(g, (1.0,))
     )
     assert renamed.inputs != first
+    # The same method name, on another problem, is another computation.
+    as_flow = flow.FlowResult(
+        status=Status.OPTIMAL, method="m", guarantee=EXACT, _sources=(g, (1.0,))
+    )
+    assert as_flow.inputs != first
 
 
 def test_graph_fingerprint_is_the_structure() -> None:

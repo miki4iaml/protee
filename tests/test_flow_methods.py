@@ -30,7 +30,7 @@ from protee.flow import (
 from protee.flow.diagnostics import reduced_costs
 from protee.graph import Digraph
 
-METHODS = [info.name for info in methods()]
+METHODS = [info.name for info in methods("min_cost_flow")]
 SIMPLEX_RULES = [
     ("network_simplex", {"pivot_rule": rule}) for rule in ("block_search", "dantzig")
 ]
@@ -205,9 +205,12 @@ def test_method_choice_is_explicit() -> None:
     with pytest.raises(ValueError, match="pivot rule"):
         solve(p, method="network_simplex", pivot_rule="bland")
     assert solve(p, method="network_simplex").objective == 0
-    assert [m.name for m in methods()] == [
+    with pytest.raises(ValueError, match="unknown flow method"):
+        solve(p, method="dinic")  # a maximum flow method
+    assert [m.name for m in methods("min_cost_flow")] == [
         "network_simplex",
         "cycle_canceling",
         "successive_shortest_paths",
     ]
-    assert methods()[0].warm_start
+    assert methods()[:3] == methods("min_cost_flow")
+    assert methods("min_cost_flow")[0].warm_start

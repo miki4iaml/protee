@@ -86,6 +86,7 @@ def test_uniqueness_on_an_interior_optimum() -> None:
         potentials=(0, 0, 0),
     )
     found = optimum_uniqueness(p, result)
+    assert (found.status, found.method) == (Status.OPTIMAL, "optimum_uniqueness")
     assert not found.unique
     assert found.direction is not None
     assert sorted(a for a, _ in found.direction) == [0, 1, 2]

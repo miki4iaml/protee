@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Miki
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Named minimum (or maximum) cost flow methods: registry, solve, prepare."""
+"""Named minimum (or maximum) cost flow methods: solve, prepare.
+
+The methods are those of the problem ``"min_cost_flow"`` in the registry
+(:mod:`protee.flow._registry`).
+"""
 
 from __future__ import annotations
 
@@ -20,9 +24,10 @@ from protee.flow._normal import (
     tolerance_for,
 )
 from protee.flow._problem import FlowProblem, Sense
+from protee.flow._registry import MIN_COST_FLOW as METHODS
 from protee.flow._result import Certificate, FlowResult, Status
 from protee.flow._simplex import NetworkSimplex, PivotRule
-from protee.results import Guarantee, GuaranteeKind, MethodInfo
+from protee.results import MethodInfo
 
 type Number = int | float
 
@@ -174,44 +179,6 @@ _FACTORIES: dict[str, Callable[..., Prepared]] = {
     "successive_shortest_paths": _PreparedSuccessiveShortestPaths,
 }
 
-_EXACT = Guarantee(GuaranteeKind.EXACT, "optimal flow and optimal potentials")
-
-METHODS: Mapping[str, MethodInfo] = MappingProxyType(
-    {
-        "network_simplex": MethodInfo(
-            name="network_simplex",
-            problem="min_cost_flow",
-            summary="Primal network simplex, strongly feasible trees (Cunningham), big-M start.",
-            guarantee=_EXACT,
-            complexity="finite (anti-cycling); pseudo-polynomial bounds in practice",
-            reference="Ahuja, Magnanti, Orlin, Network Flows (1993), ch. 11; Cunningham (1976)",
-            warm_start=True,
-            options=("pivot_rule",),
-        ),
-        "cycle_canceling": MethodInfo(
-            name="cycle_canceling",
-            problem="min_cost_flow",
-            summary="Feasible flow by maximum flow, then cancel negative residual cycles (Bellman-Ford).",
-            guarantee=_EXACT,
-            complexity="O(n m^2 C U)",
-            reference="Klein (1967); Ahuja, Magnanti, Orlin (1993), section 9.6",
-        ),
-        "successive_shortest_paths": MethodInfo(
-            name="successive_shortest_paths",
-            problem="min_cost_flow",
-            summary="Augment along shortest paths with node potentials (Dijkstra on reduced costs).",
-            guarantee=_EXACT,
-            complexity="O(n U (m + n log n)), U the total supply after saturation",
-            reference="Edmonds, Karp (1972); Tomizawa (1971); Ahuja, Magnanti, Orlin (1993), section 9.7",
-        ),
-    }
-)
-
-
-def methods() -> tuple[MethodInfo, ...]:
-    """The flow methods of the registry, in a fixed order."""
-    return tuple(METHODS.values())
-
 
 def prepare(problem: FlowProblem, *, method: str, **options: object) -> Prepared:
     """Prepare ``problem`` for a named method (see :func:`methods`).
@@ -220,8 +187,8 @@ def prepare(problem: FlowProblem, *, method: str, **options: object) -> Prepared
     ----------
     problem : FlowProblem
     method : str
-        A name from :func:`methods`; there is no default: the choice of the
-        method stays the caller's.
+        A name from ``methods("min_cost_flow")``; there is no default: the
+        choice of the method stays the caller's.
     **options
         Options of the method, such as ``pivot_rule`` (``"block_search"``
         or ``"dantzig"``) for ``network_simplex``.
@@ -256,7 +223,7 @@ def solve(problem: FlowProblem, *, method: str, **options: object) -> FlowResult
     problem : FlowProblem
     method : str
         ``"network_simplex"``, ``"cycle_canceling"`` or
-        ``"successive_shortest_paths"`` (see :func:`methods`).
+        ``"successive_shortest_paths"`` (see ``methods("min_cost_flow")``).
     **options
         Options of the method (see :func:`prepare`).
 
