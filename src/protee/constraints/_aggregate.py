@@ -34,6 +34,7 @@ from protee.constraints._derive import (
 )
 from protee.constraints._groups import Group, Member, tree_left_out
 from protee.constraints._model import (
+    Conversion,
     Datum,
     Derivation,
     DerivationInput,
@@ -301,7 +302,8 @@ def aggregate(
         may take included), ``known_only`` is given for
         an additive rule (``sum``, ``mean``, ``threshold_count``), a value
         is assumed for a parameter no rule reads, an unknown input has no
-        assumed value under ``assume``, the sheets of a member are
+        assumed value under ``assume`` or one its bound does not allow
+        (see :class:`UnknownRule`), the sheets of a member are
         inconsistent (see :class:`Member`), or a sum meets ``+inf`` and
         ``-inf``.
     TypeError
@@ -516,7 +518,8 @@ class _Context:
         if part.pending:
             # The known inputs, and the bounds of the unknown ones, bound an
             # envelope; DD9: only the last label of an order decides.
-            floor = _floor(rule, part.used, part.unknown, of)
+            floor, records = _floor(rule, part.used, part.unknown, of)
+            part = replace(part, conversions=part.conversions + records)
             if (
                 rule.kind is AggregateKind.STRICTEST
                 and floor is not None
@@ -616,11 +619,12 @@ def _floor(
     used: Sequence[_Reading],
     unknown: Sequence[_Reading],
     of: Parameter,
-) -> tuple[Datum, tuple[str, ...]] | None:
+) -> tuple[tuple[Datum, tuple[str, ...]] | None, tuple[Conversion, ...]]:
     """The bound of an envelope with unknown inputs, and the inputs that
     fix it: the extreme of the known inputs and of the bounds of the
     unknown inputs on the side of the rule (a value at least a bound, for
     a maximum); ``None`` for another rule, or with nothing to bound it.
+    Then the conversions of the bounds read in another unit.
 
     Raises
     ------
@@ -629,21 +633,24 @@ def _floor(
     """
     side = _SIDES.get(rule.kind)
     if side is None:
-        return None
+        return None, ()
     strictest = rule.kind is AggregateKind.STRICTEST
     found: list[tuple[Exact, Datum, str]] = []
+    records: list[Conversion] = []
     for r in used:
         x = _datum(r)
         key = Fraction(rule.order.index(str(x))) if strictest else r.exact
         found.append((key, x, r.holder))
     for r in unknown:
         what = _label(r, of.name)
-        p = _partial(r, of, what)
+        p = _partial(r, of, what, r.holder)
         if p is None or p.side != side:
             continue
         if not strictest:
             assert p.exact is not None
             found.append((p.exact, p.bound, r.holder))
+            if p.conversion is not None:
+                records.append(p.conversion)
             continue
         for label in p.labels:
             if label not in rule.order:
@@ -654,8 +661,8 @@ def _floor(
         rank = min(rule.order.index(label) for label in p.labels)
         found.append((Fraction(rank), rule.order[rank], r.holder))
     if not found:
-        return None
+        return None, ()
     keys = [key for key, _, _ in found]
     extreme = min(keys) if rule.kind is AggregateKind.MIN else max(keys)
     fixers = [(x, holder) for key, x, holder in found if key == extreme]
-    return fixers[0][0], tuple(holder for _, holder in fixers)
+    return (fixers[0][0], tuple(holder for _, holder in fixers)), tuple(records)

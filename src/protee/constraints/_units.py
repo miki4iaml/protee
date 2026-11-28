@@ -25,8 +25,10 @@ A conversion is refused, rather than guessed, for:
   dimension: a grade in ``%`` is the tangent of its angle, not a multiple
   of it;
 - a factor that is not a rational number, which pint would truncate (an
-  angle in degrees to radians involves pi, a unit defined by a root
-  involves a square root): no truncated factor is recorded as exact;
+  angle in degrees to radians involves pi; the square root of a unit
+  scaled by 1000, ``km**0.5`` to ``m**0.5``, that of 1000): no truncated
+  factor is recorded as exact, while a root whose factor is rational
+  converts (``cm**0.5`` to ``m**0.5``, by 1/10);
 - a unit with an offset, which does not keep 0 at 0 (``degC``);
 - a calendar convention (a year or a month, whatever its kind): pint counts
   a year as 365.25 days and a month as a twelfth of it, where a life-cycle
@@ -36,6 +38,7 @@ A conversion is refused, rather than guessed, for:
 from __future__ import annotations
 
 import math
+import numbers
 import threading
 from fractions import Fraction
 from tokenize import TokenError
@@ -135,27 +138,28 @@ def _angle(registry: Any, parsed: Any) -> Fraction:
     return Fraction(dict(root._units).get("radian", 0))
 
 
-def _irrational(registry: Any, parsed: Any) -> tuple[dict[str, Fraction], bool]:
+def _irrational(registry: Any, parsed: Any) -> tuple[dict[str, Fraction], int]:
     """The exponents of the irrational constants in the definition of
-    ``parsed``, and whether a number in it is raised to a fractional power
-    (a root); the caller holds the lock."""
+    ``parsed``, and the power that clears the roots of the numbers in it:
+    the least common multiple of the denominators of the fractional powers
+    of a prefix or of a scaled unit (``(km)**0.5``), 1 without a root; the
+    caller holds the lock."""
     constants: dict[str, Fraction] = {}
-    root = False
+    root = 1
     stack = [(name, Fraction(e)) for name, e in parsed._units.items()]
     while stack:
         name, exponent = stack.pop()
         prefix, base, _ = registry.parse_unit_name(name)[0]
-        fractional = exponent.denominator != 1
-        if prefix and fractional:  # the root of a prefix: (km)**0.5
-            root = True
+        if prefix:  # the root of a prefix: (km)**0.5
+            root = math.lcm(root, exponent.denominator)
         if base in _IRRATIONAL:
             constants[base] = constants.get(base, Fraction(0)) + exponent
             continue
         definition = registry._units[base]
         if definition.is_base:
             continue
-        if fractional and getattr(definition.converter, "scale", 1) != 1:
-            root = True
+        if getattr(definition.converter, "scale", 1) != 1:
+            root = math.lcm(root, exponent.denominator)
         stack += [
             (reference, exponent * Fraction(e))
             for reference, e in definition.reference.items()
@@ -205,6 +209,13 @@ def _factor(unit: str, to_unit: str, what: str) -> Fraction:
             factor = registry.Quantity(Fraction(1), source).to(target).magnitude
             angles = [_angle(registry, p) for p in parsed]
             found = [_irrational(registry, p) for p in parsed]
+            # Raised to this power, the units convert without a root.
+            power = math.lcm(found[0][1], found[1][1])
+            cleared = (
+                registry.Quantity(Fraction(1), source**power)
+                .to(target**power)
+                .magnitude
+            )
         except _PINT_ERRORS as err:  # a logarithmic unit, for one
             raise ValueError(
                 f"{head}: pint cannot convert {unit!r} to {to_unit!r} exactly"
@@ -220,13 +231,23 @@ def _factor(unit: str, to_unit: str, what: str) -> Fraction:
             "into an angle only (a grade in % is the tangent of its angle, not a "
             "multiple of it)"
         )
-    (constants, rooted), (other, other_rooted) = found
+    (constants, _), (other, _) = found
     involved = sorted(
         name
         for name in constants.keys() | other.keys()
         if constants.get(name, 0) != other.get(name, 0)
     )
-    if involved or rooted or other_rooted:
+    # A root is exact when pint gives a rational factor whose power is the
+    # factor of the powers: 1/10 from cm**0.5 to m**0.5, not the decimal
+    # pint gives for the square root of 1000, from km**0.5.
+    exact = isinstance(factor, numbers.Rational) and (
+        power == 1
+        or (
+            isinstance(cleared, numbers.Rational)
+            and Fraction(factor) ** power == Fraction(cleared)
+        )
+    )
+    if involved or not exact:
         why = f"the constant {involved[0]!r}" if involved else "a root"
         raise ValueError(
             f"{head}: the factor from {unit!r} to {to_unit!r} involves {why}, "

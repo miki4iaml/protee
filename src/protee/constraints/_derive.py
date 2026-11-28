@@ -53,6 +53,7 @@ from protee.constraints._model import (
     _by_name,
     _check_assumed,
     _count,
+    _datum_text,
     _name,
     _sequence,
     _sorted_names,
@@ -75,7 +76,11 @@ class UnknownRule(StrEnum):
       would shorten, and for the selection by a single class;
     - ``assume``: each input without a value takes the value assumed for
       its parameter, a declared choice, and the trace says for which
-      members.
+      members; an input to be set whose derivation bounds it (a partial
+      envelope, a partial class) takes it only if its bound allows it (at
+      least the bound, at most the bound, a label at least as strict), and
+      the derivation is refused otherwise: an assumption never contradicts
+      what known members fix.
     """
 
     PROPAGATE = "propagate"
@@ -715,7 +720,8 @@ def _assume(
     Raises
     ------
     ValueError
-        If no value is assumed for the parameter, or it does not convert.
+        If no value is assumed for the parameter, it does not convert, or
+        it contradicts the bound of an input to be set.
     ImportError
         If the value assumed is in another unit and pint is not installed.
     """
@@ -727,6 +733,9 @@ def _assume(
         raise ValueError(f"{where}: no value for {name!r} and no value assumed for it")
     in_unit, converted = _in_unit(
         value, target, None, f"the value assumed for {name!r}"
+    )
+    _check_assumed_bound(
+        reading, target, value, (in_unit, converted), f"{where}: {name!r}"
     )
     return _Reading(
         reading.holder, reading.instances, ValueState.ASSUMED, in_unit, converted
@@ -746,23 +755,38 @@ class _Partial:
     bound : int, float or str
         The bound, converted into the unit the input is read in (a float,
         rounded once), or a label.
+    shown : str
+        The bound as its derivation gives it, with its unit, for a
+        message.
+    fixed_by : tuple of str
+        The inputs that fix the bound, in its derivation.
     exact : Fraction or float, optional
         For a number, the bound as a derivation compares it.
     labels : tuple of str
         For a label, the labels the value may take: those of the order of
         its derivation at least as strict as the bound.
+    conversion : Conversion, optional
+        The conversion of a number bound into the unit the input is read
+        in, to record where the bound is used.
     """
 
     side: str
     bound: Datum
+    shown: str
+    fixed_by: tuple[str, ...]
     exact: Exact | None = None
     labels: tuple[str, ...] = ()
+    conversion: Conversion | None = None
 
 
-def _partial(reading: _Reading, target: Parameter, what: str) -> _Partial | None:
+def _partial(
+    reading: _Reading, target: Parameter, what: str, holder: str | None = None
+) -> _Partial | None:
     """The bound of an input to be set whose derivation bounds it (an
     envelope, a classification), in the unit of ``target``; ``None`` for
-    any other input. ``what`` names the input for the messages.
+    any other input. ``what`` names the input for the messages, ``holder``
+    the member or the group it is read on (``None`` for a value given
+    directly), for the record of a conversion.
 
     Raises
     ------
@@ -784,6 +808,7 @@ def _partial(reading: _Reading, target: Parameter, what: str) -> _Partial | None
     if side is None:
         return None
     bound = d.bound
+    shown = _datum_text(bound, value.unit)
     if side == STRICTER:
         order = d.settings.get(ORDERS[d.name])
         if not isinstance(order, tuple) or bound not in order:
@@ -791,17 +816,65 @@ def _partial(reading: _Reading, target: Parameter, what: str) -> _Partial | None
                 f"{what}: the bound {bound!r} is not a label of the order of its "
                 f"derivation, {order!r}"
             )
-        return _Partial(side, bound, labels=order[order.index(bound) :])
+        labels = order[order.index(bound) :]
+        return _Partial(side, bound, shown, d.bound_fixed_by, labels=labels)
     if isinstance(bound, str):
         raise TypeError(f"{what}: the bound of a {d.rule} is a number, got {bound!r}")
     if value.unit == target.unit:
-        return _Partial(side, bound, _exact(bound))
+        return _Partial(side, bound, shown, d.bound_fixed_by, _exact(bound))
     # The value was read: its unit converts into that of the target.
     assert value.unit is not None
     assert target.unit is not None
-    exact, _ = _convert(_exact(bound), value.unit, target.unit, what)
+    exact, factor = _convert(_exact(bound), value.unit, target.unit, what)
     converted = exact if isinstance(exact, float) else float(exact)
-    return _Partial(side, converted, _exact(converted))
+    record = Conversion(
+        holder, target.name, bound, value.unit, converted, target.unit, str(factor)
+    )
+    return _Partial(
+        side, converted, shown, d.bound_fixed_by, _exact(converted), conversion=record
+    )
+
+
+def _check_assumed_bound(
+    reading: _Reading,
+    target: Parameter,
+    assumed: Value,
+    in_unit: tuple[Value, _Converted | None],
+    what: str,
+) -> None:
+    """Under ``assume``: the value assumed for an input to be set whose
+    derivation bounds it must be one the bound allows (at least the bound,
+    at most the bound, or a label at least as strict, in the order of the
+    derivation); ``in_unit`` is the value assumed in the unit of
+    ``target``.
+
+    Raises
+    ------
+    ValueError
+        If the value assumed contradicts the bound, naming the input, the
+        bound, the inputs that fix it and the value assumed.
+    """
+    p = _partial(reading, target, what)
+    if p is None:
+        return
+    value, converted = in_unit
+    x = value.value
+    if isinstance(x, str) != (p.side == STRICTER):
+        return  # a label for a number, or the reverse: refused by the rule
+    if isinstance(x, str):
+        allowed = x in p.labels
+    else:
+        assert x is not None
+        assert p.exact is not None
+        exact = _exact(x) if converted is None else converted.exact
+        allowed = exact >= p.exact if p.side == "at least" else exact <= p.exact
+    if not allowed:
+        assert assumed.value is not None
+        raise ValueError(
+            f"{what} is to be set, {p.side} {p.shown} (fixed by "
+            f"{', '.join(p.fixed_by)}): the value assumed for {target.name!r}, "
+            f"{_datum_text(assumed.value, assumed.unit)}, contradicts its bound"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -861,7 +934,8 @@ def _partition(
     ------
     ValueError
         Under ``assume``, if no value is assumed for the parameter of an
-        input without a value, or the value assumed does not convert.
+        input without a value, the value assumed does not convert, or it
+        contradicts the bound of an input to be set.
     ImportError
         If the value assumed is in another unit and pint is not installed.
     """
@@ -894,6 +968,9 @@ def _partition(
         assumed = _in_unit(
             assumed_value, parameter, None, f"the value assumed for {name!r}"
         )
+        for r in unknown:
+            what = f"member {r.holder!r}: {name!r}"
+            _check_assumed_bound(r, parameter, assumed_value, assumed, what)
         if assumed[1] is not None:
             conversions.append(assumed[1].record)
     if policy.rule is UnknownRule.KNOWN_ONLY:

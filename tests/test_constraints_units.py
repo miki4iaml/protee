@@ -473,6 +473,19 @@ def test_an_angle_converts_by_a_rational_factor_only() -> None:
     assert _units._factor("percent", "ppm", "the ratio") == 10_000
 
 
+def test_a_root_converts_when_its_factor_is_rational() -> None:
+    # pint takes a root of a number through a float: kept when it is the
+    # exact root (1/10 from cm**0.5 to m**0.5), refused when it is a
+    # truncated decimal (the square root of 1000, from km**0.5).
+    assert _units._factor("cm**0.5", "m**0.5", "the root") == Fraction(1, 10)
+    assert _units._factor("hectare**0.5", "m", "the side") == 100
+    assert _units._factor("L**(1/3)", "cm", "the side") == 10
+    root = derive({"A": {"root": (3, "cm**0.5")}}, {"root": Aggregation.max("root")})
+    assert root["root"].value == 0.3
+    with pytest.raises(ValueError, match="involves a root, which is not a rational"):
+        _units._factor("km**0.5", "m**0.5", "the root")
+
+
 def test_the_calendar_units_are_units_of_pint() -> None:
     registry = _units._registry("the test")
     day = registry.parse_units("d").dimensionality

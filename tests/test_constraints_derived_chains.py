@@ -17,6 +17,8 @@ import json
 import math
 import pickle
 import re
+from collections.abc import Callable
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -54,6 +56,7 @@ from protee.constraints import (
     ArcData,
     Attribute,
     Comparison,
+    Conversion,
     Derivation,
     DerivationInput,
     Derived,
@@ -1249,8 +1252,13 @@ def test_an_arc_that_every_value_passes_passes_for_certain() -> None:
         "value of 'width' to be set: no value for U; at least 3.5 m (B); data on "
         "3 of the 3 arcs in scope, 1 fail at the bound, 1 pass whatever the value"
     )
-    assert verify_route((0,), reqs, graph, data, values)["ADM-WIDTH"].status is (
-        S.APPLIED
+    applied = verify_route((0,), reqs, graph, data, values)["ADM-WIDTH"]
+    assert (applied.status, applied.reason) == (
+        S.APPLIED,
+        (
+            "verified on 1 arcs; value of 'width' to be set: no value for U; at "
+            "least 3.5 m (B)"
+        ),
     )
     # Without a known member, a value may be any: the arc without a limit
     # still passes, the others are unknown.
@@ -1332,16 +1340,6 @@ def test_values_to_be_set_bounded_apart_disagree_whatever_their_names(
     )
     kept = resolve_values([d.values, same.values], FORDS).values["fording_depth"]
     assert kept.source.rulebook == "b-alike"
-    nobody = Group("a-nobody", ((vehicle("z"), 1),))
-    unbounded = aggregate(
-        nobody,
-        {"fording_depth": Aggregation.min("fording_depth")},
-        parameters=FORD,
-        unknown=PROPAGATE,
-        edition="1",
-    )
-    kept = resolve_values([unbounded.values, plan_], FORDS).values["fording_depth"]
-    assert kept.source.rulebook == "a-nobody"
 
 
 SPEED = Requirement(
@@ -1551,6 +1549,24 @@ def test_an_envelope_reads_the_bound_of_a_partial_envelope() -> None:
         ("S",),
         ("S",),
     )
+    # The bound of S, read in cm, is converted, and the conversion recorded.
+    assert trace.conversions == (
+        Conversion("S", "width", 350, "cm", 3.5, "m", "1/100"),
+    )
+    # A classification reads it too, and records it.
+    wide = aggregate(
+        Group("S", ((_wide("B", 450), 1), (_wide("U", None), 1))),
+        {"width": Aggregation.max("width")},
+        parameters=[Parameter("width", unit="cm")],
+        unknown=PROPAGATE,
+        edition="1",
+    )
+    category = classify(wide, characteristics=[WIDTH])["category"]
+    assert category.value == "3"
+    assert category.derivation is not None
+    assert category.derivation.conversions == (
+        Conversion(None, "width", 450, "cm", 4.5, "m", "1/100"),
+    )
     # At most nothing: a minimum is bounded by C alone.
     least = derive(column, {"width": Aggregation.min("width")})["width"]
     assert least.derivation is not None
@@ -1587,3 +1603,206 @@ def test_a_bound_that_does_not_fit_its_derivation_is_refused() -> None:
         ),
     ):
         derive(outside, {"load_class": Aggregation.strictest("load_class", CLASSES)})
+
+
+# Agreement of values to be set, and assumptions against a bound ----------------
+
+
+def _renamed(values: ValueSet, book: str) -> ValueSet:
+    """A value set under another rulebook, its values with it."""
+    return ValueSet(
+        book,
+        values.edition,
+        {
+            k: replace(v, source=replace(v.source, rulebook=book))
+            for k, v in values.values.items()
+        },
+    )
+
+
+def _depth_without_bound() -> ValueSet:
+    """The depth of a group whose only member is unknown: an envelope to be
+    set, without a bound."""
+    nobody = Group("g", ((vehicle("z"), 1),))
+    rules = {"fording_depth": Aggregation.min("fording_depth")}
+    return aggregate(
+        nobody, rules, parameters=FORD, unknown=PROPAGATE, edition="1"
+    ).values
+
+
+def _depth_to_be_set() -> ValueSet:
+    """A depth left to be set by a plan: no envelope."""
+    unset = Value(None, Source("Planning sheet"), Origin.PROVISIONAL, unit="m")
+    return ValueSet("plan", "1", {"fording_depth": unset})
+
+
+def _strictest_load(order: tuple[str, ...]) -> ValueSet:
+    """The load class of a group of C50 and an unknown member, strictest in
+    ``order``: to be set, at least as strict as C50."""
+    group = Group("g", ((member("A", load_class="C50"), 1), (member("U"), 1)))
+    return derive(
+        group, {"load_class": Aggregation.strictest("load_class", order)}
+    ).values
+
+
+def _classified() -> ValueSet:
+    """A category to be set, at least as strict as '2', of the classes 1 to
+    3."""
+    return classify(sheet("sheet-S", width=3.5)).values
+
+
+def _strictest_category(order: tuple[str, ...]) -> ValueSet:
+    """A category to be set, at least as strict as '2', strictest in
+    ``order``."""
+    stated = ValueSet(
+        "sheet-A", "1", {"category": Value("2", Source("Sheet A"), Origin.STATEMENT)}
+    )
+    group = Group("g", ((Member("A", (stated,)), 1), (Member("U"), 1)))
+    rules = {"category": Aggregation.strictest("category", order)}
+    return aggregate(
+        group, rules, parameters=VOCABULARY, unknown=PROPAGATE, edition="1"
+    ).values
+
+
+AGREEMENTS = [
+    pytest.param(
+        _depth_without_bound, _depth_to_be_set, FORDS, False, id="envelope-vs-plain"
+    ),
+    pytest.param(
+        _depth_without_bound, _depth_without_bound, FORDS, True, id="two-envelopes"
+    ),
+    pytest.param(
+        lambda: _strictest_load(CLASSES),
+        lambda: _strictest_load((*CLASSES, "C90")),
+        LOAD_CLASSES,
+        False,
+        id="strictest-on-two-scales",
+    ),
+    pytest.param(
+        _classified,
+        lambda: _strictest_category((*CATEGORIES, "4")),
+        CATEGORY_REQS,
+        False,
+        id="classification-vs-strictest-on-a-wider-scale",
+    ),
+    pytest.param(
+        _classified,
+        lambda: _strictest_category(CATEGORIES),
+        CATEGORY_REQS,
+        True,
+        id="classification-vs-strictest-on-its-scale",
+    ),
+]
+
+
+@pytest.mark.parametrize("names", [("a-left", "b-right"), ("b-left", "a-right")])
+@pytest.mark.parametrize(("left", "right", "reqs", "agree"), AGREEMENTS)
+def test_values_to_be_set_agree_when_they_allow_the_same_values(
+    left: Callable[[], ValueSet],
+    right: Callable[[], ValueSet],
+    reqs: RequirementSet,
+    agree: bool,
+    names: tuple[str, str],
+) -> None:
+    # Two values to be set of the same precedence agree when they evaluate
+    # alike: the same interval of numbers, the same labels, or no envelope
+    # at all. Otherwise the name of a rulebook would decide which applies.
+    sets = [_renamed(left(), names[0]), _renamed(right(), names[1])]
+    if not agree:
+        with pytest.raises(ValueError, match="disagree with the same precedence"):
+            resolve_values(sets, reqs)
+        return
+    (kept,) = resolve_values(sets, reqs).values.values()
+    assert kept.source.rulebook is not None
+    assert kept.source.rulebook.startswith("a-")
+
+
+def test_a_disagreement_says_what_each_value_may_be() -> None:
+    sets = [
+        _renamed(_strictest_load(CLASSES), "a-short"),
+        _renamed(_strictest_load((*CLASSES, "C90")), "b-long"),
+    ]
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "parameter 'load_class': values [\"to be set, at least as strict as "
+            "'C50': one of ['C50', 'C70']\", \"to be set, at least as strict as "
+            "'C50': one of ['C50', 'C70', 'C90']\"] disagree"
+        ),
+    ):
+        resolve_values(sets, LOAD_CLASSES)
+    sets = [_renamed(_depth_without_bound(), "a-env"), _depth_to_be_set()]
+    with pytest.raises(
+        ValueError,
+        match=re.escape("values ['to be set by min, without a bound', None] disagree"),
+    ):
+        resolve_values(sets, FORDS)
+
+
+def test_an_assumed_value_respects_the_bound_of_an_input_to_be_set() -> None:
+    # G1 is at least 4.5 m wide, fixed by A, its member U unknown. Read as a
+    # member of G2, it may not be assumed 2.5 m wide: that would pass the
+    # arcs A fails for certain.
+    g1 = derive(
+        Group("G1", ((member("A", width=4.5), 1), (member("U"), 1))),
+        {"width": Aggregation.max("width")},
+    ).values
+    g2 = Group("G2", ((Member("G1", (g1,)), 1), (member("B", width=3.0), 1)))
+    narrow = OnUnknown.assume({"width": chosen(2.5, "m")})
+    contradicts = (
+        "is to be set, at least 4.5 m (fixed by A): the value assumed for 'width', "
+        "2.5 m, contradicts its bound"
+    )
+    with pytest.raises(
+        ValueError, match=re.escape(f"member 'G1': 'width' {contradicts}")
+    ):
+        derive(g2, {"width": Aggregation.max("width")}, narrow)
+    # A value the bound allows is assumed, as for any input.
+    broad = OnUnknown.assume({"width": chosen(500, "cm")})
+    width = derive(g2, {"width": Aggregation.max("width")}, broad)["width"]
+    assert width.derivation is not None
+    assert (width.value, width.derivation.fixed_by) == (5.0, ("G1",))
+    # The same for a classification of G1, and for a selection by its class.
+    envelope = derive(
+        Group("G1", ((member("A", width=4.5), 1), (member("U"), 1))),
+        {"width": Aggregation.max("width")},
+    )
+    with pytest.raises(ValueError, match=re.escape(f"subject: 'width' {contradicts}")):
+        classify(envelope, narrow, characteristics=[WIDTH])
+    assert classify(envelope, broad, characteristics=[WIDTH])["category"].value == "3"
+    category = classify(sheet("sheet-S", width=3.5))
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "subject: 'category' is to be set, at least as strict as '2' (fixed by "
+            "width): the value assumed for 'category', '1', contradicts its bound"
+        ),
+    ):
+        select(category, OnUnknown.assume({"category": chosen("1")}))
+    speed = select(category, OnUnknown.assume({"category": chosen("3")}))
+    assert speed["speed_cap"].value == 40.0
+    # At most a bound: the depth of the column, at most 0.5 m (truck-b).
+    column = aggregate(
+        COLUMN, ENVELOPE, parameters=FORD, unknown=PROPAGATE, edition="1"
+    )
+    group = Group("G", ((Member("column", (column.values,)), 1),))
+    rules = {"fording_depth": Aggregation.min("fording_depth")}
+    deep = OnUnknown.assume(
+        {
+            "fording_depth": Value(
+                0.6,
+                Source("Planning note"),
+                Origin.CHOICE,
+                unit="m",
+                justification="a guess",
+            )
+        }
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "member 'column': 'fording_depth' is to be set, at most 0.5 m (fixed by "
+            "truck-b): the value assumed for 'fording_depth', 0.6 m, contradicts"
+        ),
+    ):
+        aggregate(group, rules, parameters=FORD, unknown=deep, edition="1")

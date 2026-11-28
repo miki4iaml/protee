@@ -245,8 +245,9 @@ def classify_by_thresholds(
         different units, is not applicable, or the thresholds of a
         characteristic are not strictly monotonic (increasing under
         ``above`` and ``at_least``, decreasing under ``below`` and
-        ``at_most``), or the policy assumes a value no input reads or
-        misses one.
+        ``at_most``), or the policy assumes a value no input reads,
+        misses one, or assumes one that the bound of an input to be set
+        does not allow (see :class:`UnknownRule`).
     ImportError
         If a unit differs and pint is not installed (the optional extra
         ``units``).
@@ -310,8 +311,10 @@ def classify_by_thresholds(
     limits = _named(thresholds, vocabulary, "thresholds")
     found: _Found = {}
     ranks: dict[str, int] = {}
-    # The ranks that characteristics to be set reach at least, by a bound.
+    # The ranks that characteristics to be set reach at least, by a bound,
+    # and the conversions of those bounds.
     lows: dict[str, int] = {}
+    read_bounds: tuple[Conversion, ...] = ()
     pending: list[str] = []
     not_applicable: list[tuple[str, str]] = []
     left_out: list[LeftOut] = []
@@ -340,7 +343,8 @@ def classify_by_thresholds(
             elif x is None and None not in bounds:
                 low = _low(row, reading, parameter, bounds)
                 if low is not None:
-                    lows[row.parameter] = low
+                    lows[row.parameter], record = low
+                    read_bounds += () if record is None else (record,)
             continue
         crossed = (_crosses(row.crossing, x[1], b[1]) for b in bounds if b is not None)
         ranks[row.parameter] = 1 + sum(crossed)
@@ -358,6 +362,7 @@ def classify_by_thresholds(
     if policy.justification is not None:
         settings["justification"] = policy.justification
     inputs, unknown_names, assumptions, conversions = _trace(found)
+    conversions += read_bounds
     label: str | None = None
     na: str | None = None
     fixed_by: tuple[str, ...] = ()
@@ -480,7 +485,9 @@ def select_by_class(
         keep), the table is empty, a class is not in the table, a
         parameter is not in the vocabulary, a parameter of the table does
         not convert into the unit of the output, or the policy assumes a
-        value no input reads or misses one.
+        value no input reads, misses one, or assumes a class or a value
+        that the bound of an input to be set does not allow (see
+        :class:`UnknownRule`).
     ImportError
         If a unit differs and pint is not installed (the optional extra
         ``units``).
@@ -707,18 +714,20 @@ def _low(
     reading: _Reading,
     parameter: Parameter,
     bounds: Sequence[tuple[str, Exact] | None],
-) -> int | None:
+) -> tuple[int, Conversion | None] | None:
     """The rank a characteristic to be set reaches at least, when its
     derivation bounds it on the side its comparison goes (at least a value
     under ``above`` and ``at_least``, at most under ``below`` and
-    ``at_most``); ``None`` otherwise. Every threshold is known."""
+    ``at_most``), and the conversion of its bound into the unit of the
+    characteristic, if any; ``None`` otherwise. Every threshold is
+    known."""
     p = _partial(reading, parameter, f"subject: {row.parameter!r}")
     side = "at least" if row.crossing in _INCREASING else "at most"
     if p is None or p.side != side:
         return None
     assert p.exact is not None
     crossed = (_crosses(row.crossing, p.exact, b[1]) for b in bounds if b is not None)
-    return 1 + sum(crossed)
+    return 1 + sum(crossed), p.conversion
 
 
 # Inputs given directly ------------------------------------------------------

@@ -24,6 +24,7 @@ from protee.constraints._model import (
     ResolvedValues,
     Value,
     _datum_text,
+    _may_take,
 )
 from protee.constraints._patterns import PATTERNS, EffectKind
 from protee.graph import Digraph
@@ -323,24 +324,21 @@ def _undecided(requirement: Requirement, values: ResolvedValues) -> _Undecided |
     if requirement.pattern not in _BOUNDED:
         return None
     ((role, name),) = tuple(_bound_roles(requirement))
-    d = envelope_to_be_set(values.get(name))
+    value = values.get(name)
+    d = envelope_to_be_set(value)
     if d is None:
         return None
-    side = ENVELOPES[d.name, d.rule]
-    if side != STRICTER:
-        if d.bound is None:
-            return _Undecided(role, (-math.inf, math.inf))
-        end = math.inf if side == "at least" else -math.inf
-        return _Undecided(role, (d.bound, end))
-    order = d.settings.get(ORDERS[d.name])
-    if d.bound is None:
-        return _Undecided(role, order if isinstance(order, tuple) else ())
-    if not isinstance(order, tuple) or d.bound not in order:
+    assert value is not None
+    order = d.settings.get(ORDERS.get(d.name, ""))
+    labelled = ENVELOPES[d.name, d.rule] == STRICTER and d.bound is not None
+    if labelled and not (isinstance(order, tuple) and d.bound in order):
         raise ValueError(
-            f"requirement {requirement.id}: the bound {d.bound!r} of {name!r} is "
-            f"not a label of the order of its derivation, {order!r}"
+            f"requirement {requirement.id}: the bound {d.bound!r} of {name!r} "
+            f"is not a label of the order of its derivation, {order!r}"
         )
-    return _Undecided(role, order[order.index(d.bound) :])
+    candidates = _may_take(value)
+    assert candidates is not None
+    return _Undecided(role, candidates)
 
 
 def undecided_reason(requirement: Requirement, values: ResolvedValues) -> str | None:

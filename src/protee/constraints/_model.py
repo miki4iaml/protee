@@ -20,7 +20,7 @@ from enum import StrEnum
 
 from protee._fingerprint import freeze
 from protee._frozen import FrozenMap
-from protee.constraints._derivations import DERIVATIONS, ENVELOPES
+from protee.constraints._derivations import DERIVATIONS, ENVELOPES, ORDERS, STRICTER
 from protee.constraints._patterns import PATTERNS, Pattern
 
 __all__ = [
@@ -638,10 +638,11 @@ def resolve_values(
         parameter's, gives a parameter twice, if two values of the same
         parameter disagree with the same precedence (the disagreement must
         be declared by a precedence; a value not applicable and a value to
-        be set disagree, and so do two values to be set unless their
-        derivations bound them alike, on the same side by the same bound,
-        or not at all), or if a value of an objective is chosen without a
-        justification.
+        be set disagree, and so do two values to be set unless they may
+        take the same values: two values to be set that are not
+        envelopes, or two envelopes to be set that allow the same
+        interval of numbers or the same labels; see :func:`evaluate`), or
+        if a value of an objective is chosen without a justification.
     """
     aliases = _aliases(requirements.parameters)
     known = {p.name for p in requirements.parameters}
@@ -699,22 +700,55 @@ def _bound_side(value: Value) -> tuple[str, Datum] | None:
     return ENVELOPES.get((d.name, d.rule), "bounded by"), d.bound
 
 
+def _may_take(value: Value) -> tuple[Datum, ...] | None:
+    """The values a value to be set by an envelope (``max``, ``min``,
+    ``strictest``, a classification) may take, as the admissibility
+    patterns read them: the ends of an interval of numbers (its bound and
+    an infinity on the side of the bound; ``-inf`` and ``inf`` without a
+    bound), or the labels of its order at least as strict as its bound
+    (every label without a bound, none when the order is not known);
+    ``None`` for any other value, which leaves its requirement not
+    applicable. A label bound outside its order is returned alone, for
+    :func:`evaluate` to refuse."""
+    d = value.derivation
+    if not value.to_be_set or d is None:
+        return None
+    side = ENVELOPES.get((d.name, d.rule))
+    if side is None:
+        return None
+    if side != STRICTER:
+        if d.bound is None:
+            return (-math.inf, math.inf)
+        return (d.bound, math.inf if side == "at least" else -math.inf)
+    order = d.settings.get(ORDERS[d.name])
+    if d.bound is None:
+        return order if isinstance(order, tuple) else ()
+    if not isinstance(order, tuple) or d.bound not in order:
+        return (d.bound,)
+    return order[order.index(d.bound) :]
+
+
 def _agreement(value: Value) -> tuple[object, ...]:
     """What two values of the same precedence share when they agree: the
-    value, whether it is not applicable, and for a value to be set the
-    side and the bound of its derivation, which decide arcs."""
-    return (value.value, value.not_applicable is not None, _bound_side(value))
+    value, whether it is not applicable, and for a value to be set by an
+    envelope, the values it may take, which decide arcs (a value to be set
+    otherwise decides none)."""
+    return (value.value, value.not_applicable is not None, _may_take(value))
 
 
 def _disagreeing(value: Value) -> object:
     """A value, as a disagreement shows it."""
     if value.not_applicable is not None:
         return "not applicable"
-    bounded = _bound_side(value)
-    if bounded is not None:
-        side, bound = bounded
-        return f"to be set, {side} {_datum_text(bound, value.unit)}"
-    return value.value
+    taken = _may_take(value)
+    d = value.derivation
+    if taken is None or d is None:
+        return value.value
+    side = ENVELOPES[d.name, d.rule]
+    bound = "" if d.bound is None else f", {side} {_datum_text(d.bound, value.unit)}"
+    if side == STRICTER:
+        return f"to be set{bound}: one of {list(taken)}"
+    return f"to be set{bound}" if bound else f"to be set by {d.rule}, without a bound"
 
 
 def _aliases(parameters: Iterable[Parameter]) -> dict[tuple[str, str], str]:

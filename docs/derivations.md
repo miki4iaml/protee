@@ -123,10 +123,13 @@ too (`"not applicable to any member of 'G': A (carried by B)"`), and a
 requirement that needs it is not applicable, with that reason. In
 `resolve_values`, a value not applicable and a value to be set of the
 same precedence disagree: one of them must prevail by its precedence. So
-do two values to be set whose derivations bound them apart (a partial
-envelope at most 0.5 m and a value to be set without a bound, or two
-envelopes of different bounds), since the bound decides arcs: the names
-of their rulebooks never settle it.
+do two values to be set that may take different values, since they
+decide arcs differently: an envelope to be set, bounded or not, and a
+value to be set that is no envelope (which leaves its requirement not
+applicable); two envelopes of different bounds; two classes at least as
+strict as the same label in orders that end differently (a class at
+least '2' among 1 to 3, and among 1 to 4). The names of their rulebooks
+never settle it.
 
 ## The policy for the unknown
 
@@ -148,6 +151,15 @@ default:
   parameter has no assumed value is refused, and so is a value assumed
   for a parameter that no rule reads. A value that replaces no input is
   allowed, and not recorded: the same policy serves several variants.
+- **An assumption respects a bound.** An input to be set whose
+  derivation bounds it (a partial envelope read as a member, a partial
+  class) takes the assumed value only if the bound allows it: at least a
+  bound "at least", at most a bound "at most", a label at least as strict
+  as a label bound. Otherwise the derivation is refused, naming the
+  input, the bound, the inputs that fix it and the value assumed
+  (`member 'G1': 'width' is to be set, at least 4.5 m (fixed by A): the
+  value assumed for 'width', 2.5 m, contradicts its bound`): an
+  assumption never passes an arc that a known member fails.
 - **One policy per call.** Two parameters that need two policies take
   two calls on the same group, joined by `Derived.merge`.
 - **Counting the known members only.** `known_only` is refused for
@@ -215,8 +227,9 @@ What they share:
   classification whose comparison goes the way of the bound (a maximum
   under `above` and `at_least`, a minimum under `below` and `at_most`),
   which ranks it at least as its bound; the input stays unknown and
-  counted. A selection by a class to be set gives a value to be set, even
-  when the class is bounded. `Derived.merge` joins the values of several
+  counted, and a bound read in another unit is converted, the conversion
+  recorded. A selection by a class to be set gives a value to be set,
+  even when the class is bounded. `Derived.merge` joins the values of several
   derivations of the same rulebook and edition into one value set:
   `resolve_values` takes one value set per rulebook and edition.
 
@@ -462,8 +475,9 @@ an arc of unknown verdict. `verify_route` and `verify_flow` give
 `not_applied` when the result uses an arc that fails for certain,
 `partial` when it uses unknown arcs, with the bound in their reason:
 `1 arcs unknown; value of 'fording_depth' to be set: no value for
-carrier-c; at most 0.5 m (truck-b)`, and `applied` when every arc it
-uses passes for certain. `check_inputs` says beforehand how many arcs
+carrier-c; at most 0.5 m (truck-b)`, and `applied`, with the bound in
+its reason too, when every arc it uses passes for certain: `applied`
+does not mean that the value is set. `check_inputs` says beforehand how many arcs
 fail at the bound, and how many pass whatever the value.
 
 **Values to be set that stay not applicable.** A requirement whose value
@@ -528,8 +542,10 @@ The extra brings pint (0.26 or later), imported on first use, never by
   of different dimensions, an angle and a unit that is not one (pint
   counts both without dimension, but a grade in % is the tangent of its
   angle, not a multiple of it), a factor that is not a rational number
-  (degrees to radians involves pi, which pint gives to 50 digits; a unit
-  defined by a root): no truncated factor is recorded as exact; a unit
+  (degrees to radians involves pi, which pint gives to 50 digits; the
+  root of a unit scaled by 1000, `km**0.5` to `m**0.5`): no truncated
+  factor is recorded as exact, while a root whose factor is rational
+  converts (`cm**0.5` to `m**0.5`, by 1/10); a unit
   with an offset (`degC`), a calendar convention (a year or a month: pint
   counts 365.25 days and a twelfth of it, a life-cycle profile 366 and
   30.5 days; state such a duration in days), a text, and a value without

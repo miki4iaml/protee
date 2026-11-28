@@ -216,7 +216,9 @@ def column_length(
         not needed, a unit does not convert into the one it is read in
         (different dimensions), a value is out of its range or not
         applicable, a parameter is not in the vocabulary, or the policy
-        assumes a value no input reads or misses one.
+        assumes a value no input reads, misses one, or assumes one that
+        the bound of an input to be set does not allow (see
+        :class:`UnknownRule`).
     ImportError
         If a unit differs and pint is not installed (the optional extra
         ``units``).

@@ -43,7 +43,8 @@ and this project adheres to
   value is itself to be set with a bound on the side of the rule (at
   least a value for `max`, at most for `min`, at least as strict for
   `strictest`, a classification included) counts with its bound, and
-  stays unknown. It returns
+  stays unknown; a bound read in another unit is converted, and its
+  `Conversion` recorded. It returns
   `Derived`, a value set named after the group, which enters
   `resolve_values` like any other, with the tallies (`Tally`) of the
   inputs unknown, assumed and left out; `Derived.merge` joins the values of
@@ -63,7 +64,10 @@ and this project adheres to
   its justification; refused for `sum`, `mean`, `threshold_count` and
   `column_length`, which it would shorten, and for `select_by_class`) and
   `assume` (a value chosen with its justification, recorded with the
-  members it replaces).
+  members it replaces; an input to be set whose derivation bounds it
+  takes it only if its bound allows it, the derivation is refused
+  otherwise, naming the input, the bound, the members that fix it and
+  the value assumed).
 - The trace of a derived value: `Origin.DERIVED`, and `Value.derivation`,
   a `Derivation` that holds the rule, the members that fix the value,
   every input with its source and state (`DerivationInput`), the
@@ -125,8 +129,9 @@ and this project adheres to
   pace in km/h). A unit pint does not know, two units of different
   dimensions, an angle and a unit that is not one (a grade in % is the
   tangent of its angle, not a multiple of it), a factor that is not a
-  rational number (pi in degrees to radians, a root), a unit with an
-  offset (`degC`) and a calendar convention (a year or a month, which pint
+  rational number (pi in degrees to radians, the root of 1000 from
+  `km**0.5` to `m**0.5`, while `cm**0.5` converts to `m**0.5` by 1/10),
+  a unit with an offset (`degC`) and a calendar convention (a year or a month, which pint
   counts as 365.25 days and a twelfth of it) are refused: no truncated
   factor is recorded as exact. Without the extra, an input in another
   unit is refused with an `ImportError` that names `protee[units]`; a
@@ -200,10 +205,11 @@ and this project adheres to
   version.
 - `resolve_values`: a value not applicable and a value to be set of the
   same precedence disagree, and are refused; so do two values to be set
-  whose derivations bound them apart (on another side, by another bound,
-  or one bounded and the other not), whose bound decides arcs: the names
-  of their rulebooks never settle it. Migration: declare which one
-  prevails by a precedence.
+  that may take different values, and so decide arcs differently: an
+  envelope to be set, bounded or not, and a value to be set that is no
+  envelope; envelopes of different bounds; label bounds whose orders
+  allow different labels. The names of their rulebooks never settle it.
+  Migration: declare which one prevails by a precedence.
 - `check_inputs`: `missing_values` lists the values missing or to be set,
   not those declared not applicable; the reason of a value without one is
   that of `evaluate`.
@@ -238,8 +244,9 @@ and this project adheres to
   `isinstance(x, types.MappingProxyType)` becomes
   `isinstance(x, collections.abc.Mapping)`.
 - `Value` keeps a number of another type, a NumPy integer or float, as the
-  Python `int` or `float` of the same value (a NumPy integer was refused,
-  a NumPy float kept as is); a number that no Python number equals, a
+  Python `int` or `float` of the same value (a NumPy integer, and a NumPy
+  float other than a 64-bit one, were refused; a 64-bit one was kept as
+  is); a number that no Python number equals, a
   fraction or a decimal is refused. So do the bound of a `Derivation` and
   the numbers of a `Conversion`, and `readable` shows such a number as
   the Python one.

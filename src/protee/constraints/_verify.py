@@ -63,8 +63,11 @@ class RequirementStatus(StrEnum):
 
     An admissibility requirement whose value is to be set by an envelope
     reads the bound of its known inputs (see :func:`evaluate`): it is
-    ``not_applied`` on an element the bound fails, ``partial`` otherwise,
-    never ``applied`` before its value is set.
+    ``not_applied`` on an element that every value the bound allows
+    fails, ``applied`` when every element in scope passes for every such
+    value (an infinite limit, a class that admits the strictest label of
+    the order), ``partial`` otherwise; its reason gives the bound. So
+    ``applied`` does not mean that the value is set.
     """
 
     APPLIED = "applied"
@@ -202,8 +205,8 @@ def _verdict_check(
     undecided: str | None = None,
 ) -> RequirementCheck:
     """The check of a verdict on ``arcs``; ``undecided`` is why the value
-    of the requirement leaves arcs unknown (a value to be set by an
-    envelope, with its bound), added to the reason."""
+    of the requirement may leave arcs unknown (a value to be set by an
+    envelope, with its bound), added to the reason, whatever the status."""
     rid = requirement.id
     if absent := _absent(requirement, data):
         return _no_data(requirement, absent)
@@ -219,7 +222,11 @@ def _verdict_check(
     if undecided is not None:
         # The braces of the value are kept from format.
         tail = "; " + undecided.replace("{", "{{").replace("}", "}}")
-        texts = ("{} arcs violate it" + tail, "{} arcs unknown" + tail, texts[2])
+        texts = (
+            "{} arcs violate it" + tail,
+            "{} arcs unknown" + tail,
+            "verified on {} arcs" + tail,
+        )
     return _outcome(
         requirement,
         int((v == Verdict.PASS).sum()),
