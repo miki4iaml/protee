@@ -13,6 +13,25 @@ and this project adheres to
 - The concept DOI of protee on Zenodo, `10.5281/zenodo.24619907`, which
   stands for all its versions: in `CITATION.cff`, and as a badge in the
   README.
+- `protee.results`, the result model shared by every method: `Status`
+  gains `feasible` and `limit`; `ResultCore` carries the status, the
+  certificate it calls for, the guarantee of the method, a bound and its
+  gap, the parameters, the counters, the version and the fingerprint of
+  the inputs (`inputs`); `Guarantee` and `MethodInfo` describe the methods
+  of a registry. Conventions in [docs/results.md](docs/results.md).
+- `FlowResult` is built on `ResultCore`: it gains `guarantee`,
+  `parameters` (the effective options, defaults included) and `inputs`.
+  `MethodInfo` gains `problem` and `guarantee`.
+
+### Changed
+
+- `FlowResult` and `MethodInfo` take keyword arguments only.
+- `Status`, `InfeasibleCut`, `NegativeCycle` and `MethodInfo` live in
+  `protee.results`; `protee.flow` and `protee.paths` still export them
+  (the same objects).
+- `protee.constraints.fingerprint` hashes a graph by the fingerprint of
+  its structure, computed once per graph: fingerprints differ from those of
+  0.2.0.
 
 ## [0.2.0] - 2026-11-28
 

@@ -69,6 +69,9 @@ class Digraph:
     _in_start: tuple[int, ...] = field(init=False, repr=False, compare=False)
     _in: tuple[int, ...] = field(init=False, repr=False, compare=False)
     _index: dict[str, int] = field(init=False, repr=False, compare=False)
+    # Fingerprint of the structure, computed once on first demand (see
+    # protee._fingerprint); two threads that compute it write the same value.
+    _fingerprint: str = field(default="", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # Copies: a list passed by the caller could change afterwards.

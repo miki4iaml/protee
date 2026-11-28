@@ -23,6 +23,7 @@ from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
 from protee.graph import Digraph
+from protee.results import NegativeCycle
 
 __all__ = [
     "LexicographicPaths",
@@ -34,23 +35,6 @@ __all__ = [
 ]
 
 type Number = int | float
-
-
-@dataclass(frozen=True, slots=True)
-class NegativeCycle:
-    """A directed cycle of negative total weight.
-
-    Attributes
-    ----------
-    arcs : tuple of int
-        The arcs of the cycle, in order: the head of each arc is the tail
-        of the next one, and the head of the last is the tail of the first.
-    weight : int or float
-        Total weight of the cycle (negative).
-    """
-
-    arcs: tuple[int, ...]
-    weight: Number
 
 
 @dataclass(frozen=True, slots=True)

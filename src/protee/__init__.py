@@ -13,6 +13,8 @@ light:
 - :mod:`protee.io`: node-link JSON, CSV and DIMACS formats;
 - :mod:`protee.structure`: components, degree-2 paths, spanning trees and
   cycle bases;
+- :mod:`protee.results`: the result model shared by every method (status,
+  certificates, guarantee, counters, version, fingerprint of the inputs);
 - :mod:`protee.paths`: shortest paths;
 - :mod:`protee.routes`: routes through waypoints, k shortest paths,
   replacement paths, overlap and most reliable path;
@@ -43,6 +45,7 @@ __all__ = [
     "graph",
     "io",
     "paths",
+    "results",
     "routes",
     "structure",
     "transforms",
