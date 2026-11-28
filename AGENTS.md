@@ -39,7 +39,8 @@ code and the tests enforce it.
    on the same instances. A negative answer comes with a certificate (a
    violated cut for infeasibility, an improving cycle for unboundedness);
    an optimum comes with its dual values; a heuristic result comes with a
-   bound and its gap. Public `verify_*` functions check a result against
+   bound and its gap when a bound is known, otherwise with the property
+   its method guarantees. Public `verify_*` functions check a result against
    the stated constraints, independently of the method that produced it.
 4. **Provenance.** A result records its method, parameters, package
    version and a fingerprint of its inputs, so that it can be replayed.
