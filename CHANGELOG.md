@@ -196,6 +196,15 @@ and this project adheres to
 
 ### Changed
 
+- `docs/security-and-compliance.md` brought up to date for 0.4.0: the extra `units` (pint
+  imported on first use, one registry per process under a lock, no cache on disk,
+  conversions refused rather than guessed), the result model (SHA-256 fingerprints, objects
+  that pickle, never loaded by protee), the libraries bundled in the NumPy and SciPy wheels
+  with their licences, the Zenodo DOIs (the concept DOI, one per version from 0.2.0), the
+  attestations and their verification, and the offline installation with both extras and a
+  requirements file with digests.
+- The gallery draws the three drawings of a system of equations whose loop made curved
+  edges illegible with orthogonal edges.
 - `Value` gains two fields after the others, `not_applicable` and
   `derivation`; a value is built as before. `Value.to_be_set` is false for
   a value not applicable. The fingerprints of value sets, resolved values,
