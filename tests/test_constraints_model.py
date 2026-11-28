@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import copy
 import math
+import pickle
+import re
 
 import pytest
 from constraints_cases import (
@@ -15,6 +18,7 @@ from constraints_cases import (
     PARAMETERS,
     REG,
     SRC,
+    random_case,
     requirement,
     requirement_set,
     value,
@@ -22,13 +26,20 @@ from constraints_cases import (
 )
 
 from protee.constraints import (
+    Assumption,
+    Conversion,
     Correspondence,
+    Derivation,
+    DerivationInput,
     EffectKind,
     Family,
+    LeftOut,
+    LeftOutCause,
     Origin,
     Parameter,
     Relation,
     RequirementSet,
+    RequirementStatus,
     ResolvedValues,
     Rulebook,
     RulebookKind,
@@ -36,8 +47,13 @@ from protee.constraints import (
     Subject,
     Value,
     ValueSet,
+    ValueState,
+    check_inputs,
+    evaluate,
+    fingerprint,
     patterns,
     resolve_values,
+    verify_route,
 )
 
 
@@ -103,6 +119,285 @@ def test_value_types_and_to_be_set() -> None:
         value(math.nan)
     with pytest.raises(TypeError, match="precedence"):
         Value(1, SRC, Origin.CHOICE, precedence=1.5)  # type: ignore[arg-type]
+
+
+CHOSEN = Value(
+    8.0, Source("Planning note"), Origin.CHOICE, unit="m", justification="a choice"
+)
+
+
+def not_applicable(reason: str = "no such part", unit: str | None = "t") -> Value:
+    """A value of regulation A declared not applicable."""
+    return Value(None, SRC, Origin.RULEBOOK, unit=unit, not_applicable=reason)
+
+
+def trace(**fields: object) -> Derivation:
+    """A derivation of the registry, with defaults."""
+    known = DerivationInput("member", "w", "A", ValueState.KNOWN, value(2.0, "m"))
+    given: dict[str, object] = {
+        "name": "aggregate",
+        "rule": "max",
+        "settings": {"of": "w"},
+        "fixed_by": ("A",),
+        "inputs": (known,),
+    }
+    given.update(fields)
+    return Derivation(**given)  # type: ignore[arg-type]
+
+
+def test_a_value_has_four_states() -> None:
+    assert value(1.0).state is ValueState.KNOWN
+    assert value(None).state is ValueState.UNKNOWN
+    assert value(None).to_be_set
+    na = not_applicable()
+    assert na.state is ValueState.NOT_APPLICABLE
+    assert not na.to_be_set
+    assert na.value is None
+    # Assumed is a state of an input of a derivation, never of a value.
+    assert ValueState("assumed") is ValueState.ASSUMED
+    assert RulebookKind("description") is RulebookKind.DESCRIPTION
+    assert Origin("derived") is Origin.DERIVED
+    with pytest.raises(
+        ValueError, match="a value not applicable has no value, got 3.5"
+    ):
+        Value(3.5, SRC, Origin.RULEBOOK, not_applicable="no such part")
+    with pytest.raises(ValueError, match="not_applicable must be a non-empty string"):
+        Value(None, SRC, Origin.RULEBOOK, not_applicable=" ")
+
+
+def test_only_a_derived_value_carries_a_derivation() -> None:
+    derived = Value(2.0, SRC, Origin.DERIVED, unit="m", derivation=trace())
+    assert derived.derivation == trace()
+    with pytest.raises(ValueError, match="a derived value carries its derivation"):
+        Value(2.0, SRC, Origin.DERIVED)
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "only a derived value carries a derivation (origin 'rulebook')"
+        ),
+    ):
+        Value(2.0, SRC, Origin.RULEBOOK, derivation=trace())
+    with pytest.raises(TypeError, match="derivation must be a Derivation"):
+        Value(2.0, SRC, Origin.DERIVED, derivation="max")  # type: ignore[arg-type]
+    bounded = trace(fixed_by=(), unknown=("B",), bound=2.0, bound_fixed_by=("A",))
+    assert Value(None, SRC, Origin.DERIVED, derivation=bounded).to_be_set
+    with pytest.raises(ValueError, match="only a value to be set carries a bound"):
+        Value(2.0, SRC, Origin.DERIVED, derivation=bounded)
+    with pytest.raises(ValueError, match="only a value to be set carries a bound"):
+        Value(None, SRC, Origin.DERIVED, not_applicable="x", derivation=bounded)
+
+
+def test_derivation_is_canonical_and_checked() -> None:
+    a = DerivationInput("member", "w", "A", ValueState.KNOWN, value(2.0, "m"))
+    b = DerivationInput("member", "w", "B", ValueState.UNKNOWN, None, 3)
+    one = trace(inputs=(b, a), fixed_by=("A", "A"), unknown=("B", "B"))
+    two = trace(inputs=[a, b], fixed_by=["A"], unknown=["B"])
+    assert one == two
+    assert fingerprint(one) == fingerprint(two)
+    assert one.inputs == (a, b)
+    assert (one.fixed_by, one.unknown) == (("A",), ("B",))
+    frozen = trace(settings={"order": ["C30", "C50"]})
+    assert frozen.settings == {"order": ("C30", "C50")}
+    assert hash(frozen) == hash(trace(settings={"order": ("C30", "C50")}))
+    left = (
+        LeftOut("Z", LeftOutCause.EXCLUDED, "r", 1),
+        LeftOut("K", LeftOutCause.NOT_APPLICABLE, "carried", 2),
+    )
+    assert trace(left_out=left).left_out == tuple(reversed(left))
+    tonnes = Conversion("B", "w", 3.5, "t", 3500, "kg", "1000")
+    metres = Conversion("A", "w", 1, "km", 1000, "m", "1000")
+    assert trace(conversions=(tonnes, metres)).conversions == (metres, tonnes)
+    with pytest.raises(
+        ValueError,
+        match=re.escape("unknown derivation 'nothing'; one of ['aggregate']"),
+    ):
+        trace(name="nothing")
+    with pytest.raises(
+        ValueError, match=re.escape("aggregate has no rule 'median'; one of ['max'")
+    ):
+        trace(rule="median")
+    with pytest.raises(ValueError, match="two inputs of 'w' for 'A' as 'member'"):
+        trace(inputs=(a, a))
+    with pytest.raises(
+        TypeError, match=re.escape("inputs[0] must be a DerivationInput")
+    ):
+        trace(inputs=("A",))
+    assumption = Assumption("w", CHOSEN, ("B",), 3)
+    other = Assumption("v", CHOSEN, ("C",), 1)
+    assert trace(assumptions=[assumption, other]).assumptions == (other, assumption)
+    with pytest.raises(ValueError, match="two assumptions for 'w'"):
+        trace(assumptions=(assumption, assumption))
+    with pytest.raises(ValueError, match="settings key must be"):
+        trace(settings={"": 1})
+
+
+@pytest.mark.parametrize(
+    ("fields", "error", "message"),
+    [
+        ({"bound": 2.0, "unknown": ("B",)}, ValueError, "comes with the inputs"),
+        ({"bound_fixed_by": ("A",)}, ValueError, "bound_fixed_by is given without"),
+        (
+            {"bound": 2.0, "bound_fixed_by": ("A",)},
+            ValueError,
+            "a bound stands for an unknown value",
+        ),
+        (
+            {"bound": True, "bound_fixed_by": ("A",), "unknown": ("B",)},
+            TypeError,
+            "a bound is a number or a label",
+        ),
+        (
+            {"bound": math.nan, "bound_fixed_by": ("A",), "unknown": ("B",)},
+            ValueError,
+            "a bound cannot be NaN",
+        ),
+    ],
+)
+def test_a_bound_comes_with_its_inputs_and_unknowns(
+    fields: dict[str, object], error: type[Exception], message: str
+) -> None:
+    with pytest.raises(error, match=message):
+        trace(**fields)
+
+
+def test_trace_records_check_their_fields() -> None:
+    zero = LeftOut("A", "zero_count", "count 0", 0)  # type: ignore[arg-type]
+    assert zero.cause is LeftOutCause.ZERO_COUNT
+    with pytest.raises(ValueError, match="reason must be a non-empty string"):
+        LeftOut("A", LeftOutCause.EXCLUDED, "", 1)
+    with pytest.raises(ValueError, match="instances must be at least 0"):
+        LeftOut("A", LeftOutCause.EXCLUDED, "r", -1)
+    assert Assumption("w", CHOSEN, ("B", "A", "B"), 2).holders == ("A", "B")
+    with pytest.raises(ValueError, match="names its holders"):
+        Assumption("w", CHOSEN, (), 1)
+    with pytest.raises(ValueError, match="instances must be at least 1"):
+        Assumption("w", CHOSEN, ("A",), 0)
+    with pytest.raises(ValueError, match="is a choice"):
+        Assumption("w", value(1.0, "m"), ("A",), 1)
+    with pytest.raises(TypeError, match="must be a Value"):
+        Assumption("w", 1.0, ("A",), 1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="converted must be a number"):
+        Conversion(None, "w", 1, "km", "1000", "m", "1000")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="factor must be a non-empty string"):
+        Conversion(None, "w", 1, "km", 1000, "m", "")
+    with pytest.raises(ValueError, match="holder must be a non-empty string"):
+        Conversion("", "w", 1, "km", 1000, "m", "1000")
+
+
+@pytest.mark.parametrize(
+    ("args", "error", "message"),
+    [
+        (("member", "w", "A", "assumed", None), ValueError, "an input assumed carries"),
+        (
+            ("member", "w", "A", ValueState.NOT_APPLICABLE, None),
+            ValueError,
+            "an input not_applicable carries its value",
+        ),
+        (
+            ("member", "w", "A", ValueState.KNOWN, value(None, "m")),
+            ValueError,
+            "an input known cannot carry a value unknown",
+        ),
+        (
+            ("member", "w", "A", ValueState.ASSUMED, value(1.0, "m")),
+            ValueError,
+            "is a choice",
+        ),
+        (("member", "w", "A", ValueState.KNOWN, 1.0), TypeError, "a Value or None"),
+        (("member", "w", "", ValueState.KNOWN, None), ValueError, "holder must be"),
+        (("", "w", "A", ValueState.KNOWN, None), ValueError, "role must be"),
+        (("member", "w", "A", ValueState.KNOWN, None, 0), ValueError, "at least 1"),
+    ],
+)
+def test_derivation_input_checks_its_state(
+    args: tuple[object, ...], error: type[Exception], message: str
+) -> None:
+    with pytest.raises(error, match=message):
+        DerivationInput(*args)  # type: ignore[arg-type]
+
+
+def test_derivation_input_states() -> None:
+    known = DerivationInput("member", "w", "A", ValueState.KNOWN, value(2.0, "m"))
+    assert known.instances == 1
+    unknown = DerivationInput("member", "w", "A", "unknown", value(None, "m"))  # type: ignore[arg-type]
+    assert unknown.state is ValueState.UNKNOWN
+    na = DerivationInput(
+        "member", "w", "A", ValueState.NOT_APPLICABLE, not_applicable()
+    )
+    assert na.value is not None
+    assumed = DerivationInput("member", "w", "A", ValueState.ASSUMED, CHOSEN, 3)
+    assert assumed.value == CHOSEN
+    threshold = DerivationInput("threshold", "w", None, ValueState.KNOWN, value(1.0))
+    assert threshold.holder is None
+
+
+def test_a_value_not_applicable_disagrees_with_a_value_to_be_set() -> None:
+    reqs = requirement_set()
+    doctrine = ValueSet(
+        "doc-b",
+        "2019",
+        {"vehicle_mass": Value(None, DOC_SRC, Origin.RULEBOOK, unit="t")},
+    )
+    na = ValueSet("reg-a", "2006", {"total_mass": not_applicable()})
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "values [None, 'not applicable'] disagree with the same precedence"
+        ),
+    ):
+        resolve_values([na, doctrine], reqs)
+    both = ValueSet(
+        "doc-b",
+        "2019",
+        {
+            "vehicle_mass": Value(
+                None, DOC_SRC, Origin.RULEBOOK, unit="t", not_applicable="other reason"
+            )
+        },
+    )
+    agreed = resolve_values([na, both], reqs)
+    assert agreed.values["vehicle_mass"].state is ValueState.NOT_APPLICABLE
+    assert "vehicle_mass" not in agreed.missing
+
+
+def test_a_value_not_applicable_makes_its_requirement_not_applicable() -> None:
+    case = random_case(1)
+    graph, data = case.graph, case.data()
+    reqs = requirement_set()
+    vs = ValueSet(
+        "reg-a",
+        "2006",
+        {**values().values, "total_mass": not_applicable("no mass limit applies")},
+    )
+    resolved = resolve_values([vs], reqs)
+    reason = "value of 'vehicle_mass' not applicable: no mass limit applies"
+    effect = evaluate(MASS, graph, data, resolved)
+    assert effect.not_applicable == reason
+    check = check_inputs(reqs, graph, data, resolved)["ADM-MASS"]
+    assert check.expected is RequirementStatus.NOT_APPLICABLE
+    assert (check.reason, check.missing_values) == (reason, ())
+    verification = verify_route([0], reqs, graph, data, resolved)
+    status = {c.requirement: (c.status, c.reason) for c in verification}
+    assert status["ADM-MASS"] == (RequirementStatus.NOT_APPLICABLE, reason)
+    # A value to be set keeps its reason, and is missing.
+    unset = resolve_values([values(mass=None)], reqs)
+    check = check_inputs(reqs, graph, data, unset)["ADM-MASS"]
+    assert (check.reason, check.missing_values) == (
+        "value of 'vehicle_mass' to be set",
+        ("vehicle_mass",),
+    )
+
+
+def test_the_requirement_model_pickles_copies_and_hashes() -> None:
+    reqs = requirement_set()
+    resolved = resolve_values([values()], reqs)
+    for x in (values(), reqs, resolved, REG, PARAMETERS[0], MASS):
+        assert pickle.loads(pickle.dumps(x)) == x
+        assert copy.deepcopy(x) == x
+    # Rulebooks and parameters hash now that their tables are frozen maps.
+    assert len({REG, pickle.loads(pickle.dumps(REG))}) == 1
+    assert hash(PARAMETERS[0]) == hash(pickle.loads(pickle.dumps(PARAMETERS[0])))
+    assert pickle.loads(pickle.dumps(reqs))["ADM-MASS"] == MASS
 
 
 def test_value_set_checks_its_entries() -> None:

@@ -8,6 +8,80 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- A phase *derive* before *evaluate* in `protee.constraints`: the values
+  on the side of the subject, derived from its description, each with its
+  trace. A `Member` is described by its technical sheets, value sets of a
+  rulebook of the new kind `RulebookKind.DESCRIPTION`; a `Group` holds
+  members or groups with their counts, positive integers, nested to any
+  depth (`Group.flatten` multiplies the counts along the path).
+  `Group.from_counts` builds a group from a table of counts and declares
+  what a row of count 0 does (`ZeroCount.REFUSE`, or `ZeroCount.DROP`,
+  which records it); `Group.with_counts` makes a variant with other counts
+  under its own identifier (`variant_of`), the base of a sensitivity
+  analysis; `Group.without` a declared sub-group, each exclusion recorded
+  with its reason.
+- `aggregate`, the first derivation of the closed registry
+  `derivations()` (`DerivationInfo`): the values of a group from those of
+  its members, by a rule declared for each output parameter
+  (`Aggregation`, `AggregateKind`): `max`, `min`, `strictest` in a
+  declared order, `sum` and `mean` weighted by the counts, `count`, and
+  `threshold_count`, the members beyond a threshold by a declared
+  `Comparison` (`above`, `at_least`, `below`, `at_most`). The arithmetic is
+  exact (a float read as the decimal it shows, the result rounded once):
+  the result depends on the multiset of the members only. It returns
+  `Derived`, a value set named after the group, which enters
+  `resolve_values` like any other, with the tallies (`Tally`) of the
+  inputs unknown, assumed and left out; `Derived.merge` joins the values of
+  several calls on the same subject.
+- Four states of a value (`ValueState`): known, unknown (to be set),
+  assumed (by a derivation only) and not applicable, declared with its
+  reason in `Value.not_applicable`, and the TOML key `not_applicable` of
+  `protee-rulebook-values/0`. A requirement that needs a value not
+  applicable is not applicable, with that reason, in `evaluate`,
+  `check_inputs`, `verify_route` and `verify_flow`; a derivation leaves
+  such an input out, under every policy.
+- `OnUnknown`, the policy of a derivation for the inputs without a value,
+  stated without default (`UnknownRule`): `propagate` (the value is to be
+  set; only the last label of a `strictest` order decides despite unknown
+  inputs), `known_only` (with its justification; refused for `sum`, `mean`
+  and `threshold_count`, which it would shorten) and `assume` (a value
+  chosen with its justification, recorded with the members it replaces).
+- The trace of a derived value: `Origin.DERIVED`, and `Value.derivation`,
+  a `Derivation` that holds the rule, the members that fix the value,
+  every input with its source and state (`DerivationInput`), the
+  assumptions (`Assumption`), the members left out (`LeftOut`,
+  `LeftOutCause`), the unknown inputs and, for an envelope (`max`, `min`,
+  `strictest`) to be set, the extreme of the known members as `bound`;
+  `Conversion` records the conversion of an input into the unit of its
+  parameter. A requirement whose derived value is to be set names the
+  members without a value.
+
+### Changed
+
+- `Value` gains two fields after the others, `not_applicable` and
+  `derivation`; a value is built as before. `Value.to_be_set` is false for
+  a value not applicable. The fingerprints of value sets, resolved values,
+  provenance records and every result whose inputs hold values differ from
+  those of 0.3.0, the canonical form of a value having two more fields: a
+  provenance recorded with 0.3.0 does not replay, as with any other
+  version.
+- `resolve_values`: a value not applicable and a value to be set of the
+  same precedence disagree, and are refused. Migration: declare which one
+  prevails by a precedence.
+- `check_inputs`: `missing_values` lists the values missing or to be set,
+  not those declared not applicable; the reason of a value without one is
+  that of `evaluate`.
+- The tables of the requirement model (`ValueSet.values`, `Rulebook.title`,
+  `Parameter.aliases`, the mappings of `Requirement`, `ResolvedValues`) are
+  frozen mappings (`FrozenMap`) instead of `types.MappingProxyType`: still
+  read-only, they pickle and copy, so that value sets, requirement sets and
+  resolved values can leave a worker process; rulebooks, parameters and
+  requirements hash. Migration: a test
+  `isinstance(x, types.MappingProxyType)` becomes
+  `isinstance(x, collections.abc.Mapping)`.
+
 ## [0.3.0] - 2026-11-28
 
 A common result model. Every method of protee returns a result built on

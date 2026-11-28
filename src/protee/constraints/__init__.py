@@ -10,6 +10,18 @@ client), never a dependency of a package. Its pattern turns it into a
 
 The phases come in a fixed order:
 
+0. **derive** (:func:`aggregate`): the values on the side of the subject,
+   from its description. A :class:`Member` is described by its sheets (value
+   sets of rulebooks of kind ``description``), a :class:`Group` holds
+   members or groups with their counts; a derivation of the closed registry
+   (:func:`derivations`) gives a value per parameter, each with its
+   :class:`Derivation`: the rule, the members that fix it and the source of
+   every input. A value of a member is known, unknown, assumed (by the
+   derivation, :class:`OnUnknown`) or not applicable (declared, with its
+   reason); the caller states the policy for the unknown, without default,
+   and the :class:`Derived` values count their unknowns. A description
+   produces no constraint: its values enter :func:`resolve_values` like any
+   other;
 1. **evaluate** (:func:`evaluate`): one :class:`Effect` per requirement,
    from the arc attributes (:class:`ArcData`) and the values retained by
    precedence (:func:`resolve_values`); an arc without data gets the
@@ -47,8 +59,17 @@ Provisional API (until version 1.0).
 
 from __future__ import annotations
 
+from protee.constraints._aggregate import AggregateKind, Aggregation, aggregate
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData, Attribute
+from protee.constraints._derivations import DerivationInfo, derivations
+from protee.constraints._derive import (
+    Comparison,
+    Derived,
+    OnUnknown,
+    Tally,
+    UnknownRule,
+)
 from protee.constraints._effects import Effect, Reason, Verdict, evaluate
 from protee.constraints._failure import (
     Conflict,
@@ -64,9 +85,16 @@ from protee.constraints._failure import (
     minimal_relaxation,
     relax_by_tiers,
 )
+from protee.constraints._groups import Group, Member, ZeroCount
 from protee.constraints._inputs import InputCheck, InputReport, check_inputs
 from protee.constraints._model import (
+    Assumption,
+    Conversion,
     Correspondence,
+    Derivation,
+    DerivationInput,
+    LeftOut,
+    LeftOutCause,
     Origin,
     Parameter,
     Relation,
@@ -78,6 +106,7 @@ from protee.constraints._model import (
     Source,
     Value,
     ValueSet,
+    ValueState,
     resolve_values,
 )
 from protee.constraints._patterns import EffectKind, Family, Pattern, Subject, patterns
@@ -94,19 +123,33 @@ from protee.constraints._verify import (
 )
 
 __all__ = [
+    "AggregateKind",
+    "Aggregation",
     "ArcData",
+    "Assumption",
     "Attribute",
+    "Comparison",
     "ComputationView",
     "Conflict",
+    "Conversion",
     "Correspondence",
+    "Derivation",
+    "DerivationInfo",
+    "DerivationInput",
+    "Derived",
     "Effect",
     "EffectKind",
     "Family",
     "FlowSearch",
+    "Group",
     "Impact",
     "InfeasibleSubset",
     "InputCheck",
     "InputReport",
+    "LeftOut",
+    "LeftOutCause",
+    "Member",
+    "OnUnknown",
     "Origin",
     "Parameter",
     "Pattern",
@@ -127,15 +170,21 @@ __all__ = [
     "RulebookValues",
     "Source",
     "Subject",
+    "Tally",
     "Tier",
     "TieredRelaxation",
     "UnknownPolicy",
+    "UnknownRule",
     "Value",
     "ValueSet",
+    "ValueState",
     "Verdict",
     "Verification",
+    "ZeroCount",
+    "aggregate",
     "check_inputs",
     "compose",
+    "derivations",
     "evaluate",
     "fingerprint",
     "methods",

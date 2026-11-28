@@ -13,7 +13,7 @@ from types import MappingProxyType
 import numpy as np
 
 from protee.constraints._data import ArcData
-from protee.constraints._effects import Reason, evaluate
+from protee.constraints._effects import Reason, evaluate, unset_reason
 from protee.constraints._model import Requirement, RequirementSet, ResolvedValues
 from protee.constraints._patterns import PATTERNS, EffectKind
 from protee.constraints._verify import RequirementStatus
@@ -35,10 +35,13 @@ class InputCheck:
         ``partial`` when only arcs without data can, ``not_applied`` when
         no arc can (every known value fails), ``no_data`` when an
         attribute is absent, ``not_applicable`` when a value is to be set
-        or no arc is in scope.
+        or not applicable, or no arc is in scope.
     reason : str
+        For a value to be set or not applicable, the reason
+        :func:`evaluate` gives.
     missing_values : tuple of str
-        Parameters to be set or without a value.
+        Parameters to be set or without a value (not those declared not
+        applicable).
     missing_attributes : tuple of str
         Attributes absent from the data.
     known, total : int
@@ -168,8 +171,10 @@ def _check(
         missing_attributes=missing_attributes,
         derived=derived,
     )
-    if missing_values:
-        return replace(base, reason=f"value of {missing_values[0]!r} to be set")
+    # A value missing, to be set or not applicable: the reason of evaluate.
+    unset = unset_reason(requirement, values)
+    if unset is not None:
+        return replace(base, reason=unset)
     scope = data.in_scope(requirement.scope)
     total = int(scope.sum())
     if missing_attributes:
