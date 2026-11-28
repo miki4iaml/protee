@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- `docs/derivations.md`: the derive phase in the requirement chain (members and groups, the
+  four states of a value, the policies for the unknown, each derivation of the registry, the
+  trace of a derived value and what the requirement table shows, the partial envelope, the
+  direction of an envelope and `capacity_admissibility`, the optional extra `units`), with two
+  worked examples (the order of 4 May 2006, a group that crosses fords) and a note on
+  life-cycle profiles; the README presents it. The check of a published version
+  (CONTRIBUTING, *Releasing*) refreshes the cache of uv and installs the extra `units` too.
 - A phase *derive* before *evaluate* in `protee.constraints`: the values
   on the side of the subject, derived from its description, each with its
   trace. A `Member` is described by its technical sheets, value sets of a
