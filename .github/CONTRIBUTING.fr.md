@@ -189,12 +189,14 @@ que dans `pyproject.toml`, et lue par `importlib.metadata`. Suivre ces
 ### Avant la première version
 
 - PyPI et TestPyPI : déclarer le workflow de publication comme
-  publieur de confiance (environnements `pypi` et `testpypi`). Une
-  déclaration à l'avance ne réserve pas le nom : c'est le premier envoi
-  qui le réserve.
+  publieur de confiance (environnements `pypi` et `testpypi`). Son champ
+  de dépôt attend le seul nom du dépôt (`protee`) : le propriétaire a
+  son propre champ. Une déclaration à l'avance ne réserve pas le nom :
+  c'est le premier envoi qui le réserve.
 - Zenodo : activer le dépôt depuis le compte de l'identité de
-  publication. `.zenodo.json` nomme le créateur : sans nom, l'archivage
-  échoue sans message d'erreur.
+  publication. Après « Sync now », la liste des dépôts ne se met à jour
+  qu'une fois la page rechargée. `.zenodo.json` nomme le créateur : sans
+  nom, l'archivage échoue sans message d'erreur.
 
 ### À chaque version
 
@@ -238,7 +240,15 @@ que dans `pyproject.toml`, et lue par `importlib.metadata`. Suivre ces
 - La roue publiée est téléchargée (`pip download protee==x.y.z
   --no-deps`, ou `curl -L` : sans `-L`, la redirection de PyPI donne un
   fichier vide) et vérifiée :
-  `gh attestation verify <roue> --repo miki4iaml/protee`.
+  `gh attestation verify <roue> --repo miki4iaml/protee` pour la
+  provenance du build, puis avec
+  `--predicate-type https://cyclonedx.org/bom` pour le SBOM, que la
+  première commande ne vérifie pas.
+- La version publiée s'installe dans un environnement isolé, avec son
+  extra, sous la plus basse et la plus haute version de Python prises en
+  charge : `uv run --isolated --no-project --python 3.12 --with
+  "protee[viz]==x.y.z" python -c "import protee.viz"`, puis de même avec
+  `3.14`.
 - Conclure d'après PyPI, pas d'après l'état qu'affiche GitHub : un job
   peut sembler encore en attente quand PyPI a déjà les fichiers.
 
