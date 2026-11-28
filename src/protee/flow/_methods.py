@@ -7,10 +7,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from types import MappingProxyType
 
-from protee import __version__
 from protee.flow._augmenting import cycle_canceling, successive_shortest_paths
 from protee.flow._feasibility import Feasibility, check_feasibility
 from protee.flow._normal import (
@@ -23,36 +22,9 @@ from protee.flow._normal import (
 from protee.flow._problem import FlowProblem, Sense
 from protee.flow._result import Certificate, FlowResult, Status
 from protee.flow._simplex import NetworkSimplex, PivotRule
+from protee.results import Guarantee, GuaranteeKind, MethodInfo
 
 type Number = int | float
-
-
-@dataclass(frozen=True, slots=True)
-class MethodInfo:
-    """Description of a flow method of the registry.
-
-    Attributes
-    ----------
-    name : str
-        The name to pass as ``method``.
-    summary : str
-    warm_start : bool
-        Whether :meth:`Prepared.solve` reuses the previous solution after a
-        change of costs.
-    complexity : str
-        Worst-case bound, with ``n`` nodes, ``m`` arcs, ``U`` the largest
-        capacity and ``C`` the largest absolute cost.
-    reference : str
-    options : tuple of str
-        Keyword options accepted by :func:`solve` and :func:`prepare`.
-    """
-
-    name: str
-    summary: str
-    warm_start: bool
-    complexity: str
-    reference: str
-    options: tuple[str, ...]
 
 
 class Prepared(ABC):
@@ -63,9 +35,15 @@ class Prepared(ABC):
     solution; the others start again.
     """
 
-    def __init__(self, problem: FlowProblem, method: MethodInfo) -> None:
+    def __init__(
+        self,
+        problem: FlowProblem,
+        method: MethodInfo,
+        parameters: Mapping[str, object] | None = None,
+    ) -> None:
         self.problem = problem
         self.method = method
+        self.parameters: Mapping[str, object] = MappingProxyType(dict(parameters or {}))
         self._normal = normalize(problem)
         self._unbounded = UnboundedCheck(problem)
         self._feasibility: Feasibility | None = None
@@ -130,12 +108,14 @@ class Prepared(ABC):
         return FlowResult(
             status=status,
             method=self.method.name,
+            guarantee=self.method.guarantee,
+            parameters=self.parameters,
+            counters=counters,
+            certificate=certificate,
             objective=None if flow is None else problem.objective(flow),
             flow=flow,
             potentials=None if potentials is None else tuple(potentials),
-            certificate=certificate,
-            counters=MappingProxyType(dict(counters)),
-            version=__version__,
+            _sources=(problem,),
         )
 
 
@@ -146,7 +126,7 @@ class _PreparedSimplex(Prepared):
         method: MethodInfo,
         pivot_rule: PivotRule = "block_search",
     ) -> None:
-        super().__init__(problem, method)
+        super().__init__(problem, method, {"pivot_rule": pivot_rule})
         self._simplex = NetworkSimplex(self._normal, pivot_rule)
 
     def _run(
@@ -194,31 +174,35 @@ _FACTORIES: dict[str, Callable[..., Prepared]] = {
     "successive_shortest_paths": _PreparedSuccessiveShortestPaths,
 }
 
+_EXACT = Guarantee(GuaranteeKind.EXACT, "optimal flow and optimal potentials")
+
 METHODS: Mapping[str, MethodInfo] = MappingProxyType(
     {
         "network_simplex": MethodInfo(
-            "network_simplex",
-            "Primal network simplex, strongly feasible trees (Cunningham), big-M start.",
-            True,
-            "finite (anti-cycling); pseudo-polynomial bounds in practice",
-            "Ahuja, Magnanti, Orlin, Network Flows (1993), ch. 11; Cunningham (1976)",
-            ("pivot_rule",),
+            name="network_simplex",
+            problem="min_cost_flow",
+            summary="Primal network simplex, strongly feasible trees (Cunningham), big-M start.",
+            guarantee=_EXACT,
+            complexity="finite (anti-cycling); pseudo-polynomial bounds in practice",
+            reference="Ahuja, Magnanti, Orlin, Network Flows (1993), ch. 11; Cunningham (1976)",
+            warm_start=True,
+            options=("pivot_rule",),
         ),
         "cycle_canceling": MethodInfo(
-            "cycle_canceling",
-            "Feasible flow by maximum flow, then cancel negative residual cycles (Bellman-Ford).",
-            False,
-            "O(n m^2 C U)",
-            "Klein (1967); Ahuja, Magnanti, Orlin (1993), section 9.6",
-            (),
+            name="cycle_canceling",
+            problem="min_cost_flow",
+            summary="Feasible flow by maximum flow, then cancel negative residual cycles (Bellman-Ford).",
+            guarantee=_EXACT,
+            complexity="O(n m^2 C U)",
+            reference="Klein (1967); Ahuja, Magnanti, Orlin (1993), section 9.6",
         ),
         "successive_shortest_paths": MethodInfo(
-            "successive_shortest_paths",
-            "Augment along shortest paths with node potentials (Dijkstra on reduced costs).",
-            False,
-            "O(n U (m + n log n)), U the total supply after saturation",
-            "Edmonds, Karp (1972); Tomizawa (1971); Ahuja, Magnanti, Orlin (1993), section 9.7",
-            (),
+            name="successive_shortest_paths",
+            problem="min_cost_flow",
+            summary="Augment along shortest paths with node potentials (Dijkstra on reduced costs).",
+            guarantee=_EXACT,
+            complexity="O(n U (m + n log n)), U the total supply after saturation",
+            reference="Edmonds, Karp (1972); Tomizawa (1971); Ahuja, Magnanti, Orlin (1993), section 9.7",
         ),
     }
 )
