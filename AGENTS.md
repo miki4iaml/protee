@@ -48,7 +48,10 @@ code and the tests enforce it.
    comes from a requirement and keeps its source: source, normalized
    requirement, named constraint pattern, values, named method, proof.
    Constraint patterns have explicit, generic names; their values come
-   from value sets, each value with its source, edition and precedence.
+   from value sets, each value with its source, edition and precedence,
+   or are derived from the description of a subject (a vehicle, a group
+   of vehicles, an equipment and its variants) by a named derivation
+   that keeps the sources of its inputs.
    The package ships only value sets taken from public texts, as
    examples and for end-to-end tests. A constraint never modifies the
    graph: it returns an immutable effect (a verdict, a cost term or a
@@ -119,9 +122,11 @@ and the resulting schedule.
   methods (`protee.paths`, `protee.routes`, `protee.flow`) → diagnostics
   (`protee.flow.diagnostics`); `protee.transforms` supports the methods;
   `protee.io` reads and writes the formats.
-- Requirements go through fixed phases: evaluate (one effect per
-  requirement) → compose (a computation view: mask and cost vector, with
-  links back to the effects) → transform (protected nodes, mapping back)
+- Requirements go through fixed phases: derive (the values of a
+  described subject: each derived value keeps its rule and the member
+  that fixes it) → evaluate (one effect per requirement) → compose (a
+  computation view: mask and cost vector, with links back to the
+  effects) → transform (protected nodes, mapping back)
   → solve → verify → explain. Topology transformations come after the
   effects; route-level constraints act during the search.
 - Core dependencies: NumPy and SciPy, chosen with the dependency grid;
