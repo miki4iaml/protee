@@ -21,6 +21,12 @@ A conversion is refused, rather than guessed, for:
 - a unit pint does not know (a unit of count such as ``veh/km`` is written
   ``1/km``);
 - two units of different dimensions;
+- an angle and a unit that is not one, although pint counts both without
+  dimension: a grade in ``%`` is the tangent of its angle, not a multiple
+  of it;
+- a factor that is not a rational number, which pint would truncate (an
+  angle in degrees to radians involves pi, a unit defined by a root
+  involves a square root): no truncated factor is recorded as exact;
 - a unit with an offset, which does not keep 0 at 0 (``degC``);
 - a calendar convention (a year or a month, whatever its kind): pint counts
   a year as 365.25 days and a month as a twelfth of it, where a life-cycle
@@ -35,7 +41,7 @@ from fractions import Fraction
 from tokenize import TokenError
 from typing import Any
 
-from protee.constraints._model import Value
+from protee.constraints._model import Value, _plain_number
 
 __all__ = ["readable"]
 
@@ -59,10 +65,22 @@ _CALENDAR = frozenset(
     }
 )
 
+#: The constants of pint that are not rational numbers, which its
+#: definitions give to 50 digits: a factor that involves one is truncated.
+_IRRATIONAL = frozenset({"pi", "tansec", "ln10", "wien_x", "wien_u", "eulers_number"})
+
 #: What pint raises for a unit it cannot read or convert: its own errors
 #: derive from ``ValueError``, ``TypeError`` or ``AttributeError``; its
-#: parser also lets through errors of the tokenizer and of the arithmetic.
-_PINT_ERRORS = (ArithmeticError, AttributeError, TokenError, TypeError, ValueError)
+#: parser also lets through errors of the tokenizer, of the arithmetic, and
+#: of a lookup (a zero exponent, ``m**0``).
+_PINT_ERRORS = (
+    ArithmeticError,
+    AttributeError,
+    LookupError,
+    TokenError,
+    TypeError,
+    ValueError,
+)
 
 _LOCK = threading.Lock()
 #: The registry of the process, created by :func:`_registry` on first use.
@@ -110,6 +128,41 @@ def _calendar(registry: Any, parsed: Any) -> str | None:
     return None
 
 
+def _angle(registry: Any, parsed: Any) -> Fraction:
+    """The exponent of the radian in the root units of ``parsed``, 0 for a
+    unit that is no angle; the caller holds the lock."""
+    _, root = registry.get_root_units(parsed)
+    return Fraction(dict(root._units).get("radian", 0))
+
+
+def _irrational(registry: Any, parsed: Any) -> tuple[dict[str, Fraction], bool]:
+    """The exponents of the irrational constants in the definition of
+    ``parsed``, and whether a number in it is raised to a fractional power
+    (a root); the caller holds the lock."""
+    constants: dict[str, Fraction] = {}
+    root = False
+    stack = [(name, Fraction(e)) for name, e in parsed._units.items()]
+    while stack:
+        name, exponent = stack.pop()
+        prefix, base, _ = registry.parse_unit_name(name)[0]
+        fractional = exponent.denominator != 1
+        if prefix and fractional:  # the root of a prefix: (km)**0.5
+            root = True
+        if base in _IRRATIONAL:
+            constants[base] = constants.get(base, Fraction(0)) + exponent
+            continue
+        definition = registry._units[base]
+        if definition.is_base:
+            continue
+        if fractional and getattr(definition.converter, "scale", 1) != 1:
+            root = True
+        stack += [
+            (reference, exponent * Fraction(e))
+            for reference, e in definition.reference.items()
+        ]
+    return constants, root
+
+
 def _factor(unit: str, to_unit: str, what: str) -> Fraction:
     """The exact factor from ``unit`` to ``to_unit``.
 
@@ -122,7 +175,8 @@ def _factor(unit: str, to_unit: str, what: str) -> Fraction:
         If pint is not installed (the optional extra ``units``).
     ValueError
         If pint does not know a unit, a unit is a calendar convention or has
-        an offset, or the two units differ in dimension.
+        an offset, the two units differ in dimension, one is an angle and
+        the other not, or the factor is not a rational number.
     """
     head = f"{what} in {unit!r}, the parameter is in {to_unit!r}"
     registry = _registry(f"{head}: converting")
@@ -149,6 +203,8 @@ def _factor(unit: str, to_unit: str, what: str) -> Fraction:
                 for p in parsed
             ]
             factor = registry.Quantity(Fraction(1), source).to(target).magnitude
+            angles = [_angle(registry, p) for p in parsed]
+            found = [_irrational(registry, p) for p in parsed]
         except _PINT_ERRORS as err:  # a logarithmic unit, for one
             raise ValueError(
                 f"{head}: pint cannot convert {unit!r} to {to_unit!r} exactly"
@@ -158,6 +214,24 @@ def _factor(unit: str, to_unit: str, what: str) -> Fraction:
             raise ValueError(
                 f"{head}: {u!r} has an offset: only a unit that keeps 0 at 0 converts"
             )
+    if angles[0] != angles[1]:
+        raise ValueError(
+            f"{head}: cannot convert {unit!r} to {to_unit!r}: an angle converts "
+            "into an angle only (a grade in % is the tangent of its angle, not a "
+            "multiple of it)"
+        )
+    (constants, rooted), (other, other_rooted) = found
+    involved = sorted(
+        name
+        for name in constants.keys() | other.keys()
+        if constants.get(name, 0) != other.get(name, 0)
+    )
+    if involved or rooted or other_rooted:
+        why = f"the constant {involved[0]!r}" if involved else "a root"
+        raise ValueError(
+            f"{head}: the factor from {unit!r} to {to_unit!r} involves {why}, "
+            "which is not a rational number: no exact factor"
+        )
     return Fraction(factor)
 
 
@@ -194,20 +268,25 @@ def readable(value: Value | float, unit: str | None = None) -> str:
     - a length in kilometres from 1 km on, with three decimals at most,
       and in metres below, with two: ``"12.4 km"``, ``"350 m"``,
       ``"0.75 m"``;
-    - any other number with its unit, ``f"{x:g} {unit}"``, and a label as
-      it is;
+    - any other number with its unit, if any: six significant digits, its
+      integer part kept whole (``"1234567 kg"``, ``"0.123457"``), in
+      positional notation from 1e-6 to 1e15 and in scientific notation
+      beyond (``"1.5e+20"``); a label as it is;
     - an infinity: ``"no limit"``; a value to be set: ``"to be set"``; a
       value not applicable: ``"not applicable"``.
 
-    The value is rounded once, half up, from its exact value (a float read
-    as the decimal it shows). A unit pint does not know, a calendar
-    convention or a unit with an offset is shown as written, never
-    converted. The display is for a person: the values themselves, in the
-    unit of their parameter, are what the package computes with.
+    The number is rounded once, half up (away from zero), from its exact
+    value (a float read as the decimal it shows). A unit pint does not
+    know, a calendar convention or a unit with an offset is shown as
+    written, never converted. The display is for a person: the values
+    themselves, in the unit of their parameter, are what the package
+    computes with.
 
     Parameters
     ----------
     value : Value, int or float
+        A number of another type (a NumPy integer or float) is shown as the
+        Python number of the same value.
     unit : str, optional
         The unit of a number; a :class:`Value` gives its own.
 
@@ -218,7 +297,10 @@ def readable(value: Value | float, unit: str | None = None) -> str:
     Raises
     ------
     ImportError
-        If pint is not installed (the optional extra ``units``).
+        If a finite number has a unit and pint is not installed (the
+        optional extra ``units``), which tells a length or a duration from
+        another unit; a label, a number without a unit, an infinity, a
+        value to be set or not applicable need nothing.
     TypeError
         If ``unit`` is given with a :class:`Value`, or ``value`` is neither a
         value nor a number.
@@ -234,27 +316,28 @@ def readable(value: Value | float, unit: str | None = None) -> str:
     if isinstance(value, Value):
         if unit is not None:
             raise TypeError("a Value gives its own unit: give unit with a number only")
+        if value.not_applicable is not None:
+            return "not applicable"
         x, unit = value.value, value.unit
-    registry = _registry("readable")
-    if isinstance(value, Value) and value.not_applicable is not None:
-        return "not applicable"
     if x is None:
         return "to be set"
     if isinstance(x, str):
         return x if unit is None else f"{x} {unit}"
-    if isinstance(x, bool) or not isinstance(x, (int, float)):
+    number = _plain_number(x)
+    if number is None:
         raise TypeError(f"readable shows a Value or a number, got {x!r}")
-    if math.isnan(x):
+    if math.isnan(number):
         raise ValueError("readable: NaN is not a value")
-    if math.isinf(x):
+    if math.isinf(number):
         return "no limit"
+    exact = Fraction(number) if isinstance(number, int) else Fraction(repr(number))
     if unit is None:
-        return f"{x:g}"
-    exact = Fraction(x) if isinstance(x, int) else Fraction(repr(x))
+        return _significant(exact)
+    registry = _registry("readable")
     with _LOCK:
         measured = _measure(registry, exact, unit)
     if measured is None:
-        return f"{x:g} {unit}"
+        return f"{_significant(exact)} {unit}"
     kind, size = measured
     sign = "-" if size < 0 else ""
     shown = _duration(abs(size)) if kind == "s" else _length(abs(size))
@@ -310,3 +393,36 @@ def _decimal(n: int, digits: int) -> str:
     if not part:
         return str(whole)
     return f"{whole}.{part:0{digits}d}".rstrip("0")
+
+
+#: The significant digits of a number shown without a unit of length or of
+#: time, and the range shown in positional notation.
+_DIGITS = 6
+_SMALLEST = Fraction(1, 10**6)
+_LARGEST = Fraction(10**15)
+
+
+def _exponent(x: Fraction) -> int:
+    """The power of ten of ``x``, positive: ``10**e <= x < 10**(e + 1)``."""
+    e = len(str(math.floor(x))) - 1 if x >= 1 else -1
+    while x < Fraction(10) ** e:
+        e -= 1
+    return e
+
+
+def _significant(x: Fraction) -> str:
+    """``x`` with six significant digits, its integer part kept whole,
+    rounded once, half up (away from zero); in positional notation from
+    1e-6 to 1e15, in scientific notation beyond."""
+    if not x:
+        return "0"
+    sign = "-" if x < 0 else ""
+    size = abs(x)
+    e = _exponent(size)
+    if _SMALLEST <= size < _LARGEST:
+        digits = max(0, _DIGITS - 1 - e)
+        return sign + _decimal(_half_up(size * 10**digits), digits)
+    n = _half_up(size / Fraction(10) ** (e - _DIGITS + 1))
+    if n == 10**_DIGITS:  # 9.999995e20 rounds to 1e21
+        n, e = n // 10, e + 1
+    return f"{sign}{_decimal(n, _DIGITS - 1)}e{e:+03d}"

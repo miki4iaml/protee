@@ -204,6 +204,31 @@ DERIVATIONS: Mapping[str, DerivationInfo] = MappingProxyType(
 )
 
 
+#: What the bound of a value to be set says of it, by derivation and rule:
+#: the value is at least the bound, at most the bound, or at least as
+#: strict in an order of labels (that of ``strictest``, the classes of a
+#: classification). A derivation that reads such a value, and the
+#: admissibility patterns, read its bound; any other value to be set is
+#: unknown, whatever its bound.
+ENVELOPES: Mapping[tuple[str, str], str] = MappingProxyType(
+    {
+        ("aggregate", "max"): "at least",
+        ("aggregate", "min"): "at most",
+        ("aggregate", "strictest"): "at least as strict as",
+        ("classify_by_thresholds", "highest_rank"): "at least as strict as",
+    }
+)
+
+#: The side of a bound in an order of labels.
+STRICTER = "at least as strict as"
+
+#: The setting that holds the order of labels of a derivation, from the
+#: least to the most demanding.
+ORDERS: Mapping[str, str] = MappingProxyType(
+    {"aggregate": "order", "classify_by_thresholds": "classes"}
+)
+
+
 def derivations() -> tuple[DerivationInfo, ...]:
     """The derivations of the registry, in a fixed order.
 

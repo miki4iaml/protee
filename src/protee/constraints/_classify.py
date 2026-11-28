@@ -30,6 +30,7 @@ from protee.constraints._derive import (
     _converts,
     _crosses,
     _named,
+    _partial,
     _read_given,
     _Reading,
     _reason,
@@ -49,6 +50,7 @@ from protee.constraints._model import (
     Value,
     ValueSet,
     ValueState,
+    _datum_text,
     _name,
 )
 
@@ -174,9 +176,9 @@ def classify_by_thresholds(
     Each characteristic has a rank, one plus the number of its thresholds
     its value crosses (see :class:`Characteristic`); the class is
     ``classes[r - 1]`` for the highest rank *r*. Every comparison is exact
-    (a float is read as the decimal it shows): a value equal to a
-    threshold is placed by the declared crossing, and the next float is
-    beyond it.
+    (a float is read as the decimal it shows, a converted value as the
+    decimal of its float): a value equal to a threshold is placed by the
+    declared crossing, and the next float is beyond it.
 
     Parameters
     ----------
@@ -221,9 +223,14 @@ def classify_by_thresholds(
         Under ``propagate``, an unknown characteristic leaves the class to
         be set, its derivation keeping the class of the known
         characteristics as ``bound`` (the class is at least as strong),
-        which ``class_admissibility`` reads (see :func:`evaluate`);
-        a known characteristic at the highest rank of the scale decides
-        the class anyway, and the trace says so (``unknown`` filled).
+        which ``class_admissibility`` reads (see :func:`evaluate`); a
+        characteristic to be set with a bound on the side its comparison
+        goes (the maximum of a group, at least its bound, under ``above``
+        and ``at_least``; a minimum, at most its bound, under ``below`` and
+        ``at_most``) reaches at least the rank of its bound, and counts so
+        in ``bound``; a characteristic, known or bounded, at the highest
+        rank of the scale decides the class anyway, and the trace says so
+        (``unknown`` filled).
         ``known_only`` classifies on the known characteristics, which may
         underestimate the class: its justification says why it may.
         ``assume`` takes the value assumed for each input without a value.
@@ -303,6 +310,8 @@ def classify_by_thresholds(
     limits = _named(thresholds, vocabulary, "thresholds")
     found: _Found = {}
     ranks: dict[str, int] = {}
+    # The ranks that characteristics to be set reach at least, by a bound.
+    lows: dict[str, int] = {}
     pending: list[str] = []
     not_applicable: list[tuple[str, str]] = []
     left_out: list[LeftOut] = []
@@ -328,6 +337,10 @@ def classify_by_thresholds(
                         row.parameter, LeftOutCause.UNKNOWN, policy.justification, 1
                     )
                 )
+            elif x is None and None not in bounds:
+                low = _low(row, reading, parameter, bounds)
+                if low is not None:
+                    lows[row.parameter] = low
             continue
         crossed = (_crosses(row.crossing, x[1], b[1]) for b in bounds if b is not None)
         ranks[row.parameter] = 1 + sum(crossed)
@@ -354,9 +367,10 @@ def classify_by_thresholds(
         shown = ", ".join(f"{name} ({reason})" for name, reason in not_applicable)
         na = f"no characteristic applies: {shown}"
         fixed_by = tuple(name for name, _ in not_applicable)
-    elif ranks:
-        top = max(ranks.values())
-        fixers = tuple(name for name, rank in ranks.items() if rank == top)
+    elif ranks or lows:
+        reached = lows | ranks
+        top = max(reached.values())
+        fixers = tuple(name for name, rank in reached.items() if rank == top)
         # DD9: the highest rank of the scale decides despite unknowns.
         decided = (
             not pending
@@ -454,8 +468,10 @@ def select_by_class(
         :class:`NotApplicable` (``"class '1' has no value of its own:
         <reason>"``), or when the value selected is. Under ``propagate``,
         a class or a value selected without a value leaves the output to
-        be set, naming it; under ``assume``, each takes the value assumed
-        for its parameter.
+        be set, naming it, without a bound: a class to be set and bounded
+        (at least as strict as a label) still leaves the value selected
+        to be set, whatever the values of the classes it may be; under
+        ``assume``, each takes the value assumed for its parameter.
 
     Raises
     ------
@@ -663,7 +679,7 @@ def _entries(
 
 
 def _check_order(
-    row: Characteristic, bounds: Sequence[tuple[Datum, Exact] | None]
+    row: Characteristic, bounds: Sequence[tuple[str, Exact] | None]
 ) -> None:
     """The known thresholds of a characteristic are strictly monotonic, in
     the direction of its crossing.
@@ -671,7 +687,8 @@ def _check_order(
     Raises
     ------
     ValueError
-        If they are not.
+        If they are not; the message shows each threshold as read, and as
+        converted into the unit of the characteristic.
     """
     increasing = row.crossing in _INCREASING
     known = [b for b in bounds if b is not None]
@@ -681,8 +698,27 @@ def _check_order(
         direction = "increase" if increasing else "decrease"
         raise ValueError(
             f"characteristic {row.parameter!r}: thresholds must {direction} "
-            f"strictly for {row.crossing.value!r}, got {a!r} then {b!r}"
+            f"strictly for {row.crossing.value!r}, got {a} then {b}"
         )
+
+
+def _low(
+    row: Characteristic,
+    reading: _Reading,
+    parameter: Parameter,
+    bounds: Sequence[tuple[str, Exact] | None],
+) -> int | None:
+    """The rank a characteristic to be set reaches at least, when its
+    derivation bounds it on the side its comparison goes (at least a value
+    under ``above`` and ``at_least``, at most under ``below`` and
+    ``at_most``); ``None`` otherwise. Every threshold is known."""
+    p = _partial(reading, parameter, f"subject: {row.parameter!r}")
+    side = "at least" if row.crossing in _INCREASING else "at most"
+    if p is None or p.side != side:
+        return None
+    assert p.exact is not None
+    crossed = (_crosses(row.crossing, p.exact, b[1]) for b in bounds if b is not None)
+    return 1 + sum(crossed)
 
 
 # Inputs given directly ------------------------------------------------------
@@ -722,8 +758,9 @@ def _threshold(
     values: Mapping[str, Value],
     target: Parameter,
     policy: OnUnknown,
-) -> tuple[Datum, Exact] | None:
-    """A threshold, exactly, in the unit of its characteristic; ``None``
+) -> tuple[str, Exact] | None:
+    """A threshold as a message shows it (as read, and as converted into
+    the unit of its characteristic), and exactly, in that unit; ``None``
     without a value.
 
     Raises
@@ -738,7 +775,17 @@ def _threshold(
         raise ValueError(
             f"threshold {target.name!r} is not applicable: a threshold is a number"
         )
-    return _numeric(reading, target.name, "threshold")
+    number = _numeric(reading, target.name, "threshold")
+    if number is None:
+        return None
+    read, value = reading.read, reading.value
+    assert read is not None
+    assert value is not None
+    shown = _datum_text(number[0], read.unit)
+    if reading.converted is not None:
+        assert value.value is not None
+        shown += f" ({_datum_text(value.value, value.unit)})"
+    return shown, number[1]
 
 
 def _numeric(reading: _Reading, name: str, what: str) -> tuple[Datum, Exact] | None:

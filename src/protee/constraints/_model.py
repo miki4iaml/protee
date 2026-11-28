@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import itertools
 import math
+import numbers
 from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from protee._fingerprint import freeze
 from protee._frozen import FrozenMap
-from protee.constraints._derivations import DERIVATIONS
+from protee.constraints._derivations import DERIVATIONS, ENVELOPES
 from protee.constraints._patterns import PATTERNS, Pattern
 
 __all__ = [
@@ -54,13 +55,43 @@ def _name(what: str, value: object) -> str:
     return value
 
 
+def _sequence(what: str, given: object, of: str = "names") -> None:
+    """Refuse a bare string where a sequence of names is expected: it would
+    be read as its characters.
+
+    Raises
+    ------
+    TypeError
+        If ``given`` is a string.
+    """
+    if isinstance(given, str):
+        raise TypeError(f"{what} is a sequence of {of}, got the string {given!r}")
+
+
 def _sorted_names(what: str, names: Iterable[str]) -> tuple[str, ...]:
     """Sorted, without duplicate: an order that does not depend on the
     caller's."""
+    _sequence(what, names)
     out = tuple(sorted(set(names)))
     for n in out:
         _name(what, n)
     return out
+
+
+def _plain_number(x: object) -> int | float | None:
+    """``x`` as the Python number of the same value: an integer of any type
+    (a NumPy integer, say) as an ``int``, a floating number of any type (a
+    NumPy float) as a ``float`` when it is one exactly; ``None`` for
+    anything else, a boolean, a fraction and a decimal included."""
+    if isinstance(x, bool) or not isinstance(x, numbers.Real):
+        return None
+    if isinstance(x, numbers.Integral):
+        return int(x)
+    if isinstance(x, numbers.Rational):  # a fraction: not a float
+        return None
+    y = float(x)
+    # A float of more precision than a float (a long double) may not be one.
+    return y if y == x or math.isnan(y) else None
 
 
 def _datum_text(x: Datum, unit: str | None = None) -> str:
@@ -178,8 +209,9 @@ class Rulebook:
 
 class Origin(StrEnum):
     """Where a value comes from: a rulebook, a statement, a choice, a
-    provisional value waiting for its source, or a derivation from the
-    values of members (see :func:`aggregate`)."""
+    provisional value waiting for its source, or a derivation of the
+    registry (see :func:`derivations`): the envelope of a group, the class
+    of a subject, the value a class selects, the length of a column."""
 
     RULEBOOK = "rulebook"
     STATEMENT = "statement"
@@ -217,7 +249,9 @@ class Value:
         then not applicable, with this reason, and never decided silently;
         an admissibility requirement whose value is to be set by an envelope
         reads instead the bound of its derivation (see :func:`evaluate`).
-        ``math.inf`` stands for no limit.
+        ``math.inf`` stands for no limit. A number of another type (a NumPy
+        integer or float) is kept as the ``int`` or the ``float`` of the
+        same value.
     source : Source
     origin : Origin
     unit : str, optional
@@ -241,8 +275,9 @@ class Value:
         value has no derivation, another value has one, or a bound is given
         for a value that is not to be set.
     TypeError
-        If the value is neither a number, a string nor ``None`` (a boolean
-        is refused), or the precedence is not an integer.
+        If the value is neither a number, a string nor ``None`` (a boolean,
+        a fraction, a decimal are refused), or the precedence is not an
+        integer.
 
     Examples
     --------
@@ -264,8 +299,14 @@ class Value:
 
     def __post_init__(self) -> None:
         v = self.value
-        if isinstance(v, bool) or not (v is None or isinstance(v, (int, float, str))):
-            raise TypeError(f"a value must be a number, a string or None, got {v!r}")
+        if not (v is None or isinstance(v, str)):
+            number = _plain_number(v)
+            if number is None:
+                raise TypeError(
+                    f"a value must be a number, a string or None, got {v!r}"
+                )
+            object.__setattr__(self, "value", number)
+            v = number
         if isinstance(v, float) and math.isnan(v):
             raise ValueError("a value cannot be NaN; use None for a value to be set")
         if isinstance(self.precedence, bool) or not isinstance(self.precedence, int):
@@ -597,7 +638,9 @@ def resolve_values(
         parameter's, gives a parameter twice, if two values of the same
         parameter disagree with the same precedence (the disagreement must
         be declared by a precedence; a value not applicable and a value to
-        be set disagree), or if a value of an objective is chosen without a
+        be set disagree, and so do two values to be set unless their
+        derivations bound them alike, on the same side by the same bound,
+        or not at all), or if a value of an objective is chosen without a
         justification.
     """
     aliases = _aliases(requirements.parameters)
@@ -623,11 +666,8 @@ def resolve_values(
     for name, values in sorted(candidates.items()):
         ranked = sorted(values, key=lambda v: -v.precedence)
         top = [v for v in ranked if v.precedence == ranked[0].precedence]
-        if len({(v.value, v.not_applicable is not None) for v in top}) > 1:
-            shown = [
-                "not applicable" if v.not_applicable is not None else v.value
-                for v in top
-            ]
+        if len({_agreement(v) for v in top}) > 1:
+            shown = [_disagreeing(v) for v in top]
             raise ValueError(
                 f"parameter {name!r}: values {shown} disagree with the same precedence"
             )
@@ -648,6 +688,33 @@ def resolve_values(
         unused=tuple(sorted(set(candidates) - used)),
         missing=tuple(sorted(used - set(candidates))),
     )
+
+
+def _bound_side(value: Value) -> tuple[str, Datum] | None:
+    """The side and the bound of a value to be set whose derivation bounds
+    it, ``None`` for any other value."""
+    d = value.derivation
+    if not value.to_be_set or d is None or d.bound is None:
+        return None
+    return ENVELOPES.get((d.name, d.rule), "bounded by"), d.bound
+
+
+def _agreement(value: Value) -> tuple[object, ...]:
+    """What two values of the same precedence share when they agree: the
+    value, whether it is not applicable, and for a value to be set the
+    side and the bound of its derivation, which decide arcs."""
+    return (value.value, value.not_applicable is not None, _bound_side(value))
+
+
+def _disagreeing(value: Value) -> object:
+    """A value, as a disagreement shows it."""
+    if value.not_applicable is not None:
+        return "not applicable"
+    bounded = _bound_side(value)
+    if bounded is not None:
+        side, bound = bounded
+        return f"to be set, {side} {_datum_text(bound, value.unit)}"
+    return value.value
 
 
 def _aliases(parameters: Iterable[Parameter]) -> dict[tuple[str, str], str]:
@@ -830,6 +897,7 @@ class Assumption:
     def __post_init__(self) -> None:
         _name("parameter", self.parameter)
         _check_assumed(self.parameter, self.value)
+        _sequence("holders", self.holders)
         holders = _sorted_names("holder", self.holders)
         if not holders:
             raise ValueError(f"an assumption for {self.parameter!r} names its holders")
@@ -871,9 +939,10 @@ class Conversion:
         for what in ("parameter", "unit", "to_unit", "factor"):
             _name(what, getattr(self, what))
         for what in ("value", "converted"):
-            x = getattr(self, what)
-            if isinstance(x, bool) or not isinstance(x, (int, float)):
-                raise TypeError(f"{what} must be a number, got {x!r}")
+            x = _plain_number(getattr(self, what))
+            if x is None:
+                raise TypeError(f"{what} must be a number, got {getattr(self, what)!r}")
+            object.__setattr__(self, what, x)
 
 
 @dataclass(frozen=True, slots=True)
@@ -939,9 +1008,10 @@ class Derivation:
     """The trace of a derived value: its rule, the inputs that fix it,
     and every input with its source.
 
-    A value derived from the values of members (see :func:`aggregate`)
-    carries its derivation; the fingerprint of the value covers it, every
-    input included, not only those that fix the value.
+    Every derived value (see :func:`derivations`: the envelope of a group,
+    the class of a subject, the value a class selects, the length of a
+    column) carries its derivation; the fingerprint of the value covers
+    it, every input included, not only those that fix the value.
 
     The trace is in a canonical form, whatever the order of the members:
     ``fixed_by``, ``unknown`` and ``bound_fixed_by`` sorted and without
@@ -956,10 +1026,12 @@ class Derivation:
         One of the rules of the derivation.
     settings : mapping of str to object
         The declared options: the parameter read (``of``), the order, the
-        comparison, the policy for the unknown and its justification.
+        comparison, the characteristics and the classes, the table, the
+        spacing, the policy for the unknown and its justification.
     fixed_by : tuple of str
-        The members (or characteristics, or class) that fix the value; for
-        a value to be set, none.
+        The members (or characteristics, or class, or the holders of the
+        values of a column) that fix the value; for a value to be set,
+        none.
     inputs : tuple of DerivationInput
     assumptions : tuple of Assumption
         The values assumed for unknown inputs.
@@ -978,12 +1050,13 @@ class Derivation:
     bound : int, float or str, optional
         For a value to be set by an envelope (``max``, ``min``,
         ``strictest``) or a classification by thresholds of which some
-        inputs are known: the extreme of the known inputs, which the
-        unknown value reaches at least (``max``: the value is at least the
-        bound; ``min``: at most; ``strictest`` and a classification: at
-        least as strict, in the order of its labels). The admissibility
-        patterns read it: an arc the bound fails fails for certain (see
-        :func:`evaluate`).
+        inputs are known, or bounded themselves: the extreme they give,
+        which the unknown value reaches at least (``max``: the value is at
+        least the bound; ``min``: at most; ``strictest`` and a
+        classification: at least as strict, in the order of its labels).
+        The admissibility patterns read it (see :func:`evaluate`), and so
+        do the derivations that read the value: an envelope, a
+        classification.
     bound_fixed_by : tuple of str
         The inputs that fix the bound.
 
@@ -1070,8 +1143,12 @@ class Derivation:
             if fixers:
                 raise ValueError("bound_fixed_by is given without a bound")
             return
-        if isinstance(bound, bool) or not isinstance(bound, (int, float, str)):
-            raise TypeError(f"a bound is a number or a label, got {bound!r}")
+        if not isinstance(bound, str):
+            number = _plain_number(bound)
+            if number is None:
+                raise TypeError(f"a bound is a number or a label, got {bound!r}")
+            object.__setattr__(self, "bound", number)
+            bound = number
         if isinstance(bound, float) and math.isnan(bound):
             raise ValueError("a bound cannot be NaN")
         if not fixers:

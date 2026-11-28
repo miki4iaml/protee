@@ -11,7 +11,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from protee.constraints._model import LeftOut, LeftOutCause, ValueSet, _name
+from protee.constraints._model import LeftOut, LeftOutCause, ValueSet, _name, _sequence
 
 __all__ = ["Group", "Member", "ZeroCount"]
 
@@ -289,6 +289,9 @@ class Group:
         ValueError
             If the identifier is this group's, the reason is empty, an
             identifier is not in the group, or nothing would be left.
+        TypeError
+            If ``members`` is a string instead of a sequence of
+            identifiers.
 
         Examples
         --------
@@ -300,6 +303,7 @@ class Group:
         _name("id", id)
         _new_id(self, id)
         _name("reason", reason)
+        _sequence("members", members, "identifiers")
         names = sorted(set(members))
         if not names:
             raise ValueError("without needs at least one identifier to exclude")

@@ -36,8 +36,9 @@ The phases come in a fixed order:
    ``UNKNOWN`` verdict, never a presumed pass. An admissibility
    requirement (a quantity at most a limit, a demand at most a capacity, a
    class at least a required one) whose value is to be set by an envelope
-   reads the bound of the known members: the arcs it fails fail for
-   certain, the others are unknown;
+   reads the bound of the known members: an arc that every value the
+   bound allows fails fails for certain, one that every such value passes
+   passes, the others are unknown;
 2. **compose** (:func:`compose`): the effects become a
    :class:`ComputationView` (arcs excluded, weights, travel times under
    the speed caps, flow bounds), independently of their order; the policy

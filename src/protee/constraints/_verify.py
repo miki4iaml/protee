@@ -10,11 +10,11 @@ import math
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
 
+from protee._frozen import FrozenMap
 from protee.constraints._compose import ComputationView
 from protee.constraints._data import ArcData
 from protee.constraints._effects import (
@@ -132,7 +132,7 @@ class Verification:
         object.__setattr__(self, "checks", checks)
         object.__setattr__(self, "violations", tuple(self.violations))
         object.__setattr__(
-            self, "_by_id", MappingProxyType({c.requirement: c for c in checks})
+            self, "_by_id", FrozenMap({c.requirement: c for c in checks})
         )
 
     def __iter__(self) -> Iterator[RequirementCheck]:
@@ -148,7 +148,7 @@ class Verification:
     @property
     def statuses(self) -> Mapping[str, RequirementStatus]:
         """The status of each requirement."""
-        return MappingProxyType({c.requirement: c.status for c in self.checks})
+        return FrozenMap({c.requirement: c.status for c in self.checks})
 
 
 def _absent(requirement: Requirement, data: ArcData) -> list[str]:

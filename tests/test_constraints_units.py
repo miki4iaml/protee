@@ -22,17 +22,24 @@ from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 from typing import Any
 
+import numpy as np
 import pint
 import pytest
 from constraints_cases import MASS, requirement_set, values
+from derive_cases import VOCABULARY as COLUMN_VOCABULARY
+from derive_cases import A, B, C, D
+from derive_cases import chosen as planned
 
 from protee.constraints import (
     Aggregation,
     ArcData,
     Attribute,
+    Characteristic,
     Comparison,
     Conversion,
     Derived,
+    Gap,
+    GapCount,
     Group,
     Member,
     OnUnknown,
@@ -45,6 +52,8 @@ from protee.constraints import (
     ValueState,
     _units,
     aggregate,
+    classify_by_thresholds,
+    column_length,
     readable,
     requirement_table,
     resolve_values,
@@ -63,6 +72,8 @@ VOCABULARY = (
     Parameter("temperature", unit="K"),
     Parameter("ratio", unit="%"),
     Parameter("count"),
+    Parameter("slope", unit="degree"),
+    Parameter("root", unit="m**0.5"),
 )
 
 type Given = tuple[float | str | None, str | None]
@@ -381,6 +392,31 @@ def test_a_derived_value_is_a_function_of_the_values_not_of_their_units() -> Non
             ),
         ),
         ("count", (3, "kg"), "in 'kg', the parameter is in None: only a value"),
+        ("mass", (3, "m**0"), "pint does not know the unit 'm**0'"),
+        # A grade in % is the tangent of its angle: never a multiple of it,
+        # although pint counts both without dimension.
+        (
+            "ratio",
+            (40, "degree"),
+            (
+                "member 'A': 'ratio' in 'degree', the parameter is in '%': cannot "
+                "convert 'degree' to '%': an angle converts into an angle only"
+            ),
+        ),
+        ("slope", (60, "%"), "an angle converts into an angle only"),
+        # pi to 50 digits is no exact factor.
+        (
+            "slope",
+            (1, "rad"),
+            (
+                "member 'A': 'slope' in 'rad', the parameter is in 'degree': the "
+                "factor from 'rad' to 'degree' involves the constant 'pi', which is "
+                "not a rational number: no exact factor"
+            ),
+        ),
+        ("slope", (1, "sr**0.5"), "involves the constant 'pi'"),
+        ("root", (1, "km**0.5"), "involves a root, which is not a rational number"),
+        ("width", (1, "planck_length"), "which is not a rational number"),
     ],
 )
 def test_a_unit_that_does_not_convert_is_refused(
@@ -428,6 +464,15 @@ def test_a_text_does_not_convert() -> None:
         )
 
 
+def test_an_angle_converts_by_a_rational_factor_only() -> None:
+    # pi cancels between two angles defined from it: their factor is
+    # rational, and exact.
+    assert _units._factor("turn", "degree", "the slope") == 360
+    assert _units._factor("degree", "arcminute", "the slope") == 60
+    assert _units._factor("sr", "rad**2", "the solid angle") == 1
+    assert _units._factor("percent", "ppm", "the ratio") == 10_000
+
+
 def test_the_calendar_units_are_units_of_pint() -> None:
     registry = _units._registry("the test")
     day = registry.parse_units("d").dimensionality
@@ -469,6 +514,20 @@ def test_without_the_extra_another_unit_is_refused(without_pint: None) -> None:
         derive({"A": {"mass": (72000, "kg")}}, {"count": rule})
     with pytest.raises(ImportError, match=re.escape(f"readable needs pint, {EXTRA}")):
         readable(3.5, "m")
+
+
+def test_without_the_extra_readable_shows_what_converts_nothing(
+    without_pint: None,
+) -> None:
+    # Only a finite number with a unit may be a length or a duration to
+    # convert: everything else is shown without pint.
+    assert readable(1234567) == "1234567"
+    assert readable(math.inf, "km") == "no limit"
+    assert readable(Value(None, SHEET, Origin.STATEMENT, unit="m")) == "to be set"
+    na = Value(None, SHEET, Origin.STATEMENT, unit="m", not_applicable="carried")
+    assert readable(na) == "not applicable"
+    assert readable(Value("C50", SHEET, Origin.STATEMENT, unit="t")) == "C50 t"
+    assert _units._REGISTRY is None
 
 
 def test_without_the_extra_the_same_unit_needs_nothing(without_pint: None) -> None:
@@ -565,6 +624,22 @@ def test_the_registry_is_made_once_for_threads(monkeypatch: pytest.MonkeyPatch) 
         (72, "t", "72 t"),
         (60, "km/h", "60 km/h"),
         (0.5, None, "0.5"),
+        # Any other number: six significant digits, its integer part whole,
+        # rounded once, half up, from the decimal it shows.
+        (1234565, "kg", "1234565 kg"),
+        (1234567, None, "1234567"),
+        (12345650.0, "kg", "12345650 kg"),
+        (0.1234565, None, "0.123457"),
+        (2.5e20, None, "2.5e+20"),
+        (9.9999995e20, None, "1e+21"),
+        (1e-7, "kg", "1e-07 kg"),
+        (-0.0000125, "1/m", "-0.0000125 1/m"),
+        (999999.5, None, "1000000"),
+        (13.88888888888889, "m/s", "13.8889 m/s"),
+        (0, None, "0"),
+        (3, "s**0", "3 s**0"),
+        (np.float64(2.5), "m", "2.5 m"),
+        (np.int64(5400), "s", "1 h 30 min"),
         (3, "year", "3 year"),
         (20, "degC", "20 degC"),
         (10, "veh/km", "10 veh/km"),
@@ -574,6 +649,137 @@ def test_the_registry_is_made_once_for_threads(monkeypatch: pytest.MonkeyPatch) 
 )
 def test_a_number_is_shown_readably(x: float, unit: str | None, shown: str) -> None:
     assert readable(x, unit) == shown
+
+
+def test_a_value_compared_directly_and_after_a_derivation_agree() -> None:
+    # A speed of 80 km/h, a vocabulary in m/s, and a text that says "from
+    # 80 km/h": the member read directly, its envelope, and a count beyond
+    # the threshold all compare the same decimal, that of the float of
+    # 200/9 m/s.
+    vocabulary = [Parameter("speed", unit="m/s"), Parameter("v1", unit="km/h")]
+    vocabulary += [Parameter("cls"), Parameter("fast")]
+    limit = ValueSet("reg", "1", {"v1": threshold(80, "km/h")})
+    classified: dict[str, object] = {
+        "characteristics": [Characteristic("speed", ("v1",), Comparison.AT_LEAST)],
+        "thresholds": limit,
+        "classes": ["slow", "fast"],
+        "output": "cls",
+        "parameters": vocabulary,
+        "unknown": OnUnknown.propagate(),
+        "rulebook": "c",
+        "edition": "1",
+    }
+    sheet = ValueSet(
+        "s", "1", {"speed": Value(80, SHEET, Origin.STATEMENT, unit="km/h")}
+    )
+    direct = classify_by_thresholds(sheet, **classified)  # type: ignore[arg-type]
+    group = Group("G", ((Member("A", (sheet,)), 1),))
+    count = Aggregation.threshold_count(
+        "speed", threshold(80, "km/h"), Comparison.AT_LEAST
+    )
+    envelope = aggregate(
+        group,
+        {"speed": Aggregation.max("speed"), "fast": count},
+        parameters=vocabulary,
+        unknown=OnUnknown.propagate(),
+        edition="1",
+    )
+    assert envelope["speed"].value == float(Fraction(200, 9))
+    chained = classify_by_thresholds(envelope, **classified)  # type: ignore[arg-type]
+    assert direct["cls"].value == chained["cls"].value == "fast"
+    assert envelope["fast"].value == 1
+    # 13.123359580052494 ft is 4.0000000000000001... m, whose float is 4.0:
+    # "up to 4 m" keeps it in the lower class, on every path.
+    feet = 13.123359580052494
+    assert Fraction(repr(feet)) * Fraction(381, 1250) > 4
+    width = [Parameter("w", unit="m"), Parameter("w1", unit="m"), Parameter("cat")]
+    up_to: dict[str, object] = {
+        "characteristics": [Characteristic("w", ("w1",), Comparison.ABOVE)],
+        "thresholds": ValueSet("reg", "1", {"w1": threshold(4.0, "m")}),
+        "classes": ["1", "2"],
+        "output": "cat",
+        "parameters": width,
+        "unknown": OnUnknown.propagate(),
+        "rulebook": "c",
+        "edition": "1",
+    }
+    stated = ValueSet("s", "1", {"w": Value(feet, SHEET, Origin.STATEMENT, unit="ft")})
+    envelope = aggregate(
+        Group("G", ((Member("A", (stated,)), 1),)),
+        {
+            "w": Aggregation.max("w"),
+            "cat": Aggregation.threshold_count(
+                "w", threshold(4.0, "m"), Comparison.ABOVE
+            ),
+        },
+        parameters=width,
+        unknown=OnUnknown.propagate(),
+        edition="1",
+    )
+    assert envelope["w"].value == 4.0
+    assert envelope["cat"].value == 0
+    for subject in (stated, envelope):
+        derived = classify_by_thresholds(subject, **up_to)  # type: ignore[arg-type]
+        assert derived["cat"].value == "1"
+
+
+def test_the_order_of_thresholds_is_told_with_their_units() -> None:
+    vocabulary = [
+        Parameter("mass", unit="kg"),
+        Parameter("m1", unit="t"),
+        Parameter("m2", unit="kg"),
+        Parameter("cat"),
+    ]
+    limits = ValueSet(
+        "reg", "1", {"m1": threshold(60, "t"), "m2": threshold(50000, "kg")}
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "characteristic 'mass': thresholds must increase strictly for 'above', "
+            "got 60 t (60000 kg) then 50000 kg"
+        ),
+    ):
+        classify_by_thresholds(
+            ValueSet("s", "1", {"mass": Value(1, SHEET, Origin.STATEMENT, unit="kg")}),
+            characteristics=[Characteristic("mass", ("m1", "m2"), Comparison.ABOVE)],
+            thresholds=limits,
+            classes=["1", "2", "3"],
+            output="cat",
+            parameters=vocabulary,
+            unknown=OnUnknown.propagate(),
+            rulebook="c",
+            edition="1",
+        )
+
+
+def test_a_value_assumed_for_several_groups_is_converted_once() -> None:
+    # The gap of a line and of its two groups is assumed, in cm: converted
+    # once, and assumed for the three groups.
+    line = Group(
+        "line",
+        (
+            (Group("s1", ((A, 2), (B, 1))), 1),
+            (Group("s2", ((C, 1), (D, 2))), 1),
+        ),
+    )
+    derived = column_length(
+        line,
+        output="column_length",
+        member_length="length",
+        spacing=[Gap("gap", GapCount.BETWEEN)] * 2,
+        parameters=COLUMN_VOCABULARY,
+        unknown=OnUnknown.assume({"gap": planned(2500, "cm")}),
+        edition="1",
+    )
+    trace = derived["column_length"].derivation
+    assert trace is not None
+    assert derived["column_length"].value == 167.0
+    assert trace.conversions == (
+        Conversion(None, "gap", 2500, "cm", 25.0, "m", "1/100"),
+    )
+    (assumption,) = trace.assumptions
+    assert (assumption.holders, assumption.instances) == (("line", "s1", "s2"), 3)
 
 
 def test_a_value_is_shown_readably() -> None:

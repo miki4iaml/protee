@@ -16,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from protee.constraints._data import UNKNOWN_CODE, ArcData
+from protee.constraints._derivations import ENVELOPES, ORDERS, STRICTER
 from protee.constraints._model import (
     Datum,
     Derivation,
@@ -49,8 +50,8 @@ class Reason(IntEnum):
     - ``OUT_OF_SCOPE``: the requirement does not apply to the arc, which
       passes;
     - ``VALUE_TO_BE_SET``: the value of the subject is to be set, and the
-      bound its known inputs give (see :attr:`Derivation.bound`) does not
-      decide the arc.
+      values its bound allows (see :attr:`Derivation.bound`) do not decide
+      the arc: some pass it, some fail it.
     """
 
     SATISFIED = 0
@@ -197,9 +198,10 @@ class _Undecided:
         The role the value is bound to.
     candidates : tuple of int, float or str
         For a number, the two ends of the interval the value lies in: the
-        bound, and ``inf`` (at least the bound) or ``-inf`` (at most); for
-        a label, every label of its order at least as strict as the bound;
-        empty without a bound (the value may be any).
+        bound, and ``inf`` (at least the bound) or ``-inf`` (at most), or
+        ``-inf`` and ``inf`` without a bound; for a label, every label of
+        its order at least as strict as the bound, every label of the order
+        without a bound; empty when the order is not known.
     """
 
     role: str
@@ -211,22 +213,6 @@ class _Undecided:
 _BOUNDED = frozenset(
     {"threshold_admissibility", "class_admissibility", "capacity_admissibility"}
 )
-
-#: What the bound of a value to be set says of it, by derivation and rule:
-#: the value is at least the bound, at most the bound, or at least as
-#: strict in an order of labels (that of ``strictest``, the classes of a
-#: classification).
-ENVELOPES: Mapping[tuple[str, str], str] = MappingProxyType(
-    {
-        ("aggregate", "max"): "at least",
-        ("aggregate", "min"): "at most",
-        ("aggregate", "strictest"): "at least as strict as",
-        ("classify_by_thresholds", "highest_rank"): "at least as strict as",
-    }
-)
-
-#: The setting that holds the order of labels of a derivation.
-_ORDERS = {"aggregate": "order", "classify_by_thresholds": "classes"}
 
 
 def envelope_to_be_set(value: Value | None) -> Derivation | None:
@@ -279,14 +265,18 @@ def evaluate(
         ``class_admissibility``, ``capacity_admissibility``) whose value
         is to be set by an envelope (``max``, ``min`` or ``strictest`` of
         :func:`aggregate`, :func:`classify_by_thresholds`) reads instead the
-        bound of its known inputs (see :attr:`Derivation.bound`): an arc
-        that fails whatever value the bound admits gets ``FAIL``
-        (``VIOLATED``), the others in scope ``UNKNOWN``
-        (``VALUE_TO_BE_SET``, or ``MISSING_DATA`` without data), counted
-        and handled by the policy for the unknown; without a bound (no
-        known input), ``UNKNOWN`` everywhere in scope. This is the Kleene
-        conjunction of the verdicts of the members: the unknown is never
-        presumed compatible.
+        bound of its known inputs (see :attr:`Derivation.bound`), and
+        decides an arc only when every value the bound allows decides it
+        alike: ``FAIL`` (``VIOLATED``) when every one fails it, ``PASS``
+        (``SATISFIED``) when every one passes it (an arc without a limit
+        for a quantity at least its bound, an arc that admits the strictest
+        label of the order for a class at least as strict as its bound),
+        ``UNKNOWN`` (``VALUE_TO_BE_SET``, or ``MISSING_DATA`` without data)
+        elsewhere in scope, counted and handled by the policy for the
+        unknown. Without a bound (no known input), the value may be any:
+        a number any from ``-inf`` to ``inf``, a label any of its order.
+        This is the Kleene conjunction of the verdicts of the members: the
+        unknown is never presumed compatible.
 
     Raises
     ------
@@ -336,14 +326,15 @@ def _undecided(requirement: Requirement, values: ResolvedValues) -> _Undecided |
     d = envelope_to_be_set(values.get(name))
     if d is None:
         return None
-    if d.bound is None:
-        return _Undecided(role, ())
     side = ENVELOPES[d.name, d.rule]
-    if side == "at least":
-        return _Undecided(role, (d.bound, math.inf))
-    if side == "at most":
-        return _Undecided(role, (d.bound, -math.inf))
-    order = d.settings.get(_ORDERS[d.name])
+    if side != STRICTER:
+        if d.bound is None:
+            return _Undecided(role, (-math.inf, math.inf))
+        end = math.inf if side == "at least" else -math.inf
+        return _Undecided(role, (d.bound, end))
+    order = d.settings.get(ORDERS[d.name])
+    if d.bound is None:
+        return _Undecided(role, order if isinstance(order, tuple) else ())
     if not isinstance(order, tuple) or d.bound not in order:
         raise ValueError(
             f"requirement {requirement.id}: the bound {d.bound!r} of {name!r} is "
@@ -471,23 +462,35 @@ def _decide(
 ) -> Effect:
     """The verdicts of a value, by ``passes`` on the arcs whose data is
     known; for a value to be set by an envelope, ``FAIL`` where every value
-    it may take fails, ``UNKNOWN`` elsewhere.
+    it may take fails, ``PASS`` where every one passes, ``UNKNOWN``
+    elsewhere.
 
-    Every admissibility test is monotonic in the value: on an interval,
-    failing at both ends is failing everywhere.
+    Every admissibility test is monotonic in a number: on an interval,
+    failing (or passing) at both ends is failing (or passing) everywhere;
+    the labels a value may take are all tried.
     """
     if not isinstance(value, _Undecided):
         return _verdicts(requirement, data, scope, known, known & passes(value))
     failed = known.copy()
+    passed = known.copy()
     for x in value.candidates:
-        failed &= ~passes(x)
+        ok = passes(x)
+        failed &= ~ok
+        passed &= ok
     if not value.candidates:
         failed[:] = False
-    verdict = np.where(failed, Verdict.FAIL, Verdict.UNKNOWN)
+        passed[:] = False
+    verdict = np.where(
+        failed, Verdict.FAIL, np.where(passed, Verdict.PASS, Verdict.UNKNOWN)
+    )
     reasons = np.where(
         failed,
         Reason.VIOLATED,
-        np.where(known, Reason.VALUE_TO_BE_SET, Reason.MISSING_DATA),
+        np.where(
+            passed,
+            Reason.SATISFIED,
+            np.where(known, Reason.VALUE_TO_BE_SET, Reason.MISSING_DATA),
+        ),
     )
     return Effect(
         requirement.id,

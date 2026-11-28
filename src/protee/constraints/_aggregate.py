@@ -8,7 +8,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from fractions import Fraction
 
+from protee.constraints._derivations import STRICTER
 from protee.constraints._derive import (
     Comparison,
     Derived,
@@ -21,6 +23,7 @@ from protee.constraints._derive import (
     _given,
     _label,
     _member_values,
+    _partial,
     _partition,
     _read,
     _Reading,
@@ -42,6 +45,7 @@ from protee.constraints._model import (
     ValueSet,
     ValueState,
     _name,
+    _sequence,
 )
 
 __all__ = ["AggregateKind", "Aggregation", "aggregate"]
@@ -80,8 +84,13 @@ _ADDITIVE = frozenset(
 #: Rules that give a number of members, without unit.
 _COUNTS = frozenset({AggregateKind.COUNT, AggregateKind.THRESHOLD_COUNT})
 #: Envelopes: under ``propagate``, the extreme of the known inputs bounds
-#: the unknown value.
-_ENVELOPES = frozenset({AggregateKind.MAX, AggregateKind.MIN, AggregateKind.STRICTEST})
+#: the unknown value on this side, and an input to be set bounded on the
+#: same side counts with its bound.
+_SIDES = {
+    AggregateKind.MAX: "at least",
+    AggregateKind.MIN: "at most",
+    AggregateKind.STRICTEST: STRICTER,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +123,8 @@ class Aggregation:
     ------
     ValueError
         If the options do not fit the rule.
+    TypeError
+        If ``order`` is a string instead of a sequence of labels.
     """
 
     kind: AggregateKind
@@ -132,6 +143,7 @@ class Aggregation:
             raise ValueError(f"{kind} reads a parameter: give of")
         else:
             _name("of", self.of)
+        _sequence("order", self.order, "labels")
         order: tuple[object, ...] = tuple(self.order)
         if kind is AggregateKind.STRICTEST:
             labels = {x for x in order if isinstance(x, str) and x.strip()}
@@ -173,6 +185,7 @@ class Aggregation:
     def strictest(cls, of: str, order: Sequence[str]) -> Aggregation:
         """The label of ``of`` of highest rank in ``order``, given from the
         least to the most demanding."""
+        _sequence("order", order, "labels")
         return cls(AggregateKind.STRICTEST, of, order=tuple(order))
 
     @classmethod
@@ -255,10 +268,15 @@ def aggregate(
         ``propagate``, an unknown input leaves the value to be set; its
         derivation keeps, for ``max``, ``min`` and ``strictest``, the
         extreme of the known inputs as ``bound``, which an admissibility
-        requirement reads: an arc a known member fails fails for certain
-        (see :func:`evaluate`). Only ``strictest`` is decided despite
-        unknown inputs, when a known value reaches the last label of the
-        order.
+        requirement reads: an arc a known member fails fails for certain,
+        an arc that every value the bound allows passes passes (see
+        :func:`evaluate`). A member whose value is itself to be set
+        with a bound on the side of the rule (at least a value, for
+        ``max``; at most, for ``min``; at least as strict, for
+        ``strictest``, a classification included) counts with its bound,
+        and stays unknown. Only ``strictest`` is decided despite unknown
+        inputs, when a known value, or the bound of a member, reaches the
+        last label of the order.
 
         The envelope follows the direction of the requirement it feeds: a
         quantity at most a limit (``threshold_admissibility``) by its
@@ -269,8 +287,8 @@ def aggregate(
         An input in another unit than the parameter it reads (a value of a
         member, the value assumed, the threshold) is converted into it,
         exactly, with the optional extra ``units``; each conversion is
-        recorded in the derivation (:class:`Conversion`), and a converted
-        value is a float.
+        recorded in the derivation (:class:`Conversion`); a converted value
+        is a float, compared and summed as the decimal it shows.
 
     Raises
     ------
@@ -279,7 +297,8 @@ def aggregate(
         differs where it cannot (a derived value keeps the unit of its
         inputs; ``count``, ``threshold_count`` and ``strictest`` give a
         value without unit), an input does not convert into the unit of its
-        parameter, a label is not in the order, ``known_only`` is given for
+        parameter, a label is not in the order (a label a bounded member
+        may take included), ``known_only`` is given for
         an additive rule (``sum``, ``mean``, ``threshold_count``), a value
         is assumed for a parameter no rule reads, an unknown input has no
         assumed value under ``assume``, the sheets of a member are
@@ -495,15 +514,16 @@ class _Context:
             return self.value(output, None, traced(holders), na), tallies
         result = _compute(rule, part.used, of.name, limit)
         if part.pending:
-            # DD9: only the last label of an order decides despite unknowns.
-            decided = (
+            # The known inputs, and the bounds of the unknown ones, bound an
+            # envelope; DD9: only the last label of an order decides.
+            floor = _floor(rule, part.used, part.unknown, of)
+            if (
                 rule.kind is AggregateKind.STRICTEST
-                and result is not None
-                and result[0] == rule.order[-1]
-            )
-            if not decided:
-                bound = result if rule.kind in _ENVELOPES else None
-                return self.value(output, None, traced(bound=bound)), tallies
+                and floor is not None
+                and floor[0] == rule.order[-1]
+            ):
+                return self.value(output, floor[0], traced(floor[1])), tallies
+            return self.value(output, None, traced(bound=floor)), tallies
         if result is None:  # known_only, and no known input
             return self.value(output, None, traced()), tallies
         x, fixers = result
@@ -589,3 +609,53 @@ def _compute(
             return int(total), everyone
         return float(total), everyone
     return float(total / sum(r.instances for r in used)), everyone
+
+
+def _floor(
+    rule: Aggregation,
+    used: Sequence[_Reading],
+    unknown: Sequence[_Reading],
+    of: Parameter,
+) -> tuple[Datum, tuple[str, ...]] | None:
+    """The bound of an envelope with unknown inputs, and the inputs that
+    fix it: the extreme of the known inputs and of the bounds of the
+    unknown inputs on the side of the rule (a value at least a bound, for
+    a maximum); ``None`` for another rule, or with nothing to bound it.
+
+    Raises
+    ------
+    ValueError
+        If a label that a bounded input may take is not in the order.
+    """
+    side = _SIDES.get(rule.kind)
+    if side is None:
+        return None
+    strictest = rule.kind is AggregateKind.STRICTEST
+    found: list[tuple[Exact, Datum, str]] = []
+    for r in used:
+        x = _datum(r)
+        key = Fraction(rule.order.index(str(x))) if strictest else r.exact
+        found.append((key, x, r.holder))
+    for r in unknown:
+        what = _label(r, of.name)
+        p = _partial(r, of, what)
+        if p is None or p.side != side:
+            continue
+        if not strictest:
+            assert p.exact is not None
+            found.append((p.exact, p.bound, r.holder))
+            continue
+        for label in p.labels:
+            if label not in rule.order:
+                raise ValueError(
+                    f"{what} is {side} {p.bound!r}, and may be {label!r}, not one "
+                    f"of the order {list(rule.order)}"
+                )
+        rank = min(rule.order.index(label) for label in p.labels)
+        found.append((Fraction(rank), rule.order[rank], r.holder))
+    if not found:
+        return None
+    keys = [key for key, _, _ in found]
+    extreme = min(keys) if rule.kind is AggregateKind.MIN else max(keys)
+    fixers = [(x, holder) for key, x, holder in found if key == extreme]
+    return fixers[0][0], tuple(holder for _, holder in fixers)

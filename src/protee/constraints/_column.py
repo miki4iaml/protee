@@ -336,7 +336,11 @@ def column_length(
             assumed.append((name, reading.read, label, uses))
         if reading.state in (ValueState.KNOWN, ValueState.ASSUMED):
             contributors.append(label)
-        if reading.converted is not None:
+        # The value assumed for several groups is converted once.
+        if (
+            reading.converted is not None
+            and reading.converted.record not in conversions
+        ):
             conversions.append(reading.converted.record)
     settings: dict[str, object] = {
         "member_length" if member_length is not None else "density": measured,

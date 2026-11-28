@@ -9,11 +9,20 @@ A float is read as the decimal it shows (``Fraction(repr(x))``), an
 integer exactly; ``inf`` and ``-inf`` stay apart, as known values (no
 limit). Every computation is exact, and its result is rounded once: the
 result depends on the multiset of the members only, never on their order,
-and a value at a threshold is compared exactly.
+and a value at a threshold is compared exactly, as the decimal of its
+float.
 
 A value in another unit than its parameter's is converted into it,
 exactly, with the optional extra ``units`` (pint), and the conversion is
-recorded; without the extra, it is refused.
+recorded; without the extra, it is refused. The converted value is a
+float, rounded once, and a derivation reads it, as any float, as the
+decimal it shows: a value compared directly and the same value read again
+after a derivation (an envelope, then a classification) compare alike.
+
+A value to be set whose derivation bounds it (an envelope, a
+classification; see :attr:`Derivation.bound`) is read with its bound by
+the derivations that can use it: an envelope of the same direction, a
+classification whose comparison goes the way of the bound.
 """
 
 from __future__ import annotations
@@ -25,10 +34,12 @@ from enum import StrEnum
 from fractions import Fraction
 
 from protee._frozen import FrozenMap
+from protee.constraints._derivations import ENVELOPES, ORDERS, STRICTER
 from protee.constraints._groups import Member
 from protee.constraints._model import (
     Assumption,
     Conversion,
+    Datum,
     DerivationInput,
     LeftOut,
     LeftOutCause,
@@ -43,6 +54,7 @@ from protee.constraints._model import (
     _check_assumed,
     _count,
     _name,
+    _sequence,
     _sorted_names,
 )
 from protee.constraints._units import _convert, _factor
@@ -186,6 +198,7 @@ class Tally:
     instances: int = 0
 
     def __post_init__(self) -> None:
+        _sequence("names", self.names)
         object.__setattr__(self, "names", _sorted_names("name", self.names))
         _count("instances", self.instances, least=0)
         if not self.names and self.instances:
@@ -206,7 +219,9 @@ class Derived:
     Attributes
     ----------
     values : ValueSet
-        Its rulebook is the subject (the identifier of the group), its
+        Its rulebook is the identifier of the group (:func:`aggregate`,
+        :func:`column_length`) or the rulebook declared
+        (:func:`classify_by_thresholds`, :func:`select_by_class`), its
         edition the one declared; every value is of origin ``derived``.
     unknown : mapping of str to Tally
         By derived parameter: the inputs without a value, whatever the
@@ -315,8 +330,8 @@ def _exact(x: float) -> Exact:
     if isinstance(x, int):
         return Fraction(x)
     if math.isinf(x):
-        return x
-    return Fraction(repr(x))
+        return float(x)
+    return Fraction(repr(float(x)))
 
 
 def _weighted_sum(terms: Iterable[tuple[int, Exact]], what: str) -> Exact:
@@ -494,8 +509,9 @@ class _Converted:
     read : Value
         The value as read, in its own unit: the input of the trace.
     exact : Fraction or float
-        The number in the unit of the parameter, exactly (an infinity as
-        is).
+        The number in the unit of the parameter as a derivation compares
+        it: the decimal of the float it is converted to (an infinity as
+        is), the value a derivation reads again in a derived value.
     record : Conversion
     """
 
@@ -549,9 +565,11 @@ def _in_unit(
     """``value`` in the unit of ``parameter``, and its conversion if one
     was needed.
 
-    A number is converted exactly and rounded once; a value without a
-    number (to be set, not applicable) keeps its unit, once checked that it
-    converts. ``what`` names the value for the messages.
+    A number is converted exactly and rounded once to a float, which is
+    then its value for every comparison and computation (the decimal it
+    shows); a value without a number (to be set, not applicable) keeps its
+    unit, once checked that it converts. ``what`` names the value for the
+    messages.
 
     Raises
     ------
@@ -586,7 +604,8 @@ def _in_unit(
         holder, parameter.name, x, unit, converted, to_unit, str(factor)
     )
     in_unit = replace(value, value=converted, unit=to_unit)
-    return in_unit, _Converted(value, exact, record)
+    # One domain for every path: the float published, read as its decimal.
+    return in_unit, _Converted(value, _exact(converted), record)
 
 
 def _given(
@@ -712,6 +731,77 @@ def _assume(
     return _Reading(
         reading.holder, reading.instances, ValueState.ASSUMED, in_unit, converted
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _Partial:
+    """What the bound of an input to be set says of its value, in the unit
+    the input is read in.
+
+    Attributes
+    ----------
+    side : str
+        ``"at least"``, ``"at most"`` or ``"at least as strict as"`` (see
+        :data:`ENVELOPES`).
+    bound : int, float or str
+        The bound, converted into the unit the input is read in (a float,
+        rounded once), or a label.
+    exact : Fraction or float, optional
+        For a number, the bound as a derivation compares it.
+    labels : tuple of str
+        For a label, the labels the value may take: those of the order of
+        its derivation at least as strict as the bound.
+    """
+
+    side: str
+    bound: Datum
+    exact: Exact | None = None
+    labels: tuple[str, ...] = ()
+
+
+def _partial(reading: _Reading, target: Parameter, what: str) -> _Partial | None:
+    """The bound of an input to be set whose derivation bounds it (an
+    envelope, a classification), in the unit of ``target``; ``None`` for
+    any other input. ``what`` names the input for the messages.
+
+    Raises
+    ------
+    ValueError
+        If the bound of a label is not in the order of its derivation, or
+        the bound does not convert into the unit of ``target``.
+    TypeError
+        If the bound of a number is a label.
+    ImportError
+        If the bound is in another unit and pint is not installed.
+    """
+    value = reading.value
+    if reading.state is not ValueState.UNKNOWN or value is None:
+        return None
+    d = value.derivation
+    if d is None or d.bound is None:
+        return None
+    side = ENVELOPES.get((d.name, d.rule))
+    if side is None:
+        return None
+    bound = d.bound
+    if side == STRICTER:
+        order = d.settings.get(ORDERS[d.name])
+        if not isinstance(order, tuple) or bound not in order:
+            raise ValueError(
+                f"{what}: the bound {bound!r} is not a label of the order of its "
+                f"derivation, {order!r}"
+            )
+        return _Partial(side, bound, labels=order[order.index(bound) :])
+    if isinstance(bound, str):
+        raise TypeError(f"{what}: the bound of a {d.rule} is a number, got {bound!r}")
+    if value.unit == target.unit:
+        return _Partial(side, bound, _exact(bound))
+    # The value was read: its unit converts into that of the target.
+    assert value.unit is not None
+    assert target.unit is not None
+    exact, _ = _convert(_exact(bound), value.unit, target.unit, what)
+    converted = exact if isinstance(exact, float) else float(exact)
+    return _Partial(side, converted, _exact(converted))
 
 
 @dataclass(frozen=True, slots=True)

@@ -163,6 +163,7 @@ def provenance(
     params = freeze(parameters)
     recorded = []
     derived: set[tuple[str, str, str, str, tuple[str, ...]]] = set()
+    visited: set[int] = set()
     for name, value in sorted(values.values.items()):
         for v, retained in (
             (value, True),
@@ -171,7 +172,7 @@ def provenance(
             recorded.append(
                 (name, v.source.rulebook or "", v.source.edition or "", retained)
             )
-            _derivations(name, v, derived)
+            _derivations(name, v, derived, visited)
     return Provenance(
         method=method,
         parameters=params,
@@ -189,16 +190,20 @@ def _derivations(
     name: str,
     value: Value,
     found: set[tuple[str, str, str, str, tuple[str, ...]]],
+    visited: set[int],
 ) -> None:
     """Add the derivation of ``value``, of parameter ``name``, and those of
-    its inputs, in depth, to ``found``."""
+    its inputs, in depth, to ``found``.
+
+    Two values may share an entry (the same rulebook in two editions) and
+    read different inputs: the inputs of every value are walked, each value
+    once (``visited``, by identity, while the values live).
+    """
     d = value.derivation
-    if d is None:
+    if d is None or id(value) in visited:
         return
-    entry = (name, value.source.rulebook or "", d.name, d.rule, d.fixed_by)
-    if entry in found:
-        return
-    found.add(entry)
+    visited.add(id(value))
+    found.add((name, value.source.rulebook or "", d.name, d.rule, d.fixed_by))
     for i in d.inputs:
         if i.value is not None:
-            _derivations(i.parameter, i.value, found)
+            _derivations(i.parameter, i.value, found, visited)

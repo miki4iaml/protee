@@ -512,6 +512,39 @@ def test_a_convoy_of_the_2nd_category_has_a_speed_cap_in_town_only(seed: int) ->
     assert rv.rulebook.id == OVERSIZE
 
 
+def test_a_known_load_at_the_top_decides_the_category_of_a_partial_convoy() -> None:
+    # load-4 has no length; load-3, 27 m long, is beyond the last threshold
+    # of 25 m: whatever load-4, the convoy is of the 3rd category, and its
+    # speed caps apply.
+    source = Source("Technical sheet of load-4", locator="p. 2")
+    sheet = ValueSet(
+        "sheet-load-4",
+        "1",
+        {
+            "width": Value(3.0, source, Origin.STATEMENT, unit="m"),
+            "mass": Value(40000.0, source, Origin.STATEMENT, unit="kg"),
+        },
+    )
+    convoy = Group("convoy", ((LOADS[2], 1), (Member("load-4", (sheet,)), 1)))
+    _, _, values = chain_inputs(group=convoy)
+    length = values.values["length"]
+    assert length.to_be_set
+    assert length.derivation is not None
+    assert (length.derivation.bound, length.derivation.bound_fixed_by) == (
+        27.0,
+        ("load-3",),
+    )
+    category = values.values["category"]
+    assert category.value == "3"
+    assert category.derivation is not None
+    assert category.derivation.unknown == ("length",)
+    assert {k: values.values[f"speed_{k}"].value for k in KINDS} == {
+        "motorway": 60.0,
+        "road": 50.0,
+        "urban": 30.0,
+    }
+
+
 def test_chosen_objective_needs_a_justification() -> None:
     # A12: a chosen objective without its justification is refused.
     with pytest.raises(ValueError, match="needs a justification"):
