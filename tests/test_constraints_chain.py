@@ -424,6 +424,27 @@ def test_toml_without_a_parameter_name() -> None:
         RulebookValues.from_toml(TOML + '\n[source]\nedition = "2"\n')
 
 
+def test_toml_value_not_applicable_and_description_sheets() -> None:
+    text = TOML.replace('kind = "standard"', 'kind = "description"').replace(
+        "value = inf\n", 'not_applicable = "no limit applies to this member"\n'
+    )
+    rv = RulebookValues.from_toml(text)
+    assert rv.rulebook.kind is RulebookKind.DESCRIPTION
+    limit = rv.values.values["limit"]
+    assert limit.value is None
+    assert limit.not_applicable == "no limit applies to this member"
+    assert not limit.to_be_set
+    with pytest.raises(ValueError, match="a value not applicable has no value"):
+        RulebookValues.from_toml(
+            TOML.replace("value = inf\n", 'value = inf\nnot_applicable = "x"\n')
+        )
+    # A derived value carries its derivation, which TOML does not hold.
+    with pytest.raises(ValueError, match="a derived value carries its derivation"):
+        RulebookValues.from_toml(
+            TOML.replace('origin = "provisional"', 'origin = "derived"')
+        )
+
+
 # Provenance ----------------------------------------------------------------
 
 

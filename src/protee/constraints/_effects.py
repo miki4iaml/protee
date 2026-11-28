@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from types import MappingProxyType
@@ -198,8 +198,9 @@ def evaluate(
     -------
     Effect
         Of the kind declared by the pattern of the requirement; when a
-        value is to be set or missing, an effect that does not apply, with
-        the reason.
+        value is to be set, missing or not applicable, an effect that does
+        not apply, with the reason (that of a value not applicable, the
+        members without a value of a derived value to be set).
 
     Raises
     ------
@@ -214,22 +215,51 @@ def evaluate(
     if data.m != graph.m:
         raise ValueError(f"data for {data.m} arcs, graph of {graph.m} arcs")
     pattern = PATTERNS[requirement.pattern]
+    reason = unset_reason(requirement, values)
+    if reason is not None:
+        return Effect(
+            requirement.id, pattern.effect_kind, graph.m, not_applicable=reason
+        )
     bound: dict[str, Datum] = {}
-    for role in (*pattern.parameters, *pattern.optional):
-        name = requirement.parameters.get(role)
-        if name is None:
-            continue
-        value = values.get(name)
-        if value is None or value.value is None:
-            return Effect(
-                requirement.id,
-                pattern.effect_kind,
-                graph.m,
-                not_applicable=f"value of {name!r} to be set",
-            )
-        bound[role] = value.value
+    for role, name in _bound_roles(requirement):
+        x = values.values[name].value
+        assert x is not None
+        bound[role] = x
     scope = data.in_scope(requirement.scope)
     return _EVALUATORS[pattern.name](requirement, data, bound, scope)
+
+
+def _bound_roles(requirement: Requirement) -> Iterator[tuple[str, str]]:
+    """The value roles bound by a requirement, with their parameter, in the
+    order of its pattern."""
+    pattern = PATTERNS[requirement.pattern]
+    for role in (*pattern.parameters, *pattern.optional):
+        name = requirement.parameters.get(role)
+        if name is not None:
+            yield role, name
+
+
+def unset_reason(requirement: Requirement, values: ResolvedValues) -> str | None:
+    """Why a value the requirement needs has no value, or ``None``.
+
+    The first value without one, in the order of the roles of the pattern:
+    missing or to be set (with the members without a value, for a derived
+    value), or not applicable (with its reason).
+    """
+    for _, name in _bound_roles(requirement):
+        value = values.get(name)
+        if value is None:
+            return f"value of {name!r} to be set"
+        if value.not_applicable is not None:
+            return f"value of {name!r} not applicable: {value.not_applicable}"
+        if value.value is None:
+            d = value.derivation
+            if d is not None and d.unknown:
+                return (
+                    f"value of {name!r} to be set: no value for {', '.join(d.unknown)}"
+                )
+            return f"value of {name!r} to be set"
+    return None
 
 
 def _number(requirement: Requirement, role: str, value: Datum) -> float:

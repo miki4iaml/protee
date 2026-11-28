@@ -35,6 +35,7 @@ _VALUE = (
     "origin",
     "precedence",
     "justification",
+    "not_applicable",
     "document",
     "locator",
     "link",
@@ -82,7 +83,7 @@ class RulebookValues:
         [rulebook]
         id = "..."
         kind = "regulation"             # doctrine, regulation, standard,
-                                        # client_specification
+                                        # client_specification, description
         edition = "..."
         title = { en = "...", fr = "..." }   # English required
         [link] = "..."
@@ -103,10 +104,15 @@ class RulebookValues:
         [origin] = "rulebook"           # rulebook by default
         [precedence] = 0
         [justification] = "..."         # required for a chosen objective
+        [not_applicable] = "..."        # why the parameter has no value
+                                        # (then without value)
         [document], [link], [citation_checked]   # override [source]
         [locator] = "art. 3"
 
-    Every value takes the edition of the rulebook.
+    Every value takes the edition of the rulebook. A technical sheet of
+    a member is a rulebook of kind ``description``. A derived value carries
+    its derivation, which TOML does not hold: the origin ``derived`` is
+    refused.
     """
 
     rulebook: Rulebook
@@ -176,6 +182,7 @@ class RulebookValues:
                 unit=v.get("unit"),
                 precedence=v.get("precedence", 0),
                 justification=v.get("justification"),
+                not_applicable=v.get("not_applicable"),
             )
             if values[name].unit != units[name]:
                 raise ValueError(

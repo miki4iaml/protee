@@ -50,9 +50,10 @@ class RequirementStatus(StrEnum):
       reason;
     - ``no_data``: the data cannot support the requirement (an attribute is
       absent);
-    - ``not_applicable``: a value is to be set, no element of the result is
-      in scope, or the pattern does not apply to this kind of result (flow
-      bounds on a route, a speed cap on a flow).
+    - ``not_applicable``: a value is to be set or declared not applicable,
+      no element of the result is in scope, or the pattern does not apply
+      to this kind of result (flow bounds on a route, a speed cap on a
+      flow).
     """
 
     APPLIED = "applied"
