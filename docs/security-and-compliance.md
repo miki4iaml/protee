@@ -317,7 +317,8 @@ without running them in an environment where an agent works [public:
   source archive, with the action `actions/attest`: the provenance of the
   build (through `actions/attest-build-provenance`, a wrapper on top of
   `actions/attest` since its version 4) and a software bill of materials
-  (SBOM) in the CycloneDX format, written by `uv export` from `uv.lock`.
+  (SBOM) in the CycloneDX format, written by `uv export --all-extras` from
+  `uv.lock`: the runtime dependencies and those of the optional extras.
   According to GitHub's documentation, a provenance attestation of this
   kind meets Build Level 2 of SLSA v1.0.
 - Publication on PyPI goes through **Trusted Publishing** (OIDC, no stored
@@ -508,9 +509,17 @@ legal advice.
 - **Binary reproducibility** of the build is not checked. The SVG drawings
   are identical for the same document, the same versions and the same
   fonts: Graphviz measures text with the fonts of the workstation.
-- **SBOM**: attested on GitHub, it is not published on PyPI; it lists the
-  runtime dependencies only (NumPy and SciPy, at the versions of
-  `uv.lock`), not those of the optional extras, which section 3 lists.
+- **SBOM**: attested on GitHub, it is not published on PyPI, which accepts
+  only two attestation predicates (SLSA Provenance and PyPI Publish, both
+  published for protee), not a CycloneDX SBOM; it is fetched and verified
+  with `gh attestation download` and `gh attestation verify` (section 6),
+  and the releases being immutable, it is not attached to them either. From
+  0.4.0 it
+  lists the runtime dependencies (NumPy and SciPy) and those of the
+  optional extras `viz` and `units` (pygraphviz; pint, flexcache,
+  flexparser, platformdirs, typing-extensions), at the versions of
+  `uv.lock`, without telling which are optional: section 3 does. Up to
+  0.3.0 it listed the runtime dependencies only.
 - **Versions of dependencies**: the package declares lower bounds; locking
   versions and digests is up to the user (section 7).
 - **Verifying attestations** needs network access; it is done on a
