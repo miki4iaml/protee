@@ -196,6 +196,8 @@ and this project adheres to
 
 ### Changed
 
+- The SBOM attested with each published version lists the dependencies of the optional
+  extras `viz` and `units` too, not only the runtime ones (`uv export --all-extras`).
 - `docs/security-and-compliance.md` brought up to date for 0.4.0: the extra `units` (pint
   imported on first use, one registry per process under a lock, no cache on disk,
   conversions refused rather than guessed), the result model (SHA-256 fingerprints, objects
