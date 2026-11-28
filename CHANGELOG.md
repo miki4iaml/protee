@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-28
+
+A common result model. Every method of protee returns a result built on
+`protee.results.ResultCore`: a status (`optimal`, `feasible`,
+`infeasible`, `unbounded`, `limit`), the certificate the status calls
+for, the guarantee of the method, deterministic work counters, the
+version and a fingerprint of the inputs. Each module lists its methods,
+with their problem and guarantee, through `methods()`, and a conformity
+suite runs every method of every registry. Conventions in
+[docs/results.md](docs/results.md).
+
+The API of 0.2 changes where a negative answer had no status: a missing
+route is a result of status `infeasible` with its certificate instead of
+`None`, `bellman_ford` always returns `ShortestPaths`, `k_shortest_paths`
+and `replacement_paths` return iterable results, `check_feasibility`
+takes its method explicitly, and the result types take keyword arguments
+only. Each change comes with its migration below.
+
 ### Added
 
 - The concept DOI of protee on Zenodo, `10.5281/zenodo.24619907`, which

@@ -1,6 +1,6 @@
 [project]
 name = "protee"
-version = "0.2.0"
+version = "0.3.0"
 description = "Proteus: graph and operations research algorithms whose methods are chosen explicitly, compared, and backed by certificates and diagnostics"
 readme = "README.md"
 authors = [
