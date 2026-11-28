@@ -40,11 +40,23 @@ KINDS: dict[str, Any] = {
         "prefixes": {
             "skos": SKOS,
             "qudt": "http://qudt.org/schema/qudt/",
+            "semapv": "https://w3id.org/semapv/vocab/",
             "example": None,
         },
         "vocabulary": {
             "type": [
-                {"id": "example:kind", "on": "node", "label": "quantity kind"},
+                {
+                    "id": "example:kind",
+                    "on": "node",
+                    "label": "quantity kind",
+                    "mappings": [
+                        {
+                            "predicate": "skos:exactMatch",
+                            "object": "qudt:QuantityKind",
+                            "justification": "semapv:ManualMappingCuration",
+                        }
+                    ],
+                },
                 {"id": "example:external", "on": "node", "label": "external name"},
                 {"id": "qudt:specializationOf", "on": "edge", "label": "specializes"},
                 {
@@ -339,6 +351,9 @@ def appending(path: str, value: object) -> Change:
     return change
 
 
+#: The correspondences of the first declared type of KINDS.
+MAPPINGS = "graph.vocabulary.type.0.mappings"
+
 DEPARTURES: list[tuple[str, Change, str]] = [
     ("not directed", setting("directed", False), "directed: must be true"),
     ("no multigraph", removing("multigraph"), "multigraph: must be"),
@@ -447,6 +462,50 @@ DEPARTURES: list[tuple[str, Change, str]] = [
     ("free keys on an edge", setting("edges.0.family", ["a"]), ""),
     ("links next to edges is a free key", setting("links", 5), ""),
     ("a null vocabulary entry", setting("graph.vocabulary.status", None), ""),
+    ("mappings", setting(MAPPINGS, {}), ".mappings: must be a list"),
+    ("mapping", setting(f"{MAPPINGS}.0", "skos:exactMatch"), "mappings[0]: must be"),
+    (
+        "mapping without predicate",
+        removing(f"{MAPPINGS}.0.predicate"),
+        "mappings[0].predicate: must be a term prefix:name",
+    ),
+    (
+        "mapping to a plain name",
+        setting(f"{MAPPINGS}.0.object", "QuantityKind"),
+        "mappings[0].object: must be a term prefix:name",
+    ),
+    (
+        "mapping to an undeclared prefix",
+        setting(f"{MAPPINGS}.0.object", "dc:Kind"),
+        "prefix 'dc' is not declared",
+    ),
+    (
+        "mapping justification",
+        setting(f"{MAPPINGS}.0.justification", 3),
+        "mappings[0].justification: must be a term",
+    ),
+    ("free keys in a mapping", setting(f"{MAPPINGS}.0.confidence", 0.9), ""),
+    (
+        "a term with a space",
+        setting(f"{MAPPINGS}.0.object", "qudt:Quantity Kind"),
+        "mappings[0].object: must be a term prefix:name",
+    ),
+    (
+        "a term that ends a line",
+        setting(f"{MAPPINGS}.0.object", "qudt:QuantityKind\n"),
+        "mappings[0].object: must be a term prefix:name",
+    ),
+    (
+        "a mapping on an edge type",
+        setting(
+            "graph.vocabulary.type.3.mappings",
+            [{"predicate": "skos:closeMatch", "object": "qudt:QuantityKind"}],
+        ),
+        "",
+    ),
+    ("locator", setting("edges.0.locator", 11), "edges[0].locator: must be a text"),
+    ("a locator", setting("edges.0.locator", "eq. 11"), ""),
+    ("a locator on a node is a free key", setting("nodes.0.locator", 3), ""),
 ]
 
 
@@ -462,6 +521,7 @@ CROSSING = {
     "undeclared type",
     "node type on an edge",
     "source",
+    "mapping to an undeclared prefix",
 }
 
 
@@ -484,8 +544,12 @@ def test_a_null_key_means_an_absent_one() -> None:
     doc = copy.deepcopy(KINDS)
     doc["graph"].update(language=None, label=None)
     doc["graph"]["producer"]["version"] = None
-    doc["graph"]["vocabulary"]["status"][0].update(description=None, symmetric=None)
+    doc["graph"]["vocabulary"]["status"][0].update(
+        description=None, symmetric=None, mappings=None
+    )
+    doc["graph"]["vocabulary"]["type"][0]["mappings"][0]["justification"] = None
     doc["nodes"][0].update(iri=None, metrics=None, family=None)
+    doc["edges"][0].update(locator=None)
     follows(doc)
     plain = {
         "directed": True,

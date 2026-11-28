@@ -28,9 +28,11 @@ online solver, service or engine).
 
 Typed graphs are exchanged with other projects in the node-link format
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`), and
-drawn by `protee.viz`: selection, groups and loops without dependency,
-SVG and a page to explore offline with the optional extra `viz` (see the
-[gallery](docs/gallery/README.md)).
+drawn by `protee.viz`: selection, groups, loops, contraction, colour by
+vocabulary and a matrix view (N² chart) without dependency; SVG figures,
+light or dark, with their legend and a footer, and a page to explore
+offline (tooltips, formulas, the matrix under the graph), with the
+optional extra `viz` (see the [gallery](docs/gallery/README.md)).
 
 ## Why protee
 
@@ -93,4 +95,9 @@ and the rules shared by contributors and coding agents in
 
 [BSD-3-Clause](LICENSE). The page written by `protee.viz.render_html`
 embeds cytoscape.js and cytoscape-expand-collapse, under the MIT licence
-([notice](src/protee/_assets/NOTICE.md)).
+([notice](src/protee/_assets/NOTICE.md)); the embedded value set reuses a
+public text under the [Licence Ouverte 2.0](https://spdx.org/licenses/etalab-2.0.html),
+credited in its notice.
+
+How protee runs, is developed and published, and what it ships:
+[security, supply chain and compliance](docs/security-and-compliance.md).

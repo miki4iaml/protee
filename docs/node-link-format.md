@@ -28,7 +28,8 @@ without protee.
     },
     "vocabulary": {
       "type": [
-        {"id": "example:kind", "on": "node", "label": "quantity kind"},
+        {"id": "example:kind", "on": "node", "label": "quantity kind",
+         "mappings": [{"predicate": "skos:exactMatch", "object": "qudt:QuantityKind"}]},
         {"id": "qudt:specializationOf", "on": "edge", "label": "specializes"},
         {"id": "skos:exactMatch", "on": "edge", "label": "exact match", "symmetric": true}
       ],
@@ -64,7 +65,8 @@ without protee.
 | `graph` | `language` | no | a BCP 47 language tag (`"en"`, `"fr-FR"`): the language of the labels |
 | `graph` | `label`, `description` | no | texts: the name and description of the whole graph (the title or caption of a figure) |
 | `graph` | `prefixes` | no | prefix → IRI, or `null` for a producer without a published namespace (its identifiers then do not export to RDF); every prefix used is declared here |
-| `graph` | `vocabulary` | no | attribute → list of declared values `{"id", "on": "node" or "edge", "label", "description"?, "symmetric"?}`. Examples of attributes: `type`, `status`, `role`. **For every attribute declared here, each value used by a node or an edge is declared, with the right `on`.** An identifier is either `prefix:name` (a declared prefix) or a plain name, local to the file. `symmetric` applies to an edge only. A value used on nodes and on edges is declared twice, one entry for each `on`, each with its label. |
+| `graph` | `vocabulary` | no | attribute → list of declared values `{"id", "on": "node" or "edge", "label", "description"?, "symmetric"?, "mappings"?}`. Examples of attributes: `type`, `status`, `role`. **For every attribute declared here, each value used by a node or an edge is declared, with the right `on`.** An identifier is either `prefix:name` (a declared prefix) or a plain name, local to the file. `symmetric` applies to an edge only. A value used on nodes and on edges is declared twice, one entry for each `on`, each with its label. |
+| declared value | `mappings` | no | a list of correspondences of the declared value to terms of other vocabularies, as in [SSSOM](https://w3id.org/sssom/spec): `{"predicate", "object", "justification"?}`, for instance `{"predicate": "skos:exactMatch", "object": "qudt:QuantityKind"}`. `predicate` is the relation (a SKOS mapping relation is advised: `skos:exactMatch`, `skos:closeMatch`, `skos:broadMatch`, `skos:narrowMatch`, `skos:relatedMatch`), `object` the term, `justification` how the correspondence was made (a SEMAPV term, such as `semapv:ManualMappingCuration`); each is `prefix:name` with a declared prefix |
 | node | `id` | yes | an **opaque** string, or an integer for a graph without labels; **unique, and stable** from one version of the producer to the next. An IRI is allowed (for an external entity, for instance); an `id` is never expanded, even if it contains `:`. Only the identifiers declared in `graph.vocabulary` take the form `prefix:name` |
 | node | `label` | no | the text shown, the `id` otherwise |
 | node | `type`, `status`, `role`… | no | attributes declared in `graph.vocabulary` (see above); `role` serves, for instance, the role of a variable in a system of equations (input, unknown, intermediate) |
@@ -75,7 +77,15 @@ without protee.
 | edge | `source`, `target` | yes | identifiers of existing nodes |
 | edge | `key` | no | an integer, unique among the edges with the same source and target |
 | edge | `type`, `label`, `metrics` | no | as for nodes |
+| edge | `locator` | no | a text: the place in the target that the edge points to, such as an equation number, an article or a clause (`"11"` on an edge from an equation to the article it comes from) |
 | anywhere | other keys | allowed | a consumer keeps them and may ignore them (protee writes its attribute columns there) |
+
+**Keys of a producer.** The format may adopt new keys without a prefix,
+in optional additions. A key that only its producer reads is best
+prefixed with the producer's prefix (`example:rank`), as protee prefixes
+the marks it adds (`protee:display`), so that it never meets such a key;
+it may serve `order_by` or a style all the same. The format never adopts,
+with another meaning, a name that a producer already publishes.
 
 **Order.** The order of the nodes and of the edges is significant. A
 producer keeps it stable, for reproducible figures.
