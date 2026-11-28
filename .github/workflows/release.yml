@@ -82,9 +82,10 @@ jobs:
       - name: Check that the description has no relative link
         run: uv run --no-project scripts/absolute_links.py check dist/*
 
-      # Outside dist/: the SBOM is attested, not uploaded to PyPI.
+      # Outside dist/: the SBOM is attested, not uploaded to PyPI. It lists
+      # the dependencies of the optional extras too, which users install.
       - name: SBOM (CycloneDX)
-        run: uv export --format cyclonedx1.5 --no-dev --frozen --output-file sbom/protee.cdx.json
+        run: uv export --format cyclonedx1.5 --no-dev --all-extras --frozen --output-file sbom/protee.cdx.json
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:

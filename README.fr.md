@@ -38,6 +38,16 @@ garantie de la méthode, des compteurs de travail déterministes, la
 version et une empreinte des entrées. Chaque module liste ses méthodes
 par `methods()`.
 
+La description d'un sujet donne des valeurs, jamais des contraintes :
+une phase de [dérivation](docs/derivations.md) (*derive*, page en
+anglais) tire des fiches techniques des membres, et des groupes de
+membres avec leurs effectifs, les valeurs que les exigences comparent
+aux arcs (une enveloppe, une classe par seuils, une valeur choisie selon
+cette classe, la longueur d'une colonne), chacune avec sa règle, le
+membre qui la fixe et la source de chaque entrée ; une valeur inconnue
+est comptée, et reste inconnue sauf si l'appelant en suppose une,
+déclarée.
+
 Les graphes typés s'échangent avec d'autres projets au format node-link
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`, page en
 anglais), et se dessinent par `protee.viz` : sélection, groupes,
@@ -96,6 +106,14 @@ Le dessin en SVG et la page à explorer (`protee.viz.render_svg`,
 
 ```
 pip install "protee[viz]"
+```
+
+La conversion des entrées d'une dérivation dans l'unité de leur
+paramètre, et l'affichage lisible des valeurs
+(`protee.constraints.readable`), demandent l'extra facultatif `units` :
+
+```
+pip install "protee[units]"
 ```
 
 Pour travailler sur protee lui-même, voir le

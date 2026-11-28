@@ -11,7 +11,7 @@ from importlib.metadata import version
 
 from protee._fingerprint import fingerprint, freeze
 from protee._frozen import FrozenMap
-from protee.constraints._model import RequirementSet, ResolvedValues
+from protee.constraints._model import RequirementSet, ResolvedValues, Value
 from protee.results import ResultCore
 
 __all__ = ["Provenance", "fingerprint", "provenance"]
@@ -45,6 +45,14 @@ class Provenance:
         Fingerprint of the result.
     counters : mapping of str to int
         Deterministic work counters.
+    derivations : tuple of (str, str, str, str, tuple of str)
+        For each derived value used, retained or set aside, and for each
+        derived value its derivations read in turn (a class read by a
+        selection, the envelope read by the class): parameter, subject (the
+        rulebook of its value set), derivation, rule, and the inputs that
+        fix it; sorted, without duplicate. The fingerprint of the inputs
+        covers every input of every derivation, not only those that fix a
+        value.
     """
 
     method: str
@@ -55,10 +63,12 @@ class Provenance:
     inputs: str
     result: str
     counters: Mapping[str, int]
+    derivations: tuple[tuple[str, str, str, str, tuple[str, ...]], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "parameters", freeze(dict(self.parameters)))
         object.__setattr__(self, "counters", FrozenMap(self.counters))
+        object.__setattr__(self, "derivations", freeze(self.derivations))
 
     def replays(self, other: Provenance) -> bool:
         """Whether ``other`` has the same inputs, method, parameters and
@@ -121,6 +131,8 @@ def provenance(
     Returns
     -------
     Provenance
+        With the derivations of the derived values, those of their inputs
+        included (:attr:`Provenance.derivations`).
 
     Raises
     ------
@@ -150,6 +162,8 @@ def provenance(
         own = (core.inputs,)
     params = freeze(parameters)
     recorded = []
+    derived: set[tuple[str, str, str, str, tuple[str, ...]]] = set()
+    visited: set[int] = set()
     for name, value in sorted(values.values.items()):
         for v, retained in (
             (value, True),
@@ -158,6 +172,7 @@ def provenance(
             recorded.append(
                 (name, v.source.rulebook or "", v.source.edition or "", retained)
             )
+            _derivations(name, v, derived, visited)
     return Provenance(
         method=method,
         parameters=params,
@@ -167,4 +182,28 @@ def provenance(
         inputs=fingerprint(method, params, inputs, requirements, values, *own),
         result=fingerprint(result),
         counters=FrozenMap(counters or {}),
+        derivations=tuple(sorted(derived)),
     )
+
+
+def _derivations(
+    name: str,
+    value: Value,
+    found: set[tuple[str, str, str, str, tuple[str, ...]]],
+    visited: set[int],
+) -> None:
+    """Add the derivation of ``value``, of parameter ``name``, and those of
+    its inputs, in depth, to ``found``.
+
+    Two values may share an entry (the same rulebook in two editions) and
+    read different inputs: the inputs of every value are walked, each value
+    once (``visited``, by identity, while the values live).
+    """
+    d = value.derivation
+    if d is None or id(value) in visited:
+        return
+    visited.add(id(value))
+    found.add((name, value.source.rulebook or "", d.name, d.rule, d.fixed_by))
+    for i in d.inputs:
+        if i.value is not None:
+            _derivations(i.parameter, i.value, found, visited)

@@ -10,10 +10,35 @@ client), never a dependency of a package. Its pattern turns it into a
 
 The phases come in a fixed order:
 
+0. **derive** (:func:`aggregate`, :func:`classify_by_thresholds`,
+   :func:`select_by_class`, :func:`column_length`): the values on the side
+   of the subject, from its description. A :class:`Member` is described by
+   its sheets (value sets of rulebooks of kind ``description``), a
+   :class:`Group` holds members or groups with their counts; a derivation
+   of the closed registry (:func:`derivations`) gives a value per
+   parameter, each with its :class:`Derivation`: the rule, the members (or
+   characteristics, or class) that fix it and the source of every input.
+   A value is known, unknown, assumed (by the derivation,
+   :class:`OnUnknown`) or not applicable (declared, with its reason); the
+   caller states the policy for the unknown, without default, and the
+   :class:`Derived` values count their unknowns. Derivations chain: the
+   envelope of a group is classified by thresholds taken from a text
+   (:class:`Characteristic`), and its class selects values in a table
+   (:class:`NotApplicable` for a class without a value of its own). With
+   the optional extra ``units`` (pint), an input in another unit than the
+   one it must have is converted into it, exactly, and each
+   :class:`Conversion` is recorded; without the extra, it is refused. A
+   description produces no constraint: its values enter
+   :func:`resolve_values` like any other;
 1. **evaluate** (:func:`evaluate`): one :class:`Effect` per requirement,
    from the arc attributes (:class:`ArcData`) and the values retained by
    precedence (:func:`resolve_values`); an arc without data gets the
-   ``UNKNOWN`` verdict, never a presumed pass;
+   ``UNKNOWN`` verdict, never a presumed pass. An admissibility
+   requirement (a quantity at most a limit, a demand at most a capacity, a
+   class at least a required one) whose value is to be set by an envelope
+   reads the bound of the known members: an arc that every value the
+   bound allows fails fails for certain, one that every such value passes
+   passes, the others are unknown;
 2. **compose** (:func:`compose`): the effects become a
    :class:`ComputationView` (arcs excluded, weights, travel times under
    the speed caps, flow bounds), independently of their order; the policy
@@ -25,7 +50,12 @@ The phases come in a fixed order:
    weights or costs the result was computed with, which gives its
    :class:`RequirementStatus`; the solver never writes a status;
 5. **explain** (:func:`requirement_table`): the table is generated from the
-   verification.
+   verification; for a derived value, it shows its rule, the member (or
+   characteristic, or class) that fixes it with its source, its bound
+   when it is to be set, its assumptions, conversions and the inputs left
+   out, in words and as data. :func:`readable` shows a value as a person
+   reads it (a duration in days, hours and minutes, a length in km or m),
+   with the optional extra ``units``.
 
 :func:`check_inputs` says beforehand what the data allow to prove.
 When requirements cannot hold together, :func:`minimal_conflict`,
@@ -35,7 +65,8 @@ and propose relaxations, with their :class:`Impact`, on a
 the common model of :mod:`protee.results` (status, guarantee, counters,
 version, fingerprint of the inputs); :func:`methods` lists their methods,
 always named by the caller. :func:`provenance` records how a result was
-produced, with :func:`fingerprint` of its inputs.
+produced, with :func:`fingerprint` of its inputs and the derivations of
+the values it used.
 :class:`RulebookValues` reads rulebooks and values from TOML, and loads
 the ones embedded from public texts.
 
@@ -47,8 +78,24 @@ Provisional API (until version 1.0).
 
 from __future__ import annotations
 
+from protee.constraints._aggregate import AggregateKind, Aggregation, aggregate
+from protee.constraints._classify import (
+    Characteristic,
+    NotApplicable,
+    classify_by_thresholds,
+    select_by_class,
+)
+from protee.constraints._column import Gap, GapCount, column_length
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData, Attribute
+from protee.constraints._derivations import DerivationInfo, derivations
+from protee.constraints._derive import (
+    Comparison,
+    Derived,
+    OnUnknown,
+    Tally,
+    UnknownRule,
+)
 from protee.constraints._effects import Effect, Reason, Verdict, evaluate
 from protee.constraints._failure import (
     Conflict,
@@ -64,9 +111,16 @@ from protee.constraints._failure import (
     minimal_relaxation,
     relax_by_tiers,
 )
+from protee.constraints._groups import Group, Member, ZeroCount
 from protee.constraints._inputs import InputCheck, InputReport, check_inputs
 from protee.constraints._model import (
+    Assumption,
+    Conversion,
     Correspondence,
+    Derivation,
+    DerivationInput,
+    LeftOut,
+    LeftOutCause,
     Origin,
     Parameter,
     Relation,
@@ -78,6 +132,7 @@ from protee.constraints._model import (
     Source,
     Value,
     ValueSet,
+    ValueState,
     resolve_values,
 )
 from protee.constraints._patterns import EffectKind, Family, Pattern, Subject, patterns
@@ -85,6 +140,7 @@ from protee.constraints._provenance import Provenance, fingerprint, provenance
 from protee.constraints._registry import methods
 from protee.constraints._table import RequirementRow, requirement_table
 from protee.constraints._toml import RulebookValues
+from protee.constraints._units import readable
 from protee.constraints._verify import (
     RequirementCheck,
     RequirementStatus,
@@ -94,19 +150,37 @@ from protee.constraints._verify import (
 )
 
 __all__ = [
+    "AggregateKind",
+    "Aggregation",
     "ArcData",
+    "Assumption",
     "Attribute",
+    "Characteristic",
+    "Comparison",
     "ComputationView",
     "Conflict",
+    "Conversion",
     "Correspondence",
+    "Derivation",
+    "DerivationInfo",
+    "DerivationInput",
+    "Derived",
     "Effect",
     "EffectKind",
     "Family",
     "FlowSearch",
+    "Gap",
+    "GapCount",
+    "Group",
     "Impact",
     "InfeasibleSubset",
     "InputCheck",
     "InputReport",
+    "LeftOut",
+    "LeftOutCause",
+    "Member",
+    "NotApplicable",
+    "OnUnknown",
     "Origin",
     "Parameter",
     "Pattern",
@@ -127,15 +201,23 @@ __all__ = [
     "RulebookValues",
     "Source",
     "Subject",
+    "Tally",
     "Tier",
     "TieredRelaxation",
     "UnknownPolicy",
+    "UnknownRule",
     "Value",
     "ValueSet",
+    "ValueState",
     "Verdict",
     "Verification",
+    "ZeroCount",
+    "aggregate",
     "check_inputs",
+    "classify_by_thresholds",
+    "column_length",
     "compose",
+    "derivations",
     "evaluate",
     "fingerprint",
     "methods",
@@ -143,9 +225,11 @@ __all__ = [
     "minimal_relaxation",
     "patterns",
     "provenance",
+    "readable",
     "relax_by_tiers",
     "requirement_table",
     "resolve_values",
+    "select_by_class",
     "verify_flow",
     "verify_route",
 ]

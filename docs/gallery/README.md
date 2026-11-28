@@ -29,10 +29,16 @@ This page and its drawings are written by
 
 ## A system of equations, in the order of its source
 
-The surface layer of COARE 3.6: equations (ellipses) give or read variables (rectangles); inputs, unknowns and intermediates are told apart by their fill and border. The reads that close the loop are dashed and do not constrain the layout.
+The surface layer of COARE 3.6: equations (ellipses) give or read variables (rectangles); inputs, unknowns and intermediates are told apart by their fill and border. The reads that close the loop are dashed and do not constrain the layout. The edges are drawn at right angles (the attribute `splines` of the graph set to `ortho`), which keeps the reads across the loop legible; Graphviz lays such a drawing out in a separate process, and protee raises a clear error if its router of orthogonal edges fails on a graph.
 
 ```python
-viz.render_svg(coare, styles=CLOSING, order_by="rank", legend="below")
+viz.render_svg(
+    coare,
+    styles=CLOSING,
+    attributes={"graph": {"splines": "ortho"}},
+    order_by="rank",
+    legend="below",
+)
 ```
 
 ![A system of equations, in the order of its source](coare-loop.svg)
@@ -63,12 +69,13 @@ viz.render_svg(
 
 ## The same system, each equation joined with what it gives
 
-Each equation and the variable it gives become one node, which keeps the variable and the rank of its equation: the loop reads from variable to variable. The legend, at the left, shows only the values that the drawing carries.
+Each equation and the variable it gives become one node, which keeps the variable and the rank of its equation: the loop reads from variable to variable, at right angles. The legend, at the left, shows only the values that the drawing carries.
 
 ```python
 viz.render_svg(
     viz.contract(coare, edge_type="nomogram:gives"),
     styles=CLOSING,
+    attributes={"graph": {"splines": "ortho"}},
     order_by="rank",
     legend="below-left",
     legend_values="present",
@@ -85,7 +92,11 @@ The dark theme, smaller texts for all nodes and edges, and an image under the dr
 viz.render_svg(
     viz.contract(coare, edge_type="nomogram:gives"),
     styles=CLOSING,
-    attributes={"node": {"fontsize": "11"}, "edge": {"fontsize": "11"}},
+    attributes={
+        "graph": {"splines": "ortho"},
+        "node": {"fontsize": "11"},
+        "edge": {"fontsize": "11"},
+    },
     theme=viz.DARK,
     order_by="rank",
     legend="below-left",

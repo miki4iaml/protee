@@ -33,6 +33,15 @@ cut, an improving cycle, the nodes a search reached), the guarantee of
 the method, deterministic work counters, the version and a fingerprint
 of the inputs. Each module lists its methods with `methods()`.
 
+The description of a subject gives values, never constraints: a phase
+[*derive*](docs/derivations.md) turns the technical sheets of members,
+and groups of members with their counts, into the values that
+requirements compare with the arcs (an envelope, a class by thresholds,
+a value selected by that class, the length of a column), each with its
+rule, the member that fixes it and the source of every input; an unknown
+value is counted, and stays unknown unless the caller assumes one,
+declared.
+
 Typed graphs are exchanged with other projects in the node-link format
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`), and
 drawn by `protee.viz`: selection, groups, loops, contraction, colour by
@@ -87,6 +96,14 @@ The drawing in SVG and in a page to explore (`protee.viz.render_svg`,
 
 ```
 pip install "protee[viz]"
+```
+
+Converting the inputs of a derivation into the unit of their parameter,
+and showing values readably (`protee.constraints.readable`), need the
+optional extra `units`:
+
+```
+pip install "protee[units]"
 ```
 
 To work on protee itself, see the

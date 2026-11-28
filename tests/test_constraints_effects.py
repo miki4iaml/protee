@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import random
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 import pytest
 from constraints_cases import (
+    CAPACITY,
     CLASS,
     ELEMENTS,
     HEIGHT,
@@ -23,6 +25,7 @@ from constraints_cases import (
     SPEED,
     VERDICT_REQUIREMENTS,
     ZONE,
+    fording,
     oracle_verdict,
     random_case,
     requirement,
@@ -214,6 +217,141 @@ def test_class_admissibility_uses_the_declared_order() -> None:
     )
     with pytest.raises(ValueError, match="must be a category"):
         evaluate(CLASS, LINE, numeric, resolved())
+
+
+def ford_data(
+    depth: list[float | None], element: list[str | None] | None = None
+) -> ArcData:
+    """Arcs with a depth of water (``None`` unknown), roads by default."""
+    kinds = ["road"] * len(depth) if element is None else element
+    return ArcData(
+        len(depth),
+        (
+            Attribute.categorical("element", kinds, ELEMENTS),
+            Attribute.numeric("water_depth", depth, unit="m"),
+        ),
+        element="element",
+    )
+
+
+def capacity_verdicts(depth: float, demand: list[float | None]) -> list[int]:
+    graph = Digraph.from_arcs(2, [(0, 1)] * len(demand))
+    _, vals = fording(depth)
+    effect = evaluate(CAPACITY, graph, ford_data(demand), vals)
+    assert effect.verdict is not None
+    return [int(v) for v in effect.verdict]
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_capacity_verdicts_match_the_raw_lists(seed: int) -> None:
+    # The oracle reads the raw lists: in scope, unknown without a depth of
+    # water, a pass when the demand is at most the capacity.
+    case = random_case(seed, m=12, unknown=0.3)
+    rng = random.Random(seed)
+    demand = [rng.choice([None, 0.3, 0.5, 0.75, 0.8, 1.2]) for _ in range(12)]
+    capacity = rng.choice([0.5, 0.75])
+    _, vals = fording(capacity)
+    e = evaluate(CAPACITY, case.graph, ford_data(demand, case.element), vals)
+    expected, reasons = [], []
+    for d, element in zip(demand, case.element, strict=True):
+        if element not in (None, "road"):
+            expected.append(Verdict.PASS)
+            reasons.append(Reason.OUT_OF_SCOPE)
+        elif d is None:
+            expected.append(Verdict.UNKNOWN)
+            reasons.append(Reason.MISSING_DATA)
+        elif d <= capacity:
+            expected.append(Verdict.PASS)
+            reasons.append(Reason.SATISFIED)
+        else:
+            expected.append(Verdict.FAIL)
+            reasons.append(Reason.VIOLATED)
+    assert e.verdict is not None
+    assert e.reasons is not None
+    assert e.verdict.tolist() == expected
+    assert e.reasons.tolist() == reasons
+
+
+def test_capacity_passes_at_equality_and_reads_numbers() -> None:
+    # Exact at equality, as a threshold: the demand may reach the capacity.
+    assert capacity_verdicts(0.75, [0.75, math.nextafter(0.75, 1.0), None]) == [
+        Verdict.PASS,
+        Verdict.FAIL,
+        Verdict.UNKNOWN,
+    ]
+    # No limit: every known demand passes; no sign is checked.
+    assert capacity_verdicts(math.inf, [100.0, math.inf, None]) == [
+        Verdict.PASS,
+        Verdict.PASS,
+        Verdict.UNKNOWN,
+    ]
+    assert capacity_verdicts(-1.0, [-2.0, 0.0, -1.0]) == [
+        Verdict.PASS,
+        Verdict.FAIL,
+        Verdict.PASS,
+    ]
+    _, vals = fording(0.75)
+    absent = ArcData(
+        3, (Attribute.categorical("element", ["road", "bridge", None], ELEMENTS),)
+    )
+    e = evaluate(CAPACITY, LINE, absent, vals)
+    assert e.verdict is not None
+    # Without the attribute, every arc in scope is unknown.
+    assert e.verdict.tolist() == [Verdict.UNKNOWN] * 3
+    _, unset = fording(None)
+    assert evaluate(CAPACITY, LINE, ford_data([0.5] * 3), unset).not_applicable == (
+        "value of 'fording_depth' to be set"
+    )
+    _, text = fording("deep")
+    with pytest.raises(TypeError, match="capacity must be a number"):
+        evaluate(CAPACITY, LINE, ford_data([0.5] * 3), text)
+    kinds = ArcData(
+        3,
+        (Attribute.categorical("water_depth", ["road"] * 3, ELEMENTS),),
+    )
+    with pytest.raises(ValueError, match="water_depth must be a number"):
+        evaluate(CAPACITY, LINE, kinds, vals)
+
+
+DEPTHS = st.one_of(
+    st.none(),
+    st.sampled_from([-math.inf, -1.0, 0.0, 0.5, 0.75, math.inf]),
+    st.floats(-10, 10, allow_nan=False),
+)
+
+
+@given(
+    st.one_of(st.sampled_from([0.0, 0.75, math.inf, -math.inf]), st.floats(-10, 10)),
+    st.lists(DEPTHS, min_size=1, max_size=6),
+)
+def test_capacity_mirrors_a_threshold(
+    capacity: float, demand: list[float | None]
+) -> None:
+    # A capacity c against demands d gives the verdicts of a threshold -c
+    # against limits -d: the same test, read from the other side.
+    graph = Digraph.from_arcs(2, [(0, 1)] * len(demand))
+    _, vals = fording(capacity)
+    data = ford_data(demand)
+    mirrored = ArcData(
+        len(demand),
+        (
+            Attribute.categorical("element", ["bridge"] * len(demand), ELEMENTS),
+            Attribute.numeric(
+                "mass_limit", [None if d is None else -d for d in demand]
+            ),
+        ),
+        element="element",
+    )
+    capacity_effect = evaluate(CAPACITY, graph, data, vals)
+    threshold = evaluate(
+        MASS,
+        graph,
+        mirrored,
+        resolved(requirement_set((MASS,)), mass=-capacity),
+    )
+    assert capacity_effect.verdict is not None
+    assert threshold.verdict is not None
+    assert capacity_effect.verdict.tolist() == threshold.verdict.tolist()
 
 
 def test_zone_exclusion_reads_a_membership_relation() -> None:

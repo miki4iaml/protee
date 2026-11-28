@@ -232,10 +232,12 @@ these steps in order.
   provenance, then with `--predicate-type https://cyclonedx.org/bom` for
   the SBOM, which the first command does not check.
 - The published version installs in an isolated environment, with its
-  extra, on the lowest and the highest supported Python:
-  `uv run --isolated --no-project --python 3.12 --with
-  "protee[viz]==x.y.z" python -c "import protee.viz"`, then the same
-  with `3.14`.
+  extras, on the lowest and the highest supported Python:
+  `uv run --isolated --no-project --refresh-package protee --python 3.12
+  --with "protee[viz,units]==x.y.z" python -c "import protee.viz, pint"`,
+  then the same with `3.14`. `--refresh-package protee` makes uv read the
+  index again: just after a publication, its cache may still hold the
+  former index, without the new version (found for 0.3.0).
 - Conclude from PyPI, not from the state GitHub shows: a job may still
   show as pending when PyPI has the files.
 
