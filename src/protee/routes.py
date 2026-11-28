@@ -47,6 +47,7 @@ from protee.paths import (
     _Run,
     _separating_cut,
     _skip,
+    _sum_along,
     _walk,
 )
 from protee.results import (
@@ -178,7 +179,8 @@ class Route:
     arcs : tuple of int
         The arcs in order; the head of each arc is the tail of the next.
     cost : int or float
-        Sum of the weights of the arcs.
+        Sum of the weights of the arcs, from left to right, as Dijkstra
+        adds them: the distance of the end of the path.
     """
 
     arcs: tuple[int, ...]
@@ -242,10 +244,11 @@ class WaypointRoute(ResultCore):
 
     @property
     def cost(self) -> Number | None:
-        """Total cost of the legs; ``None`` when no route exists."""
+        """Total cost of the legs, added from the first to the last, as the
+        free order compares them; ``None`` when no route exists."""
         if self.legs is None:
             return None
-        return sum(leg.cost for leg in self.legs)
+        return _sum_along(leg.cost for leg in self.legs)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -371,9 +374,11 @@ def _run(
     target: int | None,
     skip: Sequence[bool],
     work: dict[str, int],
+    start: Number = 0,
 ) -> _Run:
-    """One Dijkstra run, counted in ``work``."""
-    run = _dijkstra(graph, weight, (source,), target, skip)
+    """One Dijkstra run, counted in ``work``; ``source`` starts at distance
+    ``start``."""
+    run = _dijkstra(graph, weight, (source,), target, skip, start)
     work["dijkstra_runs"] += 1
     work["settled_nodes"] += run.settled
     work["scanned_arcs"] += run.scanned
@@ -382,10 +387,6 @@ def _run(
 
 def _cut(graph: Digraph, run: _Run, source: int, target: int) -> SeparatingCut:
     return _separating_cut(graph, _reached(run.distance), (source,), target)
-
-
-def _cost(weight: Sequence[Number], arcs: Sequence[int]) -> Number:
-    return sum(weight[a] for a in arcs)
 
 
 def _held_karp(
@@ -516,28 +517,32 @@ def waypoint_route(
     ValueError
         If ``order`` is unknown, more than ``MAX_FREE_WAYPOINTS``
         waypoints are given in free order, a weight is negative or not
-        finite (an int beyond the float range included), ``k + 1`` times
-        the sum of the absolute weights is beyond the float range (the
-        cost of a route of ``k + 1`` legs could overflow), or a terminal
-        or an excluded arc does not exist.
+        finite, ``k + 1`` times the sum of the absolute weights of the arcs
+        not excluded is beyond the float range when one of them is not an
+        int (the float cost of a route of ``k + 1`` legs could overflow;
+        ints sum exactly, whatever their size), or a terminal or an
+        excluded arc does not exist.
 
     Notes
     -----
     One Dijkstra run from the start and from each distinct waypoint; the
     free order then costs :math:`O(2^k k^2)`. A route may pass through a
     node or an arc several times: the legs are independent shortest
-    paths. In free order, ties between orders of equal cost are broken
-    from the end of the order: the last waypoint visited has the lowest
-    index possible, then the one before it, and so on. When every order
-    costs the same, the order is therefore the reverse of the given one.
+    paths. Each leg costs the distance of its end, and the cost of the
+    route adds the legs in order, as the free order compares them. In
+    free order, ties between orders of equal cost are broken from the end
+    of the order: the last waypoint visited has the lowest index possible,
+    then the one before it, and so on. When every order costs the same,
+    the order is therefore the reverse of the given one.
     """
     if order not in ("free", "fixed"):
         raise ValueError(f"unknown order {order!r}: use 'free' or 'fixed'")
     k = len(waypoints)
     if order == "free" and k > MAX_FREE_WAYPOINTS:
         raise ValueError(f"{k} waypoints in free order: at most {MAX_FREE_WAYPOINTS}")
-    total = _check_nonnegative(graph, weight)
-    if not math.isfinite((k + 1) * total):
+    skip = _skip(graph, excluded)
+    total = _check_nonnegative(graph, weight, skip)
+    if total is not None and not math.isfinite((k + 1) * total):
         raise ValueError(
             f"{k + 1} legs times the sum of the absolute weights is beyond the "
             "float range: the cost of a route could overflow"
@@ -547,7 +552,6 @@ def waypoint_route(
     _node(graph, end, "end")
     for v in stops:
         _node(graph, v, "waypoint")
-    skip = _skip(graph, excluded)
     work = _work()
     work["states"] = 0
     trees = {
@@ -598,7 +602,14 @@ def _yen(
     skip: Sequence[bool],
     work: dict[str, int],
 ) -> tuple[list[Route], SeparatingCut | None]:
-    """Yen's algorithm: the routes, or the cut when there is none."""
+    """Yen's algorithm: the routes, or the cut when there is none.
+
+    Every cost adds the weights of its route from left to right, as
+    Dijkstra does: the search from a spur node starts from the cost of the
+    root before it, so that its distances are the costs of whole routes.
+    Each new route is then the cheapest one not yet found, by these very
+    costs, and the costs do not decrease, even where floats round.
+    """
     first = _run(graph, weight, source, target, skip, work)
     if first.distance[target] == math.inf:
         return [], _cut(graph, first, source, target)
@@ -610,7 +621,10 @@ def _yen(
     while len(found) < k:
         last = found[-1].arcs
         nodes = [source, *(graph.heads[a] for a in last)]
+        root_cost: Number = 0
         for i in range(len(last)):
+            if i:
+                root_cost += weight[last[i - 1]]
             root = last[:i]
             barred = list(skip)
             for path in found:
@@ -619,16 +633,15 @@ def _yen(
             for v in nodes[:i]:
                 for a in (*graph.out_arcs(v), *graph.in_arcs(v)):
                     barred[a] = True
-            tree = _run(graph, weight, nodes[i], target, barred, work)
-            if tree.distance[target] == math.inf:
+            tree = _run(graph, weight, nodes[i], target, barred, work, root_cost)
+            cost = tree.distance[target]
+            if cost == math.inf:
                 continue
             candidate = root + _walk(tree.predecessor, graph.tails, target)
             if candidate not in seen:
                 seen.add(candidate)
                 work["candidates"] += 1
-                heapq.heappush(
-                    candidates, (_cost(weight, candidate), len(candidate), candidate)
-                )
+                heapq.heappush(candidates, (cost, len(candidate), candidate))
         if not candidates:
             break
         cost, _, arcs = heapq.heappop(candidates)
@@ -672,10 +685,11 @@ def k_shortest_paths(
     Raises
     ------
     ValueError
-        If ``k`` is less than 1, a weight is negative or not finite (an
-        int beyond the float range included), the absolute weights sum
-        beyond the float range (a sum along a path could overflow), or a
-        node or an excluded arc does not exist.
+        If ``k`` is less than 1, a weight is negative or not finite, the
+        absolute weights of the arcs not excluded sum beyond the float
+        range when one of them is not an int (a float sum along a path
+        could overflow; ints sum exactly, whatever their size), or a node
+        or an excluded arc does not exist.
 
     Notes
     -----
@@ -683,6 +697,11 @@ def k_shortest_paths(
     node, the root before it being kept. At most :math:`k \\cdot L`
     Dijkstra runs, with :math:`L` the number of arcs of the longest
     path found. Parallel arcs give distinct paths.
+
+    The cost of every route adds its weights from left to right, as
+    :func:`protee.paths.dijkstra` does: the first route costs the distance
+    of the target, and the costs do not decrease even where floats round
+    (``sum()``, which compensates the rounding, can give another float).
 
     Ties are broken deterministically, but not by the number of arcs
     across the whole list. The first route is the path to the target in
@@ -693,12 +712,13 @@ def k_shortest_paths(
     """
     if k < 1:
         raise ValueError(f"k must be at least 1, got {k}")
-    _check_nonnegative(graph, weight)
+    skip = _skip(graph, excluded)
+    _check_nonnegative(graph, weight, skip)
     _node(graph, source, "source")
     _node(graph, target, "target")
     work = _work()
     work["candidates"] = 0
-    routes, cut = _yen(graph, weight, source, target, k, _skip(graph, excluded), work)
+    routes, cut = _yen(graph, weight, source, target, k, skip, work)
     return KShortestPaths(
         status=Status.OPTIMAL if routes else Status.INFEASIBLE,
         method="k_shortest_paths",
@@ -789,25 +809,26 @@ def replacement_paths(
     ------
     ValueError
         If the keys do not match the arcs, a weight is negative or not
-        finite (an int beyond the float range included), the absolute
-        weights sum beyond the float range (a sum along a path could
-        overflow), or a node, an arc of the path or an excluded arc does
-        not exist.
+        finite, the absolute weights of the arcs not excluded sum beyond
+        the float range when one of them is not an int (a float sum along
+        a path could overflow; ints sum exactly, whatever their size), or
+        a node, an arc of the path or an excluded arc does not exist.
 
     Notes
     -----
-    One Dijkstra run per arc of the path. The most vital arc is the one
-    whose replacement costs the most (``None`` meaning disconnection).
+    One Dijkstra run per arc of the path; the cost of a replacement is
+    the distance of the target. The most vital arc is the one whose
+    replacement costs the most (``None`` meaning disconnection).
     """
     groups = _groups(graph, key)
-    _check_nonnegative(graph, weight)
+    skip = _skip(graph, excluded)
+    _check_nonnegative(graph, weight, skip)
     _node(graph, source, "source")
     _node(graph, target, "target")
     path = tuple(arcs)
     for a in path:
         if not 0 <= a < graph.m:
             raise ValueError(f"arc {a} of the path does not exist")
-    skip = _skip(graph, excluded)
     work = _work()
     found = _replacements(graph, weight, source, target, path, groups, skip, work)
     return ReplacementPaths(

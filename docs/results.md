@@ -78,14 +78,24 @@ What a fingerprint tells:
   different tests share it, and their results may differ in anything the
   test decides. Likewise, a route search fingerprints the weights and the
   excluded arcs its active requirements give, not the requirements.
+- **The decimal context is left out.** Arithmetic on `decimal.Decimal`
+  weights follows the decimal context of the caller's thread (precision,
+  rounding), which the fingerprint does not cover: the same inputs under
+  two contexts share a fingerprint, and their distances may differ. Such
+  a result replays only under the same context.
 
 The fingerprint reads `None`, booleans, strings, numbers (`int`, `float`,
-`fractions.Fraction`, `decimal.Decimal`, each exactly; a NumPy scalar as
-the Python number of the same value), enumerations, mappings, sequences,
-sets, dataclasses, graphs and NumPy arrays. An input of another type (a
-`bytes` key of `replacement_paths`, an instance of an ordinary class)
-does not prevent the computation, but reading `inputs` then raises a
-`TypeError` that names the type.
+`fractions.Fraction`, `decimal.Decimal`, each exactly, a decimal by its
+sign, digits and exponent, whatever the decimal context), enumerations,
+mappings, lists and tuples, sets, dataclasses, graphs and NumPy arrays. A
+NumPy boolean, integer or float (`float32` included) counts as the Python
+number of the same value, alone or in a list: NumPy weights fingerprint
+like the list of the same numbers. A NumPy `datetime64` or `timedelta64`
+counts by its dtype, unit included, and its number of units, never as a
+number. An input of another type (a `range` or another sequence, a
+`bytes` key of `replacement_paths`, an instance of an ordinary class, a
+`numpy.longdouble`) does not prevent the computation, but reading
+`inputs` then raises a `TypeError` that names the type.
 
 A result is a value: it compares by its fields (not by `inputs`), hashes,
 pickles (it can be returned by a worker process) and copies; its
@@ -114,9 +124,9 @@ that comes first).
 
 The docstring of each result type names its counters.
 
-The fingerprint itself is cheap: a sequence of floats only (NumPy's
-`float64` included), or of integers only, is hashed by its bytes in
-little-endian order. On a graph of 577 019 arcs, the first reading of
+The fingerprint itself is cheap: a list or tuple of floats only, or of
+integers only (NumPy's included), is hashed by its bytes in little-endian
+order. On a graph of 577 019 arcs, the first reading of
 `inputs` (the structure included) took about 13 % of the time of a
 Dijkstra in pure Python, the next readings on the same graph about 5 %; a
 result that is never asked for its fingerprint pays nothing.

@@ -320,6 +320,37 @@ def test_prescribed_objective_and_objective_checks() -> None:
     assert rv.rulebook.id == OVERSIZE
 
 
+def test_flow_objective_is_checked_exactly_on_int_costs() -> None:
+    # Int costs beyond the float range: the improving cycle is found, and
+    # weighed, exactly.
+    reqs = RequirementSet((OBJECTIVE,), (Parameter("route_criterion"),), (PLANNER,))
+    length = Value("length", PLANNER_SRC, Origin.STATEMENT)
+    values = resolve_values(
+        [ValueSet("planner", "1", {"route_criterion": length})], reqs
+    )
+    data = ArcData(3, ())
+
+    def check(problem: FlowProblem, flow: tuple[int, ...]) -> tuple[object, str]:
+        found = verify_flow(flow, reqs, problem, data, values, criterion="length")
+        return found["OBJ"].status, found["OBJ"].reason
+
+    graph = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    huge = 10**400
+    problem = FlowProblem(
+        graph, upper=(1, 1, 1), cost=(huge, huge, 1), supply=(1, 0, -1)
+    )
+    assert check(problem, (0, 0, 1))[0] is S.APPLIED
+    cycle = f"an improving cycle of 3 arcs exists (cost {1 - 2 * huge})"
+    assert check(problem, (1, 1, 0)) == (S.NOT_APPLIED, cycle)
+    # Beyond 2**53 already: as floats, the cycle would cost 0 and the empty
+    # flow would be declared optimal.
+    ring = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
+    k = 2**53
+    rounded = FlowProblem(ring, upper=(1, 1, 1), cost=(k, k, -1 - 2 * k))
+    cycle = "an improving cycle of 3 arcs exists (cost -1)"
+    assert check(rounded, (0, 0, 0)) == (S.NOT_APPLIED, cycle)
+
+
 TOML = """
 format = "protee-rulebook-values/0"
 notice = "test"

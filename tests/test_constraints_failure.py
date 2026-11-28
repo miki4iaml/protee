@@ -397,6 +397,31 @@ def test_lexicographic_search_minimizes_unknowns_first() -> None:
         lex.view().lexicographic_weights([1.0])
 
 
+@pytest.mark.parametrize("method", ["dijkstra", "lexicographic_dijkstra"])
+def test_route_search_cost_is_the_distance_of_its_target(method: str) -> None:
+    # The cost of the route sums its weights from left to right, as the
+    # search does: 0.1 + 0.2 + 0.3, where fsum() gives 0.6.
+    line = Digraph.from_arcs(4, [(0, 1), (1, 2), (2, 3)])
+    data = ArcData(3, (Attribute.numeric("in_zone", [0, 0, 0]),))
+    zone = requirement("Z", "zone_exclusion", attributes={"inside": "in_zone"})
+    reqs = requirement_set((zone,))
+    base = (0.1, 0.2, 0.3)
+    search = RouteSearch(
+        reqs,
+        line,
+        data,
+        resolved(reqs),
+        0,
+        3,
+        method=method,
+        policy=UnknownPolicy.EXCLUDE,
+        base=base,
+    )
+    found = search.solve()
+    assert found.arcs == (0, 1, 2)
+    assert found.cost == 0.1 + 0.2 + 0.3 != math.fsum(base)
+
+
 def test_route_search_checks_its_arguments() -> None:
     assert [i.name for i in RouteSearch.methods()] == [
         "dijkstra",

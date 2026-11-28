@@ -635,7 +635,7 @@ def _flow_objective(
             rid,
             RequirementStatus.NOT_APPLIED,
             f"an improving cycle of {len(cycle.arcs)} arcs exists "
-            f"(cost {cycle.weight:g})",
+            f"(cost {_shown(cycle.weight)})",
         )
     return RequirementCheck(
         rid,
@@ -645,15 +645,25 @@ def _flow_objective(
     )
 
 
+def _shown(x: float) -> str:
+    """``x`` in the short form ``g``; an int beyond the float range, which
+    that form cannot write, in full."""
+    try:
+        return f"{x:g}"
+    except OverflowError:
+        return str(x)
+
+
 def _improving_cycle(problem: FlowProblem, x: Sequence[int]) -> NegativeCycle | None:
     """A cycle of the residual network whose cost improves the flow, in the
-    minimization form of the problem."""
+    minimization form of the problem; exact for int costs, whatever their
+    size."""
     g = problem.graph
     sign = 1 if problem.sense == "min" else -1
     arcs: list[tuple[int, int]] = []
-    cost: list[float] = []
+    cost: list[int | float] = []
     for a, (u, v) in enumerate(g.arcs()):
-        c = sign * float(problem.cost[a])
+        c = sign * problem.cost[a]
         hi = problem.upper[a]
         if hi is None or x[a] < hi:
             arcs.append((u, v))

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import sys
 
 import pytest
 from hypothesis import given
@@ -18,6 +19,7 @@ from protee.paths import dijkstra
 from protee.results import CrossedCuts, SeparatingCut, Status
 from protee.routes import (
     MAX_FREE_WAYPOINTS,
+    Route,
     k_shortest_paths,
     most_reliable_path,
     overlap,
@@ -391,8 +393,8 @@ def test_waypoint_route_tie_rule() -> None:
 
 
 def test_route_weights_that_could_overflow_are_refused() -> None:
-    # Before, the sum overflowed to inf: a reachable target was reported
-    # out of reach with a false cut, or the free order crashed.
+    # A float sum that overflows to inf would report a reachable target
+    # out of reach, or crash the free order.
     line = Digraph.from_arcs(3, [(0, 1), (1, 2)])
     for run in (
         lambda w: k_shortest_paths(line, w, 0, 2, 1),
@@ -401,8 +403,8 @@ def test_route_weights_that_could_overflow_are_refused() -> None:
     ):
         with pytest.raises(ValueError, match="beyond the float range"):
             run([1e308, 1e308])
-        with pytest.raises(ValueError, match="arc 0 is beyond the float range"):
-            run([10**400, 1])
+        with pytest.raises(ValueError, match="beyond the float range"):
+            run([10**400, 1.0])
     # A route of k + 1 legs, each a path: k + 1 times the total must fit.
     cycle = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
     with pytest.raises(ValueError, match="3 legs times the sum"):
@@ -410,3 +412,68 @@ def test_route_weights_that_could_overflow_are_refused() -> None:
     fits = waypoint_route(cycle, [2e307, 0.0, 2e307], 0, 0, [1, 2], order="free")
     assert fits.status is Status.OPTIMAL
     assert fits.cost == 4e307
+
+
+def test_route_int_weights_are_exact_and_excluded_arcs_do_not_count() -> None:
+    # Python ints sum exactly, whatever their size: no sum overflows.
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    w = [10**308, 10**308, 3]
+    found = k_shortest_paths(g, w, 0, 2, 2)
+    assert [(r.arcs, r.cost) for r in found] == [((2,), 3), ((0, 1), 2 * 10**308)]
+    (instead,) = replacement_paths(g, w, 0, 2, (2,))
+    assert instead.route == Route((0, 1), 2 * 10**308)
+    assert waypoint_route(g, w, 0, 2, [1], order="fixed").cost == 2 * 10**308
+    huge = 10**400
+    cycle = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
+    around = waypoint_route(cycle, [huge, 0, huge], 0, 0, [1, 2], order="free")
+    assert (around.order, around.cost) == ((0, 1), 2 * huge)
+    # An excluded arc never enters a sum along a path.
+    top = sys.float_info.max
+    barred = [top, top, 1.0]
+    only = k_shortest_paths(g, barred, 0, 2, 2, excluded={0, 1})
+    assert [r.arcs for r in only] == [(2,)]
+    lost = replacement_paths(g, barred, 0, 2, (2,), excluded={0, 1})
+    assert lost[0].route is None
+    assert (
+        waypoint_route(g, barred, 0, 2, [], order="fixed", excluded={0, 1}).cost == 1.0
+    )
+
+
+def test_route_costs_sum_from_left_to_right_like_dijkstra() -> None:
+    # Two paths of equal cost in exact arithmetic: Dijkstra sums 0.7, 0.59
+    # and 0.1 from left to right, sum() compensates and gives 1.39. Every
+    # route cost is the left-to-right sum, so the costs do not decrease.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 4), (0, 2), (2, 3), (3, 4)])
+    w = [0.59, 0.8, 0.7, 0.59, 0.1]
+    found = k_shortest_paths(g, w, 0, 4, 2)
+    assert [(r.arcs, r.cost) for r in found] == [
+        ((0, 1), 1.3900000000000001),
+        ((2, 3, 4), 1.3900000000000001),
+    ]
+    assert k_shortest_paths(g, w, 0, 4, 1, excluded={0})[0] == found[1]
+    # A waypoint route sums its legs from left to right too: on a shortest
+    # path, it costs the distance of its end.
+    line = Digraph.from_arcs(4, [(0, 1), (1, 2), (2, 3)])
+    tenths = [0.1, 0.2, 0.3]
+    distance = dijkstra(line, tenths, 0).distance[3]
+    assert distance == 0.1 + 0.2 + 0.3 != sum(tenths)
+    fixed = waypoint_route(line, tenths, 0, 3, [1, 2], order="fixed")
+    free = waypoint_route(line, tenths, 0, 3, [1, 2], order="free")
+    assert fixed.cost == free.cost == distance
+
+
+@given(st.lists(st.integers(1, 99), min_size=7, max_size=7), st.integers(1, 6))
+def test_k_shortest_path_costs_never_decrease(cents: list[int], k: int) -> None:
+    # Weights with two decimals, which floats round: each cost is the
+    # left-to-right sum of its arcs, and no route costs less than the one
+    # before it.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 4), (0, 2), (2, 3), (3, 4), (1, 2), (2, 4)])
+    w = [c / 100 for c in cents]
+    found = k_shortest_paths(g, w, 0, 4, k)
+    for route in found:
+        total = 0.0
+        for a in route.arcs:
+            total += w[a]
+        assert route.cost == total
+    costs = [route.cost for route in found]
+    assert costs == sorted(costs)

@@ -33,6 +33,7 @@ from protee.graph import Digraph
 from protee.paths import (
     LexicographicPaths,
     ShortestPaths,
+    _sum_along,
     dijkstra,
     lexicographic_dijkstra,
 )
@@ -806,7 +807,9 @@ class RouteSearch:
                 ),
             )
         else:
-            route = Route(arcs=path, cost=math.fsum(w[a] for a in path))
+            # From left to right, as the search adds them: the distance of
+            # the target.
+            route = Route(arcs=path, cost=_sum_along(w[a] for a in path))
         return RouteSearchResult(
             status=Status.INFEASIBLE if route is None else Status.OPTIMAL,
             method=self.method,

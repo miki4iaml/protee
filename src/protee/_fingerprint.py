@@ -7,11 +7,11 @@ NumPy, fractions and decimals are handled only when their module is
 already imported: their objects cannot exist otherwise, and the modules
 that need none of them stay light.
 
-A sequence of floats only (NumPy's ``float64`` included, a subclass of
-``float``), or of integers only that fit in 64 bits, is hashed by its bytes
-in little-endian order, whatever the machine: the weights of a large graph
-are hashed in a few milliseconds, where one tagged JSON item per number
-took longer than a shortest path computation.
+A list or tuple of floats only, or of integers only that fit in 64 bits,
+is hashed by its bytes in little-endian order, whatever the machine;
+NumPy's integers and floats count as the Python numbers of the same value.
+The weights of a large graph are hashed in a few milliseconds, where one
+tagged JSON item per number took longer than a shortest path computation.
 """
 
 from __future__ import annotations
@@ -36,49 +36,87 @@ def _key(x: Any) -> str:
     return json.dumps(x, sort_keys=True, separators=(",", ":"))
 
 
+_TAGS = {"d": "f8", "q": "i8"}
+
+
+def _code(kind: type) -> str | None:
+    """The array type code that packs the numbers of type ``kind``: ``d``
+    for floats (subclasses such as NumPy's ``float64`` included) and NumPy's
+    other floats but ``longdouble``, which no Python float holds; ``q`` for
+    ints (exactly ``int``: neither booleans nor enumerations) and NumPy's
+    integers but ``timedelta64``, a duration; ``None`` for any other
+    type."""
+    if kind is int:
+        return "q"
+    if issubclass(kind, float):
+        return "d"
+    np = sys.modules.get("numpy")
+    if np is not None:
+        if issubclass(kind, np.integer) and not issubclass(kind, np.timedelta64):
+            return "q"
+        if issubclass(kind, np.floating) and not issubclass(kind, np.longdouble):
+            return "d"
+    return None
+
+
 def _packed(items: Sequence[Any]) -> dict[str, str] | None:
-    """The digest of the bytes of a homogeneous sequence of floats (``f8``,
-    subclasses of ``float`` included) or of 64-bit integers (``i8``, exactly
-    ``int``: neither booleans nor other subclasses), or ``None`` for any
-    other sequence."""
-    if not items:
-        return None
-    if isinstance(items[0], float):
-        if not all(isinstance(x, float) for x in items):
-            return None
-        code, tag = "d", "f8"
-    elif type(items[0]) is int:
-        if not all(type(x) is int for x in items):
-            return None
-        code, tag = "q", "i8"
-    else:
+    """The digest of the bytes of a list or tuple of floats only (``f8``)
+    or of 64-bit integers only (``i8``), each read as the Python number of
+    the same value; ``None`` for any other list or tuple."""
+    codes = {_code(kind) for kind in set(map(type, items))}
+    code = codes.pop() if len(codes) == 1 else None
+    if code is None:
         return None
     try:
         packed = array(code, items)
-    except OverflowError:
+    except OverflowError:  # an integer beyond 64 bits
         return None
     if sys.byteorder == "big":
         packed.byteswap()
-    return {tag: hashlib.sha256(packed.tobytes()).hexdigest()}
+    return {_TAGS[code]: hashlib.sha256(packed.tobytes()).hexdigest()}
 
 
-def _exact_number(x: Any) -> dict[str, str] | None:
+def _exact_number(x: Any) -> dict[str, Any] | None:
     """The tagged exact form of a fraction or a decimal, ``None`` for any
-    other object: a fraction by its lowest terms, a decimal by its string
-    (trailing zeros included, as the decimal keeps them)."""
+    other object: a fraction by its lowest terms; a decimal by its sign,
+    digits and exponent (trailing zeros included, as the decimal keeps
+    them; ``F``, ``n`` or ``N`` for an infinity or a NaN), which, unlike
+    its string, do not depend on the decimal context of the thread."""
     fractions = sys.modules.get("fractions")
     if fractions is not None and isinstance(x, fractions.Fraction):
         return {"fraction": str(x)}
     decimal = sys.modules.get("decimal")
     if decimal is not None and isinstance(x, decimal.Decimal):
-        return {"decimal": str(x)}
+        sign, digits, exponent = x.as_tuple()
+        return {"decimal": [sign, "".join(map(str, digits)), exponent]}
     return None
 
 
 _SUPPORTED = (
     "None, bool, str, int, float, Fraction, Decimal, enums, mappings, "
-    "sequences, sets, dataclasses, Digraph, NumPy arrays and scalars"
+    "lists and tuples, sets, dataclasses, Digraph, NumPy arrays, NumPy "
+    "booleans, integers, floats (not longdouble), datetime64 and timedelta64"
 )
+
+
+def _numpy_scalar(np: Any, x: Any) -> Any:
+    """The canonical form of a NumPy scalar other than ``float64`` (a
+    ``float``): a boolean, an integer or a float as the Python number of
+    the same value; a date or a duration tagged with its dtype (its unit
+    included), by its count of units, so that it never meets a number."""
+    # Before the integers: NumPy makes timedelta64 one of them.
+    if isinstance(x, (np.datetime64, np.timedelta64)):
+        return {"numpy": str(x.dtype), "value": int(x.astype(np.int64))}
+    if isinstance(x, np.bool_):
+        return bool(x)
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, np.floating) and not isinstance(x, np.longdouble):
+        return _canonical(float(x))
+    # numpy.longdouble, complex numbers, bytes: no Python number holds them.
+    raise TypeError(
+        f"no canonical form for numpy.{type(x).__name__}: supported are {_SUPPORTED}"
+    )
 
 
 def _canonical(x: Any) -> Any:
@@ -104,14 +142,7 @@ def _canonical(x: Any) -> Any:
         if isinstance(x, np.ndarray):
             return {"ndarray": str(x.dtype), "values": _canonical(x.tolist())}
         if isinstance(x, np.generic):
-            value = x.item()
-            if isinstance(value, np.generic):
-                # numpy.longdouble, for instance: no Python number holds it.
-                raise TypeError(
-                    f"no canonical form for numpy.{type(x).__name__}: "
-                    f"supported are {_SUPPORTED}"
-                )
-            return _canonical(value)
+            return _numpy_scalar(np, x)
     exact = _exact_number(x)
     if exact is not None:
         return exact
@@ -145,22 +176,27 @@ def _digest(form: Any) -> str:
 def fingerprint(*objects: object) -> str:
     """SHA-256 of a canonical form of ``objects``.
 
-    The same inputs give the same fingerprint on every machine; any change
-    of a value, an attribute or the topology changes it, a change of type
-    too (``1``, ``1.0`` and ``"1.0"`` differ). Supported: the objects of
-    protee (frozen dataclasses), NumPy arrays and scalars, mappings,
-    sequences (a tuple and a list with the same items are the same
-    sequence), sets, numbers (``int``, ``float``, ``fractions.Fraction``
-    and ``decimal.Decimal``, each exactly), strings and ``None``. A graph
-    enters by the fingerprint of its structure, computed once per graph. A
-    NumPy scalar counts as the Python number of the same value.
+    The same inputs give the same fingerprint on every machine and in
+    every thread; any change of a value, an attribute or the topology
+    changes it, a change of type too (``1``, ``1.0`` and ``"1.0"`` differ).
+    Supported: the objects of protee (frozen dataclasses), NumPy arrays,
+    mappings, lists and tuples (a tuple and a list with the same items are
+    the same sequence; another sequence, such as a ``range``, is not
+    supported), sets, numbers (``int``, ``float``, ``fractions.Fraction``
+    and ``decimal.Decimal``, each exactly, a decimal whatever the decimal
+    context), strings and ``None``. A graph enters by the fingerprint of
+    its structure, computed once per graph. A NumPy boolean, integer or
+    float (``float32`` included) counts as the Python number of the same
+    value, alone or in a list; a ``numpy.datetime64`` or
+    ``numpy.timedelta64`` by its dtype, unit included, and its count of
+    units.
 
     Raises
     ------
     TypeError
-        If an object has no canonical form (``bytes``, an instance of an
-        ordinary class, ``numpy.longdouble``...); the message names its
-        type.
+        If an object has no canonical form (``bytes``, a ``range``, an
+        instance of an ordinary class, ``numpy.longdouble``, a complex
+        number...); the message names its type.
     """
     return _digest([_canonical(o) for o in objects])
 

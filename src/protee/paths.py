@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import sys
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -273,13 +274,16 @@ def _source_nodes(graph: Digraph, source: int | Iterable[int]) -> tuple[int, ...
     return found
 
 
-def _finite(x: Number, what: str) -> bool:
-    """Whether ``x`` is finite; an int beyond the float range is refused,
-    as no float sum could hold it."""
+def _finite(x: Number, arc: int, what: str = "the weight of arc") -> bool:
+    """Whether ``x``, of ``arc``, is finite. An int always is, whatever its
+    size; another number beyond the float range (a fraction, for instance)
+    is refused, as no float holds it."""
+    if isinstance(x, int):
+        return True
     try:
         return math.isfinite(x)
     except OverflowError:
-        raise ValueError(f"{what} is beyond the float range") from None
+        raise ValueError(f"{what} {arc} is beyond the float range") from None
 
 
 def _overflows() -> ValueError:
@@ -289,30 +293,64 @@ def _overflows() -> ValueError:
     )
 
 
-def _check_weights(graph: Digraph, weight: Sequence[Number]) -> float:
-    """Check one finite weight per arc, and return the sum of their
-    absolute values: finite, so that no sum along a path overflows."""
-    if len(weight) != graph.m:
-        raise ValueError(f"expected {graph.m} weights, got {len(weight)}")
-    total = 0.0
-    for a, w in enumerate(weight):
-        if not _finite(w, f"the weight of arc {a}"):
-            raise ValueError(f"the weight of arc {a} is not finite: {w}")
-        total += abs(float(w))
+def _float_bound(values: Sequence[Number]) -> float | None:
+    """A bound on the float sums of ``values`` (finite numbers) along a
+    path: the sum of their absolute values, as a float.
+
+    ``None`` when every value is an int: ints sum exactly, whatever their
+    size, and no sum overflows.
+
+    Raises
+    ------
+    ValueError
+        If the bound is beyond the float range (an int beyond it among
+        other numbers included): a float sum along a path could overflow.
+    """
+    if all(isinstance(x, int) for x in values):
+        return None
+    try:
+        total = sum(map(abs, map(float, values)))
+    except OverflowError:  # an int beyond the float range
+        raise _overflows() from None
     if not math.isfinite(total):
         raise _overflows()
     return total
 
 
-def _check_nonnegative(graph: Digraph, weight: Sequence[Number]) -> float:
+def _used[T](values: Sequence[T], skip: Sequence[bool] | None) -> Sequence[T]:
+    """The values of the arcs a computation can use: those ``skip`` does
+    not flag, every one without ``skip``."""
+    if skip is None or not any(skip):
+        return values
+    return [x for x, barred in zip(values, skip, strict=True) if not barred]
+
+
+def _check_weights(
+    graph: Digraph, weight: Sequence[Number], skip: Sequence[bool] | None = None
+) -> float | None:
+    """Check one finite weight per arc, and return :func:`_float_bound` of
+    the weights the computation can use (an excluded arc never enters a
+    sum): finite, so that no float sum along a path overflows, or ``None``
+    when these weights are all ints, which sum exactly."""
+    if len(weight) != graph.m:
+        raise ValueError(f"expected {graph.m} weights, got {len(weight)}")
+    for a, w in enumerate(weight):
+        if not _finite(w, a):
+            raise ValueError(f"the weight of arc {a} is not finite: {w}")
+    return _float_bound(_used(weight, skip))
+
+
+def _check_nonnegative(
+    graph: Digraph, weight: Sequence[Number], skip: Sequence[bool] | None = None
+) -> float | None:
     """As :func:`_check_weights`, for non-negative weights."""
-    total = _check_weights(graph, weight)
+    bound = _check_weights(graph, weight, skip)
     for a, w in enumerate(weight):
         if w < 0:
             raise ValueError(
                 f"the weight of arc {a} is negative ({w}): use bellman_ford"
             )
-    return total
+    return bound
 
 
 def _skip(graph: Digraph, excluded: Collection[int]) -> list[bool]:
@@ -325,26 +363,39 @@ def _skip(graph: Digraph, excluded: Collection[int]) -> list[bool]:
     return skip
 
 
-def _vectors(graph: Digraph, weight: Sequence[Sequence[Number]]) -> tuple[Vector, ...]:
+def _vectors(
+    graph: Digraph, weight: Sequence[Sequence[Number]], skip: Sequence[bool]
+) -> tuple[Vector, ...]:
+    """Check one vector of non-negative finite components per arc, and the
+    :func:`_float_bound` of each rank over the arcs the computation can
+    use."""
     if len(weight) != graph.m:
         raise ValueError(f"expected {graph.m} weight vectors, got {len(weight)}")
     vectors = tuple(tuple(w) for w in weight)
     size = len(vectors[0]) if vectors else 1
-    totals = [0.0] * size
     for a, w in enumerate(vectors):
         if len(w) != size or size == 0:
             raise ValueError(
                 f"the weight of arc {a} has {len(w)} components, not {size}"
             )
-        what = f"a component of the weight of arc {a}"
-        if not all(_finite(x, what) and x >= 0 for x in w):
+        what = "a component of the weight of arc"
+        if not all(_finite(x, a, what) and x >= 0 for x in w):
             raise ValueError(f"the weight of arc {a} is negative or not finite: {w}")
-        for i, x in enumerate(w):
-            totals[i] += float(x)
-    for total in totals:
-        if not math.isfinite(total):
-            raise _overflows()
+    used = _used(vectors, skip)
+    for rank in range(size):
+        _float_bound([w[rank] for w in used])
     return vectors
+
+
+def _sum_along(values: Iterable[Number]) -> Number:
+    """The sum of ``values`` from left to right, as Dijkstra adds the
+    weights along a path, so that a route costs the distance of its end:
+    ``sum()`` compensates the rounding of floats (since Python 3.12) and
+    can give another float."""
+    total: Number = 0
+    for x in values:
+        total += x
+    return total
 
 
 # --- kernels: no checks, no result, for the internal callers ---------------
@@ -379,13 +430,17 @@ def _dijkstra(
     sources: Sequence[int],
     target: int | None,
     skip: Sequence[bool],
+    start: Number = 0,
 ) -> _Run:
     """Dijkstra with a binary heap, without checks: non-negative finite
     weights, existing sources, one ``skip`` flag per arc.
 
-    Stops when ``target`` is settled. ``settled`` counts the nodes taken
-    from the heap for good, ``scanned`` the arcs leaving them (barred arcs
-    included); the target settles but is not scanned.
+    The sources start at distance ``start``: a search that extends a root
+    path starts from its cost, so that a distance adds the weights of the
+    whole path from left to right. Stops when ``target`` is settled.
+    ``settled`` counts the nodes taken from the heap for good, ``scanned``
+    the arcs leaving them (barred arcs included); the target settles but
+    is not scanned.
     """
     heads = graph.heads
     out_arcs = graph.out_arcs
@@ -394,8 +449,8 @@ def _dijkstra(
     done = [False] * graph.n
     heap: list[tuple[Number, int]] = []
     for s in sources:
-        dist[s] = 0
-        heap.append((0, s))
+        dist[s] = start
+        heap.append((start, s))
     heapq.heapify(heap)
     settled = scanned = 0
     while heap:
@@ -478,6 +533,14 @@ def _negative_cycle_from(
     return NegativeCycle(tuple(arcs), sum(weight[a] for a in arcs))
 
 
+def _slack(tolerance: float) -> Number:
+    """The tolerance subtracted from a distance: a zero tolerance stays the
+    int 0, so that an int distance minus it stays an int, exact, where
+    ``- 0.0`` would round it to a float (beyond ``2**53``), or overflow
+    (beyond the float range)."""
+    return tolerance if tolerance else 0
+
+
 def _bellman_ford(
     graph: Digraph,
     weight: Sequence[Number],
@@ -490,6 +553,7 @@ def _bellman_ford(
     the passes over the arcs. When a negative cycle is found, the
     distances and predecessors are those of the last pass.
     """
+    slack = _slack(tolerance)
     if sources is None:
         dist: list[Number] = [0] * graph.n
     else:
@@ -503,7 +567,7 @@ def _bellman_ford(
         passes += 1
         changed = -1
         for a, (u, v) in enumerate(graph.arcs()):
-            if dist[u] != math.inf and dist[u] + weight[a] < dist[v] - tolerance:
+            if dist[u] != math.inf and dist[u] + weight[a] < dist[v] - slack:
                 dist[v] = dist[u] + weight[a]
                 pred[v] = a
                 changed = v
@@ -545,9 +609,10 @@ def _unbounded_below(
     leads into the set; each negative cycle keeps such an arc, since the
     improvements around it sum to its weight.
     """
+    slack = _slack(tolerance)
     start = {graph.tails[a] for a in cycle.arcs}
     for a, (u, v) in enumerate(graph.arcs()):
-        if dist[u] != math.inf and dist[u] + weight[a] < dist[v] - tolerance:
+        if dist[u] != math.inf and dist[u] + weight[a] < dist[v] - slack:
             start.add(v)
     seen = set(start)
     stack = list(start)
@@ -597,20 +662,23 @@ def dijkstra(
     Raises
     ------
     ValueError
-        If a weight is negative or not finite (an int beyond the float
-        range included), the absolute weights sum beyond the float range
-        (a sum along a path could overflow), or a source, the target or an
+        If a weight is negative or not finite, the absolute weights of the
+        arcs not excluded sum beyond the float range when one of them is
+        not an int (a float sum along a path could overflow; ints sum
+        exactly, whatever their size), or a source, the target or an
         excluded arc does not exist.
 
     Notes
     -----
-    Complexity :math:`O((n + m) \\log n)`.
+    Complexity :math:`O((n + m) \\log n)`. A distance adds the weights
+    along its path from left to right.
     """
-    _check_nonnegative(graph, weight)
+    skip = _skip(graph, excluded)
+    _check_nonnegative(graph, weight, skip)
     sources = _source_nodes(graph, source)
     if target is not None:
         _node(graph, target, "target")
-    run = _dijkstra(graph, weight, sources, target, _skip(graph, excluded))
+    run = _dijkstra(graph, weight, sources, target, skip)
     return ShortestPaths(
         status=Status.OPTIMAL,
         method="dijkstra",
@@ -660,10 +728,10 @@ def lexicographic_dijkstra(
     ------
     ValueError
         If a vector has another length, a component is negative or not
-        finite (an int beyond the float range included), the components of
-        one rank sum beyond the float range (a sum along a path could
-        overflow), or a source, the target or an excluded arc does not
-        exist.
+        finite, the components of one rank sum beyond the float range on
+        the arcs not excluded when one of them is not an int (a float sum
+        along a path could overflow; ints sum exactly), or a source, the
+        target or an excluded arc does not exist.
 
     Notes
     -----
@@ -671,13 +739,12 @@ def lexicographic_dijkstra(
     ordered monoid under componentwise addition and lexicographic order.
     Complexity :math:`O(k (n + m) \\log n)` for vectors of length ``k``.
     """
-    vectors = _vectors(graph, weight)
+    skip = _skip(graph, excluded)
+    vectors = _vectors(graph, weight, skip)
     sources = _source_nodes(graph, source)
     if target is not None:
         _node(graph, target, "target")
-    run = _lexicographic_dijkstra(
-        graph, vectors, sources, target, _skip(graph, excluded)
-    )
+    run = _lexicographic_dijkstra(graph, vectors, sources, target, skip)
     return LexicographicPaths(
         status=Status.OPTIMAL,
         method="lexicographic_dijkstra",
@@ -728,30 +795,35 @@ def bellman_ford(
     Raises
     ------
     ValueError
-        If a weight is not finite (an int beyond the float range
-        included), the absolute weights sum beyond the float range, ``n``
-        times ``m`` times the largest absolute weight is beyond it (on the
-        way to a negative cycle, a distance is the sum of a walk of up to
-        ``n m`` arcs, which could overflow), the tolerance is negative or
-        not finite, or a source does not exist.
+        If a weight is not finite, the tolerance is negative or not finite,
+        or a source does not exist. With a weight that is not an int, or a
+        positive tolerance, which compares the distances as floats: if the
+        absolute weights sum beyond the float range, or ``n`` times ``m``
+        times the largest absolute weight is beyond it (on the way to a
+        negative cycle, a distance is the sum of a walk of up to ``n m``
+        arcs, which could overflow). Int weights with a zero tolerance sum
+        and compare exactly, whatever their size.
 
     Notes
     -----
     Complexity :math:`O(nm)`.
     """
-    _check_weights(graph, weight)
-    largest = max((abs(float(w)) for w in weight), default=0.0)
-    if not math.isfinite(graph.n * graph.m * largest):
-        raise ValueError(
-            f"the weights are too large for bellman_ford: {graph.n} nodes times "
-            f"{graph.m} arcs times the largest absolute weight {largest} is "
-            "beyond the float range"
-        )
+    bound = _check_weights(graph, weight)
     tolerance = float(tolerance)
     if not (math.isfinite(tolerance) and tolerance >= 0):
         raise ValueError(
             f"the tolerance must be finite and non-negative, got {tolerance}"
         )
+    if bound is not None or tolerance > 0:
+        # Floats are summed, or compared with the tolerance: on the way to
+        # a negative cycle, a distance sums a walk of up to n m arcs.
+        largest = max((abs(w) for w in weight), default=0)
+        if graph.n * graph.m * largest > sys.float_info.max:
+            raise ValueError(
+                f"the weights are too large for bellman_ford: {graph.n} nodes "
+                f"times {graph.m} arcs times the largest absolute weight is "
+                "beyond the float range"
+            )
     if source is None:
         sources = tuple(range(graph.n))
         run = _bellman_ford(graph, weight, None, tolerance)
