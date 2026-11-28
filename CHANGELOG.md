@@ -57,6 +57,22 @@ and this project adheres to
   `Conversion` records the conversion of an input into the unit of its
   parameter. A requirement whose derived value is to be set names the
   members without a value.
+- The optional extra `units` (pint 0.26 or later, imported on first use):
+  a derivation converts an input in another unit than its parameter (a
+  value of a member, the value assumed, a threshold) into the unit of the
+  parameter, exactly (a factor such as 5/18 from km/h to m/s), and records
+  each `Conversion`; a converted value is a float, rounded once. A unit
+  pint does not know, two units of different dimensions, a unit with an
+  offset (`degC`) and a calendar convention (a year or a month, which
+  pint counts as 365.25 days and a twelfth of it) are refused. Without the
+  extra, an input in another unit is refused with an `ImportError` that
+  names `protee[units]`; a value in the unit of its parameter never needs
+  it. `readable` shows a value as a person reads it: a duration in days,
+  hours and minutes (`"1 h 30 min"`), a length in km or m (`"12.4 km"`),
+  `"no limit"`, `"to be set"`, `"not applicable"`;
+  `RequirementRow.to_dict(readable=True)` adds it to each value as
+  `"shown"`, and the default output does not depend on the extras
+  installed.
 
 ### Changed
 

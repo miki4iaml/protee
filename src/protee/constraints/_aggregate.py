@@ -12,12 +12,13 @@ from enum import StrEnum
 from protee.constraints._derive import (
     Comparison,
     Derived,
+    Exact,
     OnUnknown,
     Tally,
     UnknownRule,
     _check_policy,
     _crosses,
-    _exact,
+    _given,
     _label,
     _member_values,
     _partition,
@@ -102,7 +103,8 @@ class Aggregation:
         demanding.
     threshold : Value, optional
         For ``threshold_count``: the threshold, a known number with its
-        source, in the unit of ``of``.
+        source, in the unit of ``of`` or in a unit that converts into it
+        (with the optional extra ``units``).
     comparison : Comparison, optional
         For ``threshold_count``: when a value crosses the threshold,
         without default (at equality, ``at_least`` counts and ``above``
@@ -256,21 +258,31 @@ def aggregate(
         decided despite unknown inputs, when a known value reaches the
         last label of the order.
 
+        An input in another unit than the parameter it reads (a value of a
+        member, the value assumed, the threshold) is converted into it,
+        exactly, with the optional extra ``units``; each conversion is
+        recorded in the derivation (:class:`Conversion`), and a converted
+        value is a float.
+
     Raises
     ------
     ValueError
         If there is no rule, a parameter is not in the vocabulary, a unit
-        differs (a derived value keeps the unit of its inputs; ``count``,
-        ``threshold_count`` and ``strictest`` give a value without unit),
-        a label is not in the order, ``known_only`` is given for an
-        additive rule (``sum``, ``mean``, ``threshold_count``), a value is
-        assumed for a parameter no rule reads, an unknown input has no
+        differs where it cannot (a derived value keeps the unit of its
+        inputs; ``count``, ``threshold_count`` and ``strictest`` give a
+        value without unit), an input does not convert into the unit of its
+        parameter, a label is not in the order, ``known_only`` is given for
+        an additive rule (``sum``, ``mean``, ``threshold_count``), a value
+        is assumed for a parameter no rule reads, an unknown input has no
         assumed value under ``assume``, the sheets of a member are
         inconsistent (see :class:`Member`), or a sum meets ``+inf`` and
         ``-inf``.
     TypeError
         If a rule reads text where it needs a number, or an argument is not
         of its type.
+    ImportError
+        If an input is in another unit than its parameter and pint is not
+        installed (the optional extra ``units``).
 
     Examples
     --------
@@ -348,16 +360,17 @@ def _check_rule(output: str, rule: Aggregation, vocabulary: _Vocabulary) -> None
             )
     elif rule.kind is AggregateKind.THRESHOLD_COUNT:
         assert rule.threshold is not None
-        if rule.threshold.unit != of.unit:
-            raise ValueError(
-                f"the threshold of {rule.of!r} in {rule.threshold.unit!r}, the "
-                f"parameter is in {of.unit!r}"
-            )
+        _given(rule.threshold, of, _threshold_of(rule))
     elif out.unit != of.unit:
         raise ValueError(
             f"{rule.kind} of {rule.of!r} ({of.unit}) into {output!r} "
             f"({out.unit}): a derived value keeps the unit of its inputs"
         )
+
+
+def _threshold_of(rule: Aggregation) -> str:
+    """The threshold of a rule, for a message."""
+    return f"the threshold of {rule.of!r}"
 
 
 def _settings(rule: Aggregation, policy: OnUnknown) -> dict[str, object]:
@@ -430,13 +443,19 @@ class _Context:
             return self.value(output, total, trace), (Tally(), Tally(), _tally(tree))
         of = self.vocabulary.parameter(rule.of)
         readings = [_read(m.id, c, self.sheets[m.id], of) for m, c in self.leaves]
-        part = _partition(readings, of.name, self.policy)
+        part = _partition(readings, of, self.policy)
         _check_types(rule, part.used, of.name)
+        limit: Exact | None = None
         if rule.threshold is not None:
             threshold = DerivationInput(
                 "threshold", of.name, None, ValueState.KNOWN, rule.threshold
             )
-            part = replace(part, inputs=(*part.inputs, threshold))
+            limit, records = _given(rule.threshold, of, _threshold_of(rule))
+            part = replace(
+                part,
+                inputs=(*part.inputs, threshold),
+                conversions=part.conversions + records,
+            )
         left_out = part.left_out + tree
         counted = part.unknown_tally
         tallies = (counted, counted if part.assumptions else Tally(), _tally(left_out))
@@ -453,6 +472,7 @@ class _Context:
                 part.inputs,
                 assumptions=part.assumptions,
                 left_out=left_out,
+                conversions=part.conversions,
                 unknown=counted.names,
                 bound=None if bound is None else bound[0],
                 bound_fixed_by=() if bound is None else bound[1],
@@ -465,7 +485,7 @@ class _Context:
             )
             na = f"not applicable to any member of {self.group.id!r}: {reasons}"
             return self.value(output, None, traced(holders), na), tallies
-        result = _compute(rule, part.used, of.name)
+        result = _compute(rule, part.used, of.name, limit)
         if part.pending:
             # DD9: only the last label of an order decides despite unknowns.
             decided = (
@@ -520,10 +540,14 @@ def _number(r: _Reading) -> int | float:
 
 
 def _compute(
-    rule: Aggregation, used: Sequence[_Reading], parameter: str
+    rule: Aggregation,
+    used: Sequence[_Reading],
+    parameter: str,
+    threshold: Exact | None = None,
 ) -> tuple[Datum, tuple[str, ...]] | None:
     """The value of the rule on the inputs used, and the holders that fix
-    it; ``None`` without input."""
+    it; ``None`` without input. Every input and the threshold are in the
+    unit of the parameter, exactly."""
     if not used:
         return None
     kind = rule.kind
@@ -534,17 +558,14 @@ def _compute(
         return rule.order[top], tuple(
             r.holder for r, rank in zip(used, ranks, strict=True) if rank == top
         )
-    exact = [_exact(_number(r)) for r in used]
+    exact = [r.exact for r in used]
     if kind in (AggregateKind.MAX, AggregateKind.MIN):
         extreme = max(exact) if kind is AggregateKind.MAX else min(exact)
         fixers = [r for r, x in zip(used, exact, strict=True) if x == extreme]
         return _number(fixers[0]), tuple(r.holder for r in fixers)
     if kind is AggregateKind.THRESHOLD_COUNT:
-        assert rule.threshold is not None
+        assert threshold is not None
         assert rule.comparison is not None
-        limit = rule.threshold.value
-        assert isinstance(limit, (int, float))
-        threshold = _exact(limit)
         counted = [
             r
             for r, x in zip(used, exact, strict=True)

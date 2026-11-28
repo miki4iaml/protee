@@ -10,13 +10,17 @@ integer exactly; ``inf`` and ``-inf`` stay apart, as known values (no
 limit). Every computation is exact, and its result is rounded once: the
 result depends on the multiset of the members only, never on their order,
 and a value at a threshold is compared exactly.
+
+A value in another unit than its parameter's is converted into it,
+exactly, with the optional extra ``units`` (pint), and the conversion is
+recorded; without the extra, it is refused.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
 
@@ -24,6 +28,7 @@ from protee._frozen import FrozenMap
 from protee.constraints._groups import Member
 from protee.constraints._model import (
     Assumption,
+    Conversion,
     DerivationInput,
     LeftOut,
     LeftOutCause,
@@ -39,6 +44,7 @@ from protee.constraints._model import (
     _name,
     _sorted_names,
 )
+from protee.constraints._units import _convert, _factor
 
 __all__ = ["Comparison", "Derived", "OnUnknown", "Tally", "UnknownRule"]
 
@@ -409,13 +415,127 @@ def _member_values(member: Member, vocabulary: _Vocabulary) -> dict[str, Value]:
 
 
 @dataclass(frozen=True, slots=True)
+class _Converted:
+    """A number read in another unit than its parameter's, and its
+    conversion.
+
+    Attributes
+    ----------
+    read : Value
+        The value as read, in its own unit: the input of the trace.
+    exact : Fraction or float
+        The number in the unit of the parameter, exactly (an infinity as
+        is).
+    record : Conversion
+    """
+
+    read: Value
+    exact: Exact
+    record: Conversion
+
+
+@dataclass(frozen=True, slots=True)
 class _Reading:
-    """The value of a parameter read on a holder."""
+    """The value of a parameter read on a holder, in the unit of the
+    parameter.
+
+    Attributes
+    ----------
+    holder : str
+    instances : int
+    state : ValueState
+    value : Value or None
+        In the unit of the parameter: a number read in another unit is
+        converted, rounded once.
+    converted : _Converted, optional
+        The value as read and its conversion, for a converted number.
+    """
 
     holder: str
     instances: int
     state: ValueState
     value: Value | None
+    converted: _Converted | None = None
+
+    @property
+    def read(self) -> Value | None:
+        """The value as read, in its own unit: the input of the trace."""
+        return self.value if self.converted is None else self.converted.read
+
+    @property
+    def exact(self) -> Exact:
+        """The number, exactly, in the unit of the parameter."""
+        if self.converted is not None:
+            return self.converted.exact
+        assert self.value is not None
+        x = self.value.value
+        assert isinstance(x, (int, float))
+        return _exact(x)
+
+
+def _in_unit(
+    value: Value, parameter: Parameter, holder: str | None, what: str
+) -> tuple[Value, _Converted | None]:
+    """``value`` in the unit of ``parameter``, and its conversion if one
+    was needed.
+
+    A number is converted exactly and rounded once; a value without a
+    number (to be set, not applicable) keeps its unit, once checked that it
+    converts. ``what`` names the value for the messages.
+
+    Raises
+    ------
+    ImportError
+        If the units differ and pint is not installed (the optional extra
+        ``units``).
+    ValueError
+        If one of the units is missing, or the units do not convert.
+    TypeError
+        If the value to convert is a text.
+    """
+    unit, to_unit = value.unit, parameter.unit
+    if unit == to_unit:
+        return value, None
+    if unit is None or to_unit is None:
+        raise ValueError(
+            f"{what} in {unit!r}, the parameter is in {to_unit!r}: only a value "
+            "with a unit converts, into a parameter with a unit"
+        )
+    x = value.value
+    if x is None:
+        _factor(unit, to_unit, what)
+        return value, None
+    if isinstance(x, str):
+        raise TypeError(
+            f"{what} in {unit!r}, the parameter is in {to_unit!r}: a text does "
+            "not convert"
+        )
+    exact, factor = _convert(_exact(x), unit, to_unit, what)
+    converted = exact if isinstance(exact, float) else float(exact)
+    record = Conversion(
+        holder, parameter.name, x, unit, converted, to_unit, str(factor)
+    )
+    in_unit = replace(value, value=converted, unit=to_unit)
+    return in_unit, _Converted(value, exact, record)
+
+
+def _given(
+    value: Value, parameter: Parameter, what: str
+) -> tuple[Exact, tuple[Conversion, ...]]:
+    """A number given directly (a threshold), exactly in the unit of
+    ``parameter``, and its conversion if one was needed.
+
+    Raises
+    ------
+    ImportError, ValueError, TypeError
+        As :func:`_in_unit`.
+    """
+    in_unit, converted = _in_unit(value, parameter, None, what)
+    if converted is not None:
+        return converted.exact, (converted.record,)
+    x = in_unit.value
+    assert isinstance(x, (int, float))
+    return _exact(x), ()
 
 
 def _read(
@@ -424,22 +544,24 @@ def _read(
     values: Mapping[str, Value],
     parameter: Parameter,
 ) -> _Reading:
-    """The value of ``parameter`` on a holder, in the unit of the parameter.
+    """The value of ``parameter`` on a holder, in the unit of the
+    parameter: converted, with the optional extra ``units``, if it is in
+    another unit.
 
     Raises
     ------
+    ImportError
+        If the value is in another unit and pint is not installed.
     ValueError
-        If the value is in another unit.
+        If the value is in another unit and does not convert into the unit
+        of the parameter.
     """
     value = values.get(parameter.name)
     if value is None:
         return _Reading(holder, instances, ValueState.UNKNOWN, None)
-    if value.unit != parameter.unit:
-        raise ValueError(
-            f"member {holder!r}: {parameter.name!r} in {value.unit!r}, the "
-            f"parameter is in {parameter.unit!r}"
-        )
-    return _Reading(holder, instances, value.state, value)
+    what = f"member {holder!r}: {parameter.name!r}"
+    in_unit, converted = _in_unit(value, parameter, holder, what)
+    return _Reading(holder, instances, value.state, in_unit, converted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,8 +580,12 @@ class _Partition:
         ``propagate`` with unknown inputs.
     not_applicable : tuple of _Reading
     inputs : tuple of DerivationInput
+        Each with the value as read, in its own unit.
     left_out : tuple of LeftOut
     assumptions : tuple of Assumption
+    conversions : tuple of Conversion
+        The inputs converted into the unit of the parameter, the value
+        assumed included.
     """
 
     used: tuple[_Reading, ...]
@@ -469,6 +595,7 @@ class _Partition:
     inputs: tuple[DerivationInput, ...]
     left_out: tuple[LeftOut, ...]
     assumptions: tuple[Assumption, ...]
+    conversions: tuple[Conversion, ...] = ()
 
     @property
     def unknown_tally(self) -> Tally:
@@ -480,19 +607,25 @@ class _Partition:
 
 def _partition(
     readings: Sequence[_Reading],
-    parameter: str,
+    parameter: Parameter,
     policy: OnUnknown,
     *,
     role: str = "member",
 ) -> _Partition:
     """Sort the inputs of ``parameter`` out by state and policy.
 
+    A value assumed in another unit than the parameter's is converted into
+    it, like a value read (see :func:`_read`).
+
     Raises
     ------
     ValueError
         Under ``assume``, if no value is assumed for the parameter of an
-        input without a value.
+        input without a value, or the value assumed does not convert.
+    ImportError
+        If the value assumed is in another unit and pint is not installed.
     """
+    name = parameter.name
     used: list[_Reading] = []
     unknown = [r for r in readings if r.state is ValueState.UNKNOWN]
     na = [r for r in readings if r.state is ValueState.NOT_APPLICABLE]
@@ -501,21 +634,28 @@ def _partition(
         for r in na
     ]
     assumptions: list[Assumption] = []
-    assumed_value = policy.assumed.get(parameter)
+    conversions = [r.converted.record for r in readings if r.converted is not None]
+    assumed: tuple[Value, _Converted | None] | None = None
     if unknown and policy.rule is UnknownRule.ASSUME:
+        assumed_value = policy.assumed.get(name)
         if assumed_value is None:
             raise ValueError(
-                f"member {unknown[0].holder!r}: no value for {parameter!r} and no "
+                f"member {unknown[0].holder!r}: no value for {name!r} and no "
                 "value assumed for it"
             )
         assumptions.append(
             Assumption(
-                parameter,
+                name,
                 assumed_value,
                 tuple(r.holder for r in unknown),
                 sum(r.instances for r in unknown),
             )
         )
+        assumed = _in_unit(
+            assumed_value, parameter, None, f"the value assumed for {name!r}"
+        )
+        if assumed[1] is not None:
+            conversions.append(assumed[1].record)
     if policy.rule is UnknownRule.KNOWN_ONLY:
         justification = policy.justification
         assert justification is not None
@@ -526,10 +666,10 @@ def _partition(
     inputs: list[DerivationInput] = []
     for reading in readings:
         r = reading
-        if r.state is ValueState.UNKNOWN and assumptions:
-            r = _Reading(r.holder, r.instances, ValueState.ASSUMED, assumed_value)
+        if r.state is ValueState.UNKNOWN and assumed is not None:
+            r = _Reading(r.holder, r.instances, ValueState.ASSUMED, *assumed)
         inputs.append(
-            DerivationInput(role, parameter, r.holder, r.state, r.value, r.instances)
+            DerivationInput(role, name, r.holder, r.state, r.read, r.instances)
         )
         if r.state in (ValueState.KNOWN, ValueState.ASSUMED):
             used.append(r)
@@ -541,6 +681,7 @@ def _partition(
         inputs=tuple(inputs),
         left_out=tuple(left_out),
         assumptions=tuple(assumptions),
+        conversions=tuple(conversions),
     )
 
 
@@ -555,24 +696,22 @@ def _check_policy(
     policy: OnUnknown, read: Iterable[str], vocabulary: _Vocabulary
 ) -> None:
     """Every assumed value is for a parameter of the vocabulary that a
-    rule reads, in its unit.
+    rule reads, in its unit or in a unit that converts into it.
 
     Raises
     ------
     ValueError
         If a parameter is unknown, read by no rule, or the assumed value is
-        in another unit.
+        in another unit that does not convert into the parameter's.
+    ImportError
+        If the assumed value is in another unit and pint is not installed.
     """
     names = set(read)
     for name, value in sorted(policy.assumed.items()):
         parameter = vocabulary.parameter(name)
         if name not in names:
             raise ValueError(f"a value is assumed for {name!r}, which no rule reads")
-        if value.unit != parameter.unit:
-            raise ValueError(
-                f"the value assumed for {name!r} in {value.unit!r}, the parameter "
-                f"is in {parameter.unit!r}"
-            )
+        _in_unit(value, parameter, None, f"the value assumed for {name!r}")
 
 
 def _label(reading: _Reading, parameter: str) -> str:
