@@ -673,8 +673,8 @@ class FlowSearch:
     data : ArcData
     values : ResolvedValues
     method : str
-        Keyword only, as all that follows. A flow method of the registry
-        (see :func:`protee.flow.methods`).
+        Keyword only, as all that follows. A minimum cost flow method of
+        the registry (see ``protee.flow.methods("min_cost_flow")``).
     policy : UnknownPolicy
         ``exclude`` or ``admit_and_count``; no default.
     criterion : str, optional
@@ -693,7 +693,7 @@ class FlowSearch:
     _effects: Mapping[str, Effect] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        names = [info.name for info in methods()]
+        names = [info.name for info in methods("min_cost_flow")]
         if self.method not in names:
             raise ValueError(f"unknown method {self.method!r}; one of {names}")
         policy = UnknownPolicy(self.policy)

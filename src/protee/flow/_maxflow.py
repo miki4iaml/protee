@@ -8,11 +8,12 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Literal
 
 from protee.flow._problem import _is_int
+from protee.flow._registry import MAX_FLOW
 from protee.graph import Digraph
+from protee.results import ResultCore, Status
 
 type MaxFlowMethod = Literal["dinic", "edmonds_karp"]
 
@@ -153,9 +154,14 @@ def run(net: Residual, s: int, t: int, method: str) -> tuple[int, dict[str, int]
     return ALGORITHMS[method](net, s, t, counters), counters
 
 
-@dataclass(frozen=True, slots=True)
-class MaxFlowResult:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MaxFlowResult(ResultCore):
     """Maximum flow and minimum cut.
+
+    On top of the fields of :class:`~protee.results.ResultCore` (status,
+    always ``optimal``; method, ``"dinic"`` or ``"edmonds_karp"``;
+    guarantee, parameters, counters, version and the fingerprint of the
+    inputs):
 
     Attributes
     ----------
@@ -165,17 +171,55 @@ class MaxFlowResult:
         Flow on each arc.
     source_side : frozenset of int
         Nodes reachable from the source in the final residual network: the
-        arcs leaving this set form a minimum cut.
-    method : str
-    counters : mapping of str to int
-        ``augmentations``, and ``phases`` for Dinic.
+        arcs leaving this set form a minimum cut, whose capacity equals
+        ``value`` (the dual certificate of optimality).
+
+    Notes
+    -----
+    ``counters``: ``augmentations`` (augmenting paths) and ``phases``
+    (level graphs of Dinic, zero for Edmonds-Karp).
     """
 
     value: int
     flow: tuple[int, ...]
     source_side: frozenset[int]
-    method: str
-    counters: MappingProxyType[str, int]
+
+
+def _max_flow(
+    graph: Digraph,
+    capacity: Sequence[int | None],
+    source: int,
+    target: int,
+    method: str,
+) -> tuple[int, tuple[int, ...], frozenset[int], dict[str, int]]:
+    """Value, flow, source side of a minimum cut and counters: the kernel of
+    :func:`max_flow`, for the callers of the package."""
+    if len(capacity) != graph.m:
+        raise ValueError(f"expected {graph.m} capacities, got {len(capacity)}")
+    if source == target or not (0 <= source < graph.n and 0 <= target < graph.n):
+        raise ValueError("source and target must be two distinct nodes")
+    finite = 0
+    for a, c in enumerate(capacity):
+        if c is not None:
+            if not _is_int(c) or c < 0:
+                raise ValueError(
+                    f"capacity of arc {a} must be a non-negative integer, got {c!r}"
+                )
+            finite += c
+    big = finite + 1
+    net = Residual(graph.n)
+    edges = [
+        net.add(t, h, big if c is None else c)
+        for (t, h), c in zip(graph.arcs(), capacity, strict=True)
+    ]
+    value, counters = run(net, source, target, method)
+    if value >= big:
+        raise ValueError(
+            "unbounded: a path of arcs without capacity joins the source to the target"
+        )
+    flow = tuple(net.cap[e ^ 1] for e in edges)
+    side = net.reachable(source)
+    return value, flow, frozenset(v for v in range(graph.n) if side[v]), counters
 
 
 def max_flow(
@@ -202,42 +246,23 @@ def max_flow(
     Returns
     -------
     MaxFlowResult
+        Status ``optimal``, with the flow and a minimum cut.
 
     Raises
     ------
     ValueError
-        If a capacity is negative, the nodes are not distinct, or a path of
-        unbounded arcs joins the source to the target.
+        If the method is unknown, a capacity is negative, the nodes are not
+        distinct, or a path of unbounded arcs joins the source to the
+        target.
     """
-    if len(capacity) != graph.m:
-        raise ValueError(f"expected {graph.m} capacities, got {len(capacity)}")
-    if source == target or not (0 <= source < graph.n and 0 <= target < graph.n):
-        raise ValueError("source and target must be two distinct nodes")
-    finite = 0
-    for a, c in enumerate(capacity):
-        if c is not None:
-            if not _is_int(c) or c < 0:
-                raise ValueError(
-                    f"capacity of arc {a} must be a non-negative integer, got {c!r}"
-                )
-            finite += c
-    big = finite + 1
-    net = Residual(graph.n)
-    edges = [
-        net.add(t, h, big if c is None else c)
-        for (t, h), c in zip(graph.arcs(), capacity, strict=True)
-    ]
-    value, counters = run(net, source, target, method)
-    if value >= big:
-        raise ValueError(
-            "unbounded: a path of arcs without capacity joins the source to the target"
-        )
-    flow = tuple(net.cap[e ^ 1] for e in edges)
-    side = net.reachable(source)
+    value, flow, side, counters = _max_flow(graph, capacity, source, target, method)
     return MaxFlowResult(
-        value,
-        flow,
-        frozenset(v for v in range(graph.n) if side[v]),
-        method,
-        MappingProxyType(counters),
+        status=Status.OPTIMAL,
+        method=method,
+        guarantee=MAX_FLOW[method].guarantee,
+        counters=counters,
+        value=value,
+        flow=flow,
+        source_side=side,
+        _sources=(graph, tuple(capacity), source, target),
     )

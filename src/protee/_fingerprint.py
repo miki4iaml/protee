@@ -110,10 +110,14 @@ def graph_fingerprint(graph: Digraph) -> str:
 
 
 def inputs_fingerprint(
-    method: str, parameters: Mapping[str, object], sources: tuple[object, ...]
+    kind: str,
+    method: str,
+    parameters: Mapping[str, object],
+    sources: tuple[object, ...],
 ) -> str:
-    """Fingerprint of a computation: its method, parameters and inputs."""
-    return fingerprint(method, parameters, *sources)
+    """Fingerprint of a computation: the type of its result (a method name
+    may serve several problems), its method, parameters and inputs."""
+    return fingerprint(kind, method, parameters, *sources)
 
 
 def freeze(x: Any) -> Any:

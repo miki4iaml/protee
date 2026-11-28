@@ -22,10 +22,44 @@ and this project adheres to
 - `FlowResult` is built on `ResultCore`: it gains `guarantee`,
   `parameters` (the effective options, defaults included) and `inputs`.
   `MethodInfo` gains `problem` and `guarantee`.
+- `protee.flow.methods(problem=None)` lists every method of `protee.flow`
+  with its problem and guarantee: `min_cost_flow` (`network_simplex`,
+  `cycle_canceling`, `successive_shortest_paths`), `max_flow` and
+  `feasibility` (`dinic`, `edmonds_karp`), `disjoint_paths` (the three
+  minimum cost flow methods), and the diagnostics `flow_ranges`,
+  `unattainable_bounds` and `optimum_uniqueness`, each a method of its own;
+  all are exact.
+- `MaxFlowResult`, `Feasibility`, `DisjointPaths`, `FlowRanges`,
+  `UnattainableBounds` and `Uniqueness` are built on `ResultCore`. An
+  infeasible feasibility check, disjoint paths problem or flow range
+  carries its violated cut; flow ranges at an unbounded optimum carry the
+  improving cycle.
 
 ### Changed
 
 - `FlowResult` and `MethodInfo` take keyword arguments only.
+- `protee.flow.methods()` lists the methods of every problem of the
+  module: list the minimum cost flow methods with
+  `methods("min_cost_flow")` (they still come first).
+- `MaxFlowResult`, `Feasibility`, `DisjointPaths`, `FlowRanges`,
+  `UnattainableBounds` and `Uniqueness` take keyword arguments only.
+- `Feasibility.feasible` and `Feasibility.cut` are read-only properties
+  derived from `status` and `certificate`; `Uniqueness.unique` is a
+  read-only property, true when `direction` is `None`.
+- The diagnostics are named after themselves: `FlowRanges.method` is
+  `"flow_ranges"` (`"unattainable_bounds"`, `"optimum_uniqueness"` for the
+  others), and the minimum cost flow method they run is the parameter
+  `flow_method`: read `result.parameters["flow_method"]` instead of
+  `result.method`.
+- Counters: `DisjointPaths` adds `max_flow_augmentations` and
+  `max_flow_phases`; `FlowRanges` adds `solves` and, over the feasible
+  flows, `feasibility_augmentations` and `feasibility_phases`;
+  `UnattainableBounds` (those of its ranges) and `Uniqueness`
+  (`residual_edges`, `components`) gain counters.
+- `disjoint_paths`, `flow_ranges` and `unattainable_bounds` refuse an
+  unknown flow method before any computation.
+- The fingerprint of the inputs of a result also covers its type: a method
+  name may serve several problems.
 - `Status`, `InfeasibleCut`, `NegativeCycle` and `MethodInfo` live in
   `protee.results`; `protee.flow` and `protee.paths` still export them
   (the same objects).

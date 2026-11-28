@@ -550,7 +550,7 @@ def bounded(reqs: RequirementSet, data: ArcData, vals: ResolvedValues) -> FlowPr
     return FlowProblem(PROFILE, lower=lower, upper=upper, cost=[1] * 6, sense="max")
 
 
-@pytest.mark.parametrize("method", [info.name for info in methods()])
+@pytest.mark.parametrize("method", [info.name for info in methods("min_cost_flow")])
 def test_profile_bounds_come_from_sourced_requirements(method: str) -> None:
     reqs, data, vals = profile(OC_ALL, OC_L03, RETURN, OC_INF)
     problem = bounded(reqs, data, vals)

@@ -9,15 +9,24 @@ import itertools
 
 import networkx as nx
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
-from oracles import all_flows, graphs, problems
+from oracles import all_flows, disjoint_cases, problems
 
-from protee.flow import FlowProblem, Status, disjoint_paths, methods, solve
+from protee.flow import (
+    FlowProblem,
+    NegativeCycle,
+    Status,
+    disjoint_paths,
+    methods,
+    solve,
+)
 from protee.flow.diagnostics import flow_ranges, optimum_uniqueness, unattainable_bounds
 from protee.graph import Digraph
 
-METHODS = [info.name for info in methods()]
+METHODS = [info.name for info in methods("min_cost_flow")]
+# Two arc-disjoint paths from 0 to 2, both through node 1.
+BOTTLENECK = Digraph.from_arcs(3, [(0, 1), (0, 1), (1, 2), (1, 2)])
 
 
 def simple_paths(graph: Digraph, s: int, t: int) -> list[tuple[int, ...]]:
@@ -54,16 +63,9 @@ def best_disjoint(
     return best
 
 
-@st.composite
-def instances(draw: st.DrawFn) -> tuple[Digraph, list[int], int, int, int]:
-    g = draw(graphs(max_nodes=5, max_arcs=8))
-    cost = [draw(st.integers(0, 5)) for _ in range(g.m)]
-    s = draw(st.integers(0, g.n - 1))
-    t = draw(st.integers(0, g.n - 1))
-    return g, cost, s, t, draw(st.integers(1, 3))
-
-
-@given(case=instances(), disjoint=st.sampled_from(["nodes", "arcs"]))
+@given(case=disjoint_cases(), disjoint=st.sampled_from(["nodes", "arcs"]))
+@example(case=(BOTTLENECK, [1, 2, 1, 2], 0, 2, 2), disjoint="arcs")
+@example(case=(BOTTLENECK, [1, 2, 1, 2], 0, 2, 2), disjoint="nodes")
 @settings(max_examples=120)
 def test_disjoint_paths_match_enumeration(
     case: tuple[Digraph, list[int], int, int, int], disjoint: str
@@ -112,6 +114,12 @@ def test_disjoint_paths_errors() -> None:
         disjoint_paths(g, [1], 0, 0, 1, disjoint="arcs", method="cycle_canceling")
     with pytest.raises(ValueError, match="non-negative"):
         disjoint_paths(g, [-1], 0, 1, 1, disjoint="arcs", method="cycle_canceling")
+    with pytest.raises(ValueError, match="unknown flow method 'dinic'"):
+        disjoint_paths(g, [1], 0, 1, 1, disjoint="arcs", method="dinic")
+    with pytest.raises(ValueError, match="unknown flow method 'dinic'"):
+        flow_ranges(FlowProblem(g), method="dinic", at_optimum=False)
+    with pytest.raises(ValueError, match="unknown flow method 'dinic'"):
+        unattainable_bounds(FlowProblem(g), method="dinic")
 
 
 def enumerate_ranges(
@@ -183,12 +191,16 @@ def test_unattainable_bounds() -> None:
         FlowProblem(g, lower=(4, 0), upper=(5, 1)), method="network_simplex"
     )
     assert infeasible.status is Status.INFEASIBLE
+    assert infeasible.certificate == infeasible.ranges.certificate
+    assert (infeasible.upper, infeasible.lower) == ((), ())
     at_optimum = flow_ranges(
         FlowProblem(g, upper=(None, None), cost=(-1, 0)),
         method=METHODS[0],
         at_optimum=True,
     )
     assert at_optimum.status is Status.UNBOUNDED
+    assert isinstance(at_optimum.certificate, NegativeCycle)
+    assert at_optimum.certificate.arcs in ((0, 1), (1, 0))
     with pytest.raises(ValueError, match="not optimal"):
         optimum_uniqueness(
             p, solve(FlowProblem(g, lower=(4, 0), upper=(5, 1)), method=METHODS[0])

@@ -10,22 +10,36 @@
   with an exact test (no perturbation), and a direction of alternative
   optima when it is not.
 
+Each diagnostic returns a result built on the common result model of
+:mod:`protee.results`. A diagnostic is a method of its own, listed by
+``protee.flow.methods`` under its name: ``method`` is the name of the
+diagnostic, and the minimum cost flow method it runs, the ``method``
+argument, is the parameter ``flow_method``. The counters add up the
+work of every inner solve, under the names of the flow method, and count
+the solves.
+
 Provisional API (until version 1.0).
 """
 
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from types import MappingProxyType
 
-from protee.flow._feasibility import check_feasibility
+from protee.flow._feasibility import _feasible_flow
 from protee.flow._methods import prepare, solve
 from protee.flow._normal import signed_costs, tolerance_for
 from protee.flow._problem import FlowProblem
-from protee.flow._result import FlowResult, Status
+from protee.flow._registry import (
+    FLOW_RANGES,
+    OPTIMUM_UNIQUENESS,
+    UNATTAINABLE_BOUNDS,
+    min_cost_flow_method,
+)
+from protee.flow._result import FlowResult
 from protee.graph import Digraph
+from protee.results import Certificate, ResultCore, Status
 from protee.structure import strong_components
 
 __all__ = [
@@ -56,30 +70,35 @@ def _tolerance(problem: FlowProblem) -> float:
     return tolerance_for(problem.cost) * (problem.graph.n + 2)
 
 
-@dataclass(frozen=True, slots=True)
-class FlowRanges:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowRanges(ResultCore):
     """Outcome of :func:`flow_ranges`.
+
+    On top of the fields of :class:`~protee.results.ResultCore`: the status
+    is ``optimal`` when the ranges were computed; otherwise that of the
+    problem, with its certificate: ``infeasible`` with a violated cut, or,
+    for ranges at the optimum, ``unbounded`` with an improving cycle.
+    ``method`` is ``"flow_ranges"``; ``parameters`` hold ``flow_method``
+    and ``at_optimum``.
 
     Attributes
     ----------
-    status : Status
-        Optimal when the ranges were computed; otherwise the status of the
-        problem (infeasible, or unbounded for ranges at the optimum).
     minimum : tuple of int or None
-        Least flow of each arc.
+        Least flow of each arc; ``None`` unless optimal.
     maximum : tuple of int or None, or None
         Greatest flow of each arc, ``None`` for an arc whose flow has no
-        upper limit.
-    method : str
-    counters : mapping of str to int
-        Work summed over every solve.
+        upper limit; ``None`` unless optimal.
+
+    Notes
+    -----
+    ``counters``: ``solves``, the number of minimum cost flow solves (two
+    per arc, one more at the optimum), and the counters of the flow method
+    summed over them; over the feasible flows, ``feasibility_augmentations``
+    and ``feasibility_phases`` of the feasibility check (Dinic).
     """
 
-    status: Status
-    minimum: tuple[int, ...] | None
-    maximum: tuple[int | None, ...] | None
-    method: str
-    counters: Mapping[str, int]
+    minimum: tuple[int, ...] | None = None
+    maximum: tuple[int | None, ...] | None = None
 
 
 def _optimal_face(problem: FlowProblem, result: FlowResult) -> FlowProblem:
@@ -110,7 +129,9 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
     ----------
     problem : FlowProblem
     method : str
-        A method of :func:`protee.flow.methods`.
+        A minimum cost flow method, from
+        ``protee.flow.methods("min_cost_flow")``; the result records it as
+        the parameter ``flow_method``.
     at_optimum : bool
         ``False``: over all feasible flows (the maximum is then the
         greatest number of occurrences an arc can reach).
@@ -119,26 +140,50 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
     Returns
     -------
     FlowRanges
+
+    Raises
+    ------
+    ValueError
+        If the method is unknown.
     """
-    counters: dict[str, int] = {}
+    min_cost_flow_method(method)
+    counters: dict[str, int] = {"solves": 0}
 
     def add(result: FlowResult) -> None:
+        counters["solves"] += 1
         for k, v in result.counters.items():
             counters[k] = counters.get(k, 0) + v
+
+    def ranges(
+        status: Status,
+        certificate: Certificate | None = None,
+        minimum: tuple[int, ...] | None = None,
+        maximum: tuple[int | None, ...] | None = None,
+    ) -> FlowRanges:
+        return FlowRanges(
+            status=status,
+            method=FLOW_RANGES.name,
+            guarantee=FLOW_RANGES.guarantee,
+            parameters={"flow_method": method, "at_optimum": at_optimum},
+            counters=counters,
+            certificate=certificate,
+            minimum=minimum,
+            maximum=maximum,
+            _sources=(problem,),
+        )
 
     base = problem
     if at_optimum:
         optimum = solve(problem, method=method)
         add(optimum)
         if not optimum.optimal:
-            return FlowRanges(
-                optimum.status, None, None, method, MappingProxyType(counters)
-            )
+            return ranges(optimum.status, optimum.certificate)
         base = _optimal_face(problem, optimum)
-    elif not check_feasibility(problem).feasible:
-        return FlowRanges(
-            Status.INFEASIBLE, None, None, method, MappingProxyType(counters)
-        )
+    else:
+        _, cut, work = _feasible_flow(problem, "dinic")
+        counters.update({f"feasibility_{k}": v for k, v in work.items()})
+        if cut is not None:
+            return ranges(Status.INFEASIBLE, cut)
     m = problem.graph.m
     prepared = prepare(base.with_cost((0,) * m, "min"), method=method)
     low: list[int] = []
@@ -153,19 +198,20 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
         most = prepared.solve(unit, "max")
         add(most)
         high.append(None if most.flow is None else most.flow[a])
-    return FlowRanges(
-        Status.OPTIMAL, tuple(low), tuple(high), method, MappingProxyType(counters)
-    )
+    return ranges(Status.OPTIMAL, None, tuple(low), tuple(high))
 
 
-@dataclass(frozen=True, slots=True)
-class UnattainableBounds:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnattainableBounds(ResultCore):
     """Outcome of :func:`unattainable_bounds`.
+
+    On top of the fields of :class:`~protee.results.ResultCore`: the status
+    is ``optimal`` when computed, ``infeasible`` otherwise, with a violated
+    cut; ``method`` is ``"unattainable_bounds"``; ``parameters`` hold
+    ``flow_method``; ``counters`` are those of ``ranges``.
 
     Attributes
     ----------
-    status : Status
-        Optimal when computed, infeasible otherwise.
     upper : tuple of int
         Arcs with a finite upper bound that no feasible flow reaches.
     lower : tuple of int
@@ -174,9 +220,8 @@ class UnattainableBounds:
         The ranges over the feasible flows.
     """
 
-    status: Status
-    upper: tuple[int, ...]
-    lower: tuple[int, ...]
+    upper: tuple[int, ...] = ()
+    lower: tuple[int, ...] = ()
     ranges: FlowRanges
 
 
@@ -191,46 +236,79 @@ def unattainable_bounds(problem: FlowProblem, *, method: str) -> UnattainableBou
     ----------
     problem : FlowProblem
     method : str
-        A method of :func:`protee.flow.methods`.
+        A minimum cost flow method, from
+        ``protee.flow.methods("min_cost_flow")``; the result records it as
+        the parameter ``flow_method``.
 
     Returns
     -------
     UnattainableBounds
+
+    Raises
+    ------
+    ValueError
+        If the method is unknown.
     """
     ranges = flow_ranges(problem, method=method, at_optimum=False)
-    if ranges.minimum is None or ranges.maximum is None:
-        return UnattainableBounds(ranges.status, (), (), ranges)
-    upper = tuple(
-        a
-        for a, (hi, top) in enumerate(zip(problem.upper, ranges.maximum, strict=True))
-        if hi is not None and top is not None and top < hi
-    )
-    lower = tuple(
-        a
-        for a, (lo, bottom) in enumerate(
-            zip(problem.lower, ranges.minimum, strict=True)
+    upper: tuple[int, ...] = ()
+    lower: tuple[int, ...] = ()
+    if ranges.minimum is not None and ranges.maximum is not None:
+        upper = tuple(
+            a
+            for a, (hi, top) in enumerate(
+                zip(problem.upper, ranges.maximum, strict=True)
+            )
+            if hi is not None and top is not None and top < hi
         )
-        if bottom > lo
+        lower = tuple(
+            a
+            for a, (lo, bottom) in enumerate(
+                zip(problem.lower, ranges.minimum, strict=True)
+            )
+            if bottom > lo
+        )
+    return UnattainableBounds(
+        status=ranges.status,
+        method=UNATTAINABLE_BOUNDS.name,
+        guarantee=UNATTAINABLE_BOUNDS.guarantee,
+        parameters={"flow_method": method},
+        counters=ranges.counters,
+        certificate=ranges.certificate,
+        upper=upper,
+        lower=lower,
+        ranges=ranges,
+        _sources=(problem,),
     )
-    return UnattainableBounds(Status.OPTIMAL, upper, lower, ranges)
 
 
-@dataclass(frozen=True, slots=True)
-class Uniqueness:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Uniqueness(ResultCore):
     """Outcome of :func:`optimum_uniqueness`.
+
+    On top of the fields of :class:`~protee.results.ResultCore`: the status
+    is ``optimal`` (the question is answered exactly); ``method`` is
+    ``"optimum_uniqueness"``.
 
     Attributes
     ----------
-    unique : bool
-        True when the optimal flow is the only one.
     direction : tuple of (int, int) or None
-        When it is not: a cycle of ``(arc, sign)`` pairs, ``sign`` being +1
-        to increase the arc's flow and -1 to decrease it. Pushing one unit
-        along the cycle gives another optimal flow.
+        When the optimal flow is not the only one: a cycle of
+        ``(arc, sign)`` pairs, ``sign`` being +1 to increase the arc's flow
+        and -1 to decrease it. Pushing one unit along the cycle gives
+        another optimal flow. ``None`` when the optimum is unique.
+
+    Notes
+    -----
+    ``counters``: ``residual_edges``, the residual directions of zero
+    reduced cost, and ``components``, their strongly connected components.
     """
 
-    unique: bool
-    direction: tuple[tuple[int, int], ...] | None
+    direction: tuple[tuple[int, int], ...] | None = None
+
+    @property
+    def unique(self) -> bool:
+        """True when the optimal flow is the only one."""
+        return self.direction is None
 
 
 def _residual_zero(
@@ -316,6 +394,8 @@ def optimum_uniqueness(problem: FlowProblem, result: FlowResult) -> Uniqueness:
     Returns
     -------
     Uniqueness
+        Status ``optimal``; ``direction`` is ``None`` when the optimum is
+        unique.
 
     Raises
     ------
@@ -326,6 +406,24 @@ def optimum_uniqueness(problem: FlowProblem, result: FlowResult) -> Uniqueness:
         raise ValueError("the result is not optimal")
     graph, edges = _residual_zero(problem, result)
     comp = strong_components(graph)
+    return Uniqueness(
+        status=Status.OPTIMAL,
+        method=OPTIMUM_UNIQUENESS.name,
+        guarantee=OPTIMUM_UNIQUENESS.guarantee,
+        counters={"residual_edges": graph.m, "components": len(set(comp))},
+        direction=_direction(problem, graph, edges, comp),
+        _sources=(problem, result.flow, result.potentials),
+    )
+
+
+def _direction(
+    problem: FlowProblem,
+    graph: Digraph,
+    edges: list[tuple[int, int]],
+    comp: Sequence[int],
+) -> tuple[tuple[int, int], ...] | None:
+    """A cycle of residual directions of zero reduced cost, other than
+    going back and forth on one arc; ``None`` if there is none."""
     members: dict[int, set[int]] = {}
     for v, c in enumerate(comp):
         members.setdefault(c, set()).add(v)
@@ -338,7 +436,7 @@ def optimum_uniqueness(problem: FlowProblem, result: FlowResult) -> Uniqueness:
         nodes = members[c]
         for e in es:
             if graph.tails[e] == graph.heads[e]:
-                return Uniqueness(False, (edges[e],))
+                return (edges[e],)
         directions: dict[int, set[int]] = {}
         for e in es:
             directions.setdefault(edges[e][0], set()).add(edges[e][1])
@@ -346,7 +444,7 @@ def optimum_uniqueness(problem: FlowProblem, result: FlowResult) -> Uniqueness:
             a = edges[e][0]
             if len(directions[a]) == 1:
                 back = _path(graph, graph.heads[e], graph.tails[e], nodes, a, edges)
-                return Uniqueness(False, (edges[e], *(edges[f] for f in back)))
+                return (edges[e], *(edges[f] for f in back))
         if len(directions) >= len(nodes):
             # All arcs go both ways and close an undirected cycle.
             parent = {v: v for v in nodes}
@@ -355,8 +453,6 @@ def optimum_uniqueness(problem: FlowProblem, result: FlowResult) -> Uniqueness:
                 if _find(parent, t) == _find(parent, h):
                     forward = next(e for e in es if edges[e] == (a, 1))
                     back = _path(graph, h, t, nodes, a, edges)
-                    return Uniqueness(
-                        False, (edges[forward], *(edges[f] for f in back))
-                    )
+                    return (edges[forward], *(edges[f] for f in back))
                 parent[_find(parent, t)] = _find(parent, h)
-    return Uniqueness(True, None)
+    return None

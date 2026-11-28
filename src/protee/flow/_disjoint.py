@@ -5,27 +5,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from protee.flow._maxflow import max_flow
+from protee.flow._maxflow import _max_flow
 from protee.flow._methods import solve
 from protee.flow._problem import FlowProblem
-from protee.flow._result import Status
+from protee.flow._registry import DISJOINT_PATHS, min_cost_flow_method
 from protee.graph import Digraph
+from protee.results import ResultCore
 
 type Number = int | float
 
 
-@dataclass(frozen=True, slots=True)
-class DisjointPaths:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DisjointPaths(ResultCore):
     """Outcome of :func:`disjoint_paths`.
+
+    On top of the fields of :class:`~protee.results.ResultCore`: the status
+    is ``optimal``, or ``infeasible`` when fewer than ``k`` disjoint paths
+    exist; ``method`` is the minimum cost flow method used, and
+    ``parameters`` hold ``disjoint``.
 
     Attributes
     ----------
-    status : Status
-        Optimal, or infeasible when fewer than ``k`` disjoint paths exist.
     paths : tuple of tuple of int
         The arcs of each path, from the source to the target; empty unless
         optimal.
@@ -34,17 +38,28 @@ class DisjointPaths:
     max_paths : int
         Largest number of disjoint paths (Menger's theorem), at least
         ``k`` when optimal.
-    method : str
-        The flow method used.
-    counters : mapping of str to int
+
+    Notes
+    -----
+    ``certificate``, when infeasible: a cut of the unit-capacity flow
+    network (:class:`~protee.results.InfeasibleCut`), of capacity
+    ``max_paths``, below ``k``. With ``disjoint="arcs"``, the network is
+    the graph, and the arcs leaving the cut separate the target from the
+    source. With ``disjoint="nodes"``, each node ``v`` is split into an
+    entry ``v`` and an exit ``n + v``, joined by the arc ``m + v``; arc
+    ``a`` of the graph goes from the exit of its tail to the entry of its
+    head; the paths leave the exit of the source and reach the entry of
+    the target. A leaving arc ``m + v`` then stands for node ``v``, a
+    leaving arc ``a < m`` for arc ``a``.
+
+    ``counters``: those of the flow method, plus ``max_flow_augmentations``
+    and ``max_flow_phases`` of the maximum flow (Dinic) that counts the
+    disjoint paths.
     """
 
-    status: Status
-    paths: tuple[tuple[int, ...], ...]
-    cost: Number | None
+    paths: tuple[tuple[int, ...], ...] = ()
+    cost: Number | None = None
     max_paths: int
-    method: str
-    counters: Mapping[str, int]
 
 
 def _network(
@@ -129,16 +144,20 @@ def disjoint_paths(
         Number of paths, at least 1.
     disjoint : {"nodes", "arcs"}
     method : str
-        A flow method of :func:`protee.flow.methods`.
+        A minimum cost flow method, from
+        ``protee.flow.methods("disjoint_paths")``.
 
     Returns
     -------
     DisjointPaths
+        Status ``optimal`` with the paths, or ``infeasible`` with a cut of
+        capacity below ``k``.
 
     Raises
     ------
     ValueError
-        If a cost is negative, ``k < 1``, or the nodes are not distinct.
+        If a cost is negative, ``k < 1``, the nodes are not distinct, or
+        the method is unknown.
     """
     if disjoint not in ("nodes", "arcs"):
         raise ValueError(f"disjoint must be 'nodes' or 'arcs', got {disjoint!r}")
@@ -148,18 +167,29 @@ def disjoint_paths(
         raise ValueError("source and target must be two distinct nodes")
     if len(cost) != graph.m or any(c < 0 for c in cost):
         raise ValueError(f"expected {graph.m} non-negative costs")
+    info = DISJOINT_PATHS[min_cost_flow_method(method).name]
     network, weights, s, t = _network(graph, cost, source, target, disjoint)
     supply = [0] * network.n
     supply[s], supply[t] = k, -k
     problem = FlowProblem(network, upper=(1,) * network.m, cost=weights, supply=supply)
     result = solve(problem, method=method)
-    if result.flow is None:
-        most = max_flow(network, (1,) * network.m, s, t, method="dinic").value
-        return DisjointPaths(Status.INFEASIBLE, (), None, most, method, result.counters)
-    flow = result.flow[: graph.m]
-    paths = _walks(graph, flow, source, target, k)
-    total = sum(cost[a] for path in paths for a in path)
-    most = max_flow(network, (1,) * network.m, s, t, method="dinic").value
+    most, _, _, work = _max_flow(network, (1,) * network.m, s, t, "dinic")
+    counters = dict(result.counters)
+    counters.update({f"max_flow_{name}": v for name, v in work.items()})
+    paths: tuple[tuple[int, ...], ...] = ()
+    total: Number | None = None
+    if result.flow is not None:
+        paths = tuple(_walks(graph, result.flow[: graph.m], source, target, k))
+        total = sum(cost[a] for path in paths for a in path)
     return DisjointPaths(
-        Status.OPTIMAL, tuple(paths), total, most, method, result.counters
+        status=result.status,
+        method=method,
+        guarantee=info.guarantee,
+        parameters={"disjoint": disjoint},
+        counters=counters,
+        certificate=result.certificate,
+        paths=paths,
+        cost=total,
+        max_paths=most,
+        _sources=(graph, tuple(cost), source, target, k),
     )

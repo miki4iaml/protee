@@ -128,7 +128,7 @@ CLIENT = Rulebook(
 )
 SPEC = Source("Specification of use", rulebook="client", edition="1")
 S = RequirementStatus
-METHODS = [info.name for info in methods()]
+METHODS = [info.name for info in methods("min_cost_flow")]
 
 
 def closed(name: str) -> tuple[Digraph, list[str], list[int]]:
