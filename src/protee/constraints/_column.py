@@ -216,7 +216,9 @@ def column_length(
         not needed, a unit does not convert into the one it is read in
         (different dimensions), a value is out of its range or not
         applicable, a parameter is not in the vocabulary, or the policy
-        assumes a value no input reads or misses one.
+        assumes a value no input reads, misses one, or assumes one that
+        the bound of an input to be set does not allow (see
+        :class:`UnknownRule`).
     ImportError
         If a unit differs and pint is not installed (the optional extra
         ``units``).
@@ -336,7 +338,11 @@ def column_length(
             assumed.append((name, reading.read, label, uses))
         if reading.state in (ValueState.KNOWN, ValueState.ASSUMED):
             contributors.append(label)
-        if reading.converted is not None:
+        # The value assumed for several groups is converted once.
+        if (
+            reading.converted is not None
+            and reading.converted.record not in conversions
+        ):
             conversions.append(reading.converted.record)
     settings: dict[str, object] = {
         "member_length" if member_length is not None else "density": measured,

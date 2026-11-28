@@ -863,6 +863,28 @@ def test_tally_is_canonical() -> None:
         Tally((), 2)
     with pytest.raises(TypeError, match="must be an integer"):
         Tally(("A",), 1.0)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="names is a sequence of names"):
+        Tally("AB", 2)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda: Aggregation.strictest("k", "CBA"), id="constructor"),
+        pytest.param(
+            lambda: Aggregation(AggregateKind.STRICTEST, "k", order="CBA"),  # type: ignore[arg-type]
+            id="fields",
+        ),
+    ],
+)
+def test_an_order_is_a_sequence_of_labels(build: Callable[[], object]) -> None:
+    # A string would be read as its characters, an order of one letter
+    # each.
+    with pytest.raises(
+        TypeError,
+        match=re.escape("order is a sequence of labels, got the string 'CBA'"),
+    ):
+        build()
 
 
 def test_derived_checks_its_tables_and_merges() -> None:
@@ -1310,16 +1332,14 @@ def test_the_envelope_is_exact_for_a_threshold(
     if len(known) == len(widths):
         assert verdicts(PROPAGATE) == conjunction(known)
         return
-    # A1: under propagate, the bound of the known members fails an arc for
-    # certain where a known member fails it; every other arc is unknown,
-    # and every arc is unknown without a known member.
-    partial = [Verdict.UNKNOWN] * len(limits)
-    if known:
-        partial = [
-            Verdict.FAIL if v == Verdict.FAIL else Verdict.UNKNOWN
-            for v in conjunction(known)
-        ]
-    assert verdicts(PROPAGATE) == partial
+    # A1: under propagate, a member without a width decides an arc only
+    # where every width decides it alike, the least and the largest for a
+    # threshold; the envelope is the Kleene conjunction of the members: a
+    # known member fails an arc for certain, an arc without a limit passes.
+    low, high = _verdicts(-math.inf, graph, data), _verdicts(math.inf, graph, data)
+    unknown = [a if a == b else Verdict.UNKNOWN for a, b in zip(low, high, strict=True)]
+    each = [unknown, *(_verdicts(w, graph, data) for w in known)]
+    assert verdicts(PROPAGATE) == [min(column) for column in zip(*each, strict=True)]
     policy = OnUnknown.assume({"width": chosen(3.6, "m")})
     assert verdicts(policy) == conjunction([3.6 if w is None else w for w in widths])
     if known:

@@ -9,11 +9,11 @@ import math
 from collections.abc import Iterable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import Any
 
+from protee._frozen import FrozenMap
 from protee.constraints._compose import ComputationView, UnknownPolicy
-from protee.constraints._effects import ENVELOPES
+from protee.constraints._derivations import ENVELOPES
 from protee.constraints._failure import Impact
 from protee.constraints._model import (
     Conversion,
@@ -27,6 +27,7 @@ from protee.constraints._model import (
     Source,
     Value,
     ValueState,
+    _bound_side,
     _datum_text,
 )
 from protee.constraints._patterns import PATTERNS, Family
@@ -40,7 +41,8 @@ class RequirementRow:
     """One row of the requirement table.
 
     Every field is generated from the requirements, the values and the
-    verification: no list of active constraints is kept by hand.
+    verification: no list of active constraints is kept by hand. Its
+    tables are frozen mappings: a row pickles and copies.
 
     Attributes
     ----------
@@ -78,6 +80,19 @@ class RequirementRow:
     policy: UnknownPolicy | None = None
     impact: Mapping[str, float | bool | None] | None = field(default=None)
 
+    def __post_init__(self) -> None:
+        set_ = object.__setattr__
+        set_(self, "statement", FrozenMap(self.statement))
+        set_(self, "values", FrozenMap(self.values))
+        set_(
+            self,
+            "discarded",
+            FrozenMap({k: tuple(v) for k, v in self.discarded.items()}),
+        )
+        set_(self, "verification", FrozenMap(self.verification))
+        if self.impact is not None:
+            set_(self, "impact", FrozenMap(self.impact))
+
     def to_dict(self, *, readable: bool = False) -> dict[str, Any]:
         """The row as plain data, ready for JSON (``inf`` as ``"inf"``, and
         ``-inf`` as ``"-inf"``).
@@ -105,14 +120,14 @@ class RequirementRow:
             Whether each value, retained, discarded or read by a
             derivation, also gets ``"shown"``, the value as a person reads
             it (see :func:`readable`), which needs the optional extra
-            ``units``. By default, the data do not depend on the extras
-            installed.
+            ``units`` for a number with a unit. By default, the data do
+            not depend on the extras installed.
 
         Raises
         ------
         ImportError
-            If ``readable`` is true and pint is not installed (the
-            optional extra ``units``).
+            If ``readable`` is true, a value is a number with a unit, and
+            pint is not installed (the optional extra ``units``).
         """
         return {
             "id": self.id,
@@ -269,8 +284,10 @@ def _summary(value: Value) -> str:
     parts = [f"{_head(d, subject)}: {_outcome(value, d)}"]
     decided = d.settings.get("unknown") == "propagate"
     if value.state is ValueState.KNOWN and d.unknown and decided:
+        # A fixer without a value of its own decides by its bound.
+        by = (f"the bound of {n}" if n in d.unknown else n for n in d.fixed_by)
         parts.append(
-            f"decided by {', '.join(d.fixed_by)} despite unknown values for "
+            f"decided by {', '.join(by)} despite unknown values for "
             f"{', '.join(d.unknown)}"
         )
     parts += [
@@ -355,26 +372,60 @@ def _outcome(value: Value, d: Derivation) -> str:
 
 def _fixers(d: Derivation, names: Iterable[str], x: Datum) -> str:
     """The inputs that fix a value (or a bound) ``x``: members with the
-    source of their value, characteristics with the threshold they cross."""
+    source of their value (and its bound, for a value to be set),
+    characteristics with the threshold they cross, the groups of a column
+    with the source of each value they give."""
     if d.name == "classify_by_thresholds":
         return ", ".join(_ranked(d, name, x) for name in names)
     out = []
     for name in names:
         i = _input(d, "member", name)
-        if i is None or i.value is None:
-            out.append(name)
+        if i is not None and i.value is not None:
+            out.append(f"{name} ({_bounded(i.value)}{_cited(i.value.source)})")
+        elif d.name == "column_length":
+            out.append(_holding(d, name))
         else:
-            out.append(f"{name} ({_cited(i.value.source)})")
+            out.append(name)
     return ", ".join(out)
+
+
+def _bounded(v: Value) -> str:
+    """The bound of a value to be set, before its source."""
+    bounded = _bound_side(v)
+    if bounded is None:
+        return ""
+    side, bound = bounded
+    return f"{side} {_datum_text(bound, v.unit)}, "
+
+
+def _holding(d: Derivation, name: str) -> str:
+    """A holder of the values of a column that are not lengths of members:
+    a group with the gaps, the density and the pace it gives, or a value of
+    the context, named by its parameter, each with its source."""
+    cited = []
+    for i in d.inputs:
+        v = i.value
+        if i.role == "member" or v is None:
+            continue
+        if i.holder == name or (i.holder is None and i.parameter == name):
+            cited.append(f"{i.parameter!r}: {_cited(v.source)}")
+    return f"{name} ({', '.join(cited)})" if cited else name
 
 
 def _ranked(d: Derivation, name: str, label: Datum) -> str:
     """A characteristic that fixes a class: its value and, beyond the
     first class, the highest threshold it crosses, with its locator."""
     i = _input(d, "characteristic", None, name)
-    if i is None or i.value is None or i.value.value is None:
+    if i is None or i.value is None:
         return repr(name)
-    shown = f"{name!r} ({_shown(i.value)}"
+    if i.value.value is None:  # to be set: its bound ranks it
+        bounded = _bound_side(i.value)
+        if bounded is None:
+            return repr(name)
+        side, bound = bounded
+        shown = f"{name!r} ({side} {_datum_text(bound, i.value.unit)}"
+    else:
+        shown = f"{name!r} ({_shown(i.value)}"
     # A trace built by classify_by_thresholds holds these settings; one
     # built by hand may not, and its summary says less.
     settings: Any = d.settings
@@ -468,13 +519,13 @@ def requirement_table(
                 family=PATTERNS[r.pattern].family,
                 statement=r.statement,
                 source=r.source,
-                values=MappingProxyType(applied),
-                discarded=MappingProxyType(
+                values=FrozenMap(applied),
+                discarded=FrozenMap(
                     {n: values.discarded[n] for n in names if n in values.discarded}
                 ),
                 status=check.status,
                 reason=check.reason,
-                verification=MappingProxyType(
+                verification=FrozenMap(
                     {
                         "passed": check.passed,
                         "failed": check.failed,
@@ -485,7 +536,7 @@ def requirement_table(
                 policy=None if view is None else view.policy,
                 impact=None
                 if impacts is None or r.id not in impacts
-                else MappingProxyType(impacts[r.id].to_dict()),
+                else FrozenMap(impacts[r.id].to_dict()),
             )
         )
     return tuple(rows)

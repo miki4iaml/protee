@@ -226,6 +226,13 @@ def test_without_refusals() -> None:
         COLUMN.without("X", [], reason="r")
     with pytest.raises(ValueError, match="needs an identifier of its own"):
         COLUMN.without("column", ["A"], reason="r")
+    # A bare string would be read as its characters, which may be members.
+    letters = Group("L", ((Member("A"), 1), (Member("B"), 1), (Member("AB"), 1)))
+    with pytest.raises(
+        TypeError,
+        match=re.escape("members is a sequence of identifiers, got the string 'AB'"),
+    ):
+        letters.without("L2", "AB", reason="AB crosses apart")
 
 
 def test_left_out_of_the_tree_counts_the_instances_along_the_path() -> None:

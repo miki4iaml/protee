@@ -9,7 +9,10 @@ import copy
 import math
 import pickle
 import re
+from decimal import Decimal
+from fractions import Fraction
 
+import numpy as np
 import pytest
 from constraints_cases import (
     DOC,
@@ -129,6 +132,45 @@ def test_value_types_and_to_be_set() -> None:
         value(math.nan)
     with pytest.raises(TypeError, match="precedence"):
         Value(1, SRC, Origin.CHOICE, precedence=1.5)  # type: ignore[arg-type]
+    for refused in (Fraction(1, 3), Decimal("0.5"), np.bool_(True)):
+        with pytest.raises(TypeError, match="a value must be a number"):
+            Value(refused, SRC, Origin.CHOICE)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (np.float64(3.5), 3.5),
+        (np.float32(0.1), float(np.float32(0.1))),
+        (np.int64(3), 3),
+        (np.int8(-2), -2),
+        (np.float64("inf"), math.inf),
+    ],
+)
+def test_a_numpy_number_is_kept_as_the_python_number_of_its_value(
+    given: object, expected: float
+) -> None:
+    # A NumPy scalar is read as the int or the float of the same value:
+    # what a derivation, a message and a fingerprint read.
+    kept = Value(given, SRC, Origin.STATEMENT, unit="m")  # type: ignore[arg-type]
+    assert kept.value == expected
+    assert type(kept.value) is type(expected)
+    assert kept == Value(expected, SRC, Origin.STATEMENT, unit="m")
+    with pytest.raises(ValueError, match="NaN"):
+        Value(np.float64("nan"), SRC, Origin.STATEMENT)
+    # A number more precise than a float (a long double, where it is wider)
+    # is not a float of the same value: refused, never rounded silently.
+    with pytest.raises(TypeError, match="a value must be a number"):
+        Value(_Wider(1 / 3), SRC, Origin.STATEMENT)
+
+
+class _Wider(float):
+    """A floating number that equals no float, as a wider one does."""
+
+    def __eq__(self, other: object) -> bool:
+        return False
+
+    __hash__ = float.__hash__
 
 
 CHOSEN = Value(
@@ -295,6 +337,32 @@ def test_trace_records_check_their_fields() -> None:
         Conversion(None, "w", 1, "km", 1000, "m", "")
     with pytest.raises(ValueError, match="holder must be a non-empty string"):
         Conversion("", "w", 1, "km", 1000, "m", "1000")
+
+
+def test_the_names_of_a_trace_are_sequences() -> None:
+    for build in (
+        lambda: trace(fixed_by="AB"),
+        lambda: trace(unknown="AB"),
+        lambda: trace(bound=2.0, bound_fixed_by="AB", unknown=("U",)),
+        lambda: Assumption("w", CHOSEN, "AB", 2),  # type: ignore[arg-type]
+    ):
+        with pytest.raises(TypeError, match="is a sequence of names, got the string"):
+            build()
+    # A NumPy number in a trace is the Python number of its value.
+    bounded = trace(
+        fixed_by=(), bound=np.float64(2.5), bound_fixed_by=("A",), unknown=("U",)
+    )
+    assert type(bounded.bound) is float
+    converted = Conversion(
+        "A",
+        "w",
+        np.int64(3),  # type: ignore[arg-type]
+        "t",
+        np.float64(3000.0),
+        "kg",
+        "1000",
+    )
+    assert (type(converted.value), type(converted.converted)) == (int, float)
 
 
 @pytest.mark.parametrize(

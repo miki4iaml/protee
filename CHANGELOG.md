@@ -28,7 +28,9 @@ and this project adheres to
   which records it); `Group.with_counts` makes a variant with other counts
   under its own identifier (`variant_of`), the base of a sensitivity
   analysis; `Group.without` a declared sub-group, each exclusion recorded
-  with its reason.
+  with its reason. A bare string where a sequence of names is expected
+  (the members excluded, the order of `strictest`, the names of a trace)
+  is refused, never read as its characters.
 - `aggregate`, the first derivation of the closed registry
   `derivations()` (`DerivationInfo`): the values of a group from those of
   its members, by a rule declared for each output parameter
@@ -37,7 +39,12 @@ and this project adheres to
   `threshold_count`, the members beyond a threshold by a declared
   `Comparison` (`above`, `at_least`, `below`, `at_most`). The arithmetic is
   exact (a float read as the decimal it shows, the result rounded once):
-  the result depends on the multiset of the members only. It returns
+  the result depends on the multiset of the members only. A member whose
+  value is itself to be set with a bound on the side of the rule (at
+  least a value for `max`, at most for `min`, at least as strict for
+  `strictest`, a classification included) counts with its bound, and
+  stays unknown; a bound read in another unit is converted, and its
+  `Conversion` recorded. It returns
   `Derived`, a value set named after the group, which enters
   `resolve_values` like any other, with the tallies (`Tally`) of the
   inputs unknown, assumed and left out; `Derived.merge` joins the values of
@@ -52,18 +59,22 @@ and this project adheres to
 - `OnUnknown`, the policy of a derivation for the inputs without a value,
   stated without default (`UnknownRule`): `propagate` (the value is to be
   set; only the last label of a `strictest` order, or the highest rank of
-  a classification, decides despite unknown inputs), `known_only` (with
+  a classification, reached by a known input or by the bound of an input
+  to be set, decides despite unknown inputs), `known_only` (with
   its justification; refused for `sum`, `mean`, `threshold_count` and
   `column_length`, which it would shorten, and for `select_by_class`) and
   `assume` (a value chosen with its justification, recorded with the
-  members it replaces).
+  members it replaces; an input to be set whose derivation bounds it
+  takes it only if its bound allows it, the derivation is refused
+  otherwise, naming the input, the bound, the members that fix it and
+  the value assumed).
 - The trace of a derived value: `Origin.DERIVED`, and `Value.derivation`,
   a `Derivation` that holds the rule, the members that fix the value,
   every input with its source and state (`DerivationInput`), the
   assumptions (`Assumption`), the members left out (`LeftOut`,
   `LeftOutCause`), the unknown inputs and, for an envelope (`max`, `min`,
   `strictest`) or a classification to be set, the extreme of the known
-  inputs as `bound`;
+  inputs (and of the bounds of the inputs to be set) as `bound`;
   `Conversion` records the conversion of an input into the unit of its
   parameter. A requirement whose derived value is to be set names the
   members without a value.
@@ -78,12 +89,18 @@ and this project adheres to
   `propagate`, a characteristic at the highest rank decides despite unknown
   ones; otherwise the class is to be set, its derivation keeping the class
   of the known characteristics as `bound`. It reads a value set, resolved
-  values or derived values, such as the envelope of a group.
+  values or derived values, such as the envelope of a group, whose bound
+  it reads when the envelope is to be set: a maximum under `above` or
+  `at_least` (a minimum under `below` or `at_most`) ranks at least as its
+  bound, for the bound of the class and for the decision at the highest
+  rank. The message that refuses thresholds out of order shows each with
+  its unit, and as converted.
 - `select_by_class`, a derivation of the registry: the value a class
   selects in a table, with the class and the source of the value in its
   trace. A class without a value of its own (`NotApplicable`, with its
   reason) gives a value not applicable, never an infinite limit; a class
-  absent from the table is refused, and `known_only` too.
+  absent from the table is refused, and `known_only` too. A class to be
+  set, bounded or not, gives a value to be set.
 - `column_length`, a derivation of the registry: the length a group
   occupies in a column, level by level, from the lengths of its members
   (`geometric`) or their number over a density (`density`), plus the gaps
@@ -91,12 +108,17 @@ and this project adheres to
   (`GapCount`, without default), in distance or in time at a pace. The
   values of a group are read on it, else on its nearest ancestor, else in
   a context; a member whose length is not applicable is out of the
-  column. `known_only` is refused: it would shorten the column.
+  column. `known_only` is refused: it would shorten the column. A value
+  assumed for several groups is converted, and recorded, once.
 - The optional extra `units` (pint 0.26 or later, imported on first use):
   a derivation converts an input in another unit than the one it must
   have into that unit, exactly (a factor such as 5/18 from km/h to m/s),
   and records each `Conversion`; a converted value is a float, rounded
-  once, and comparisons stay exact. `aggregate` converts the values of
+  once, that every comparison reads, like any float, as the decimal it
+  shows: a value compared directly and the same value read again after a
+  derivation agree (80 km/h against "from 80 km/h", in a vocabulary in
+  m/s, whether read on a member or on its envelope). `aggregate` converts
+  the values of
   the members, the value assumed and a threshold into the unit of their
   parameter; `classify_by_thresholds` converts each threshold into the
   unit of its characteristic (72 t is the 2nd category against a
@@ -105,13 +127,20 @@ and this project adheres to
   the gaps in distance into the unit of the column, a density into its
   inverse, and a gap in time at a pace into a distance (a gap in min at a
   pace in km/h). A unit pint does not know, two units of different
-  dimensions, a unit with an offset (`degC`) and a calendar convention (a
-  year or a month, which pint counts as 365.25 days and a twelfth of it)
-  are refused. Without the extra, an input in another unit is refused
-  with an `ImportError` that names `protee[units]`; a value in the unit
-  it must have never needs it. `readable` shows a value as a person reads
-  it: a duration in days, hours and minutes (`"1 h 30 min"`), a length in
-  km or m (`"12.4 km"`), `"no limit"`, `"to be set"`, `"not applicable"`;
+  dimensions, an angle and a unit that is not one (a grade in % is the
+  tangent of its angle, not a multiple of it), a factor that is not a
+  rational number (pi in degrees to radians, the root of 1000 from
+  `km**0.5` to `m**0.5`, while `cm**0.5` converts to `m**0.5` by 1/10),
+  a unit with an offset (`degC`) and a calendar convention (a year or a month, which pint
+  counts as 365.25 days and a twelfth of it) are refused: no truncated
+  factor is recorded as exact. Without the extra, an input in another
+  unit is refused with an `ImportError` that names `protee[units]`; a
+  value in the unit it must have never needs it. `readable` shows a value
+  as a person reads it: a duration in days, hours and minutes (`"1 h 30
+  min"`), a length in km or m (`"12.4 km"`), any other number with six
+  significant digits and its integer part whole (`"1234567 kg"`), each
+  rounded once, half up, `"no limit"`, `"to be set"`, `"not applicable"`;
+  it needs the extra for a number with a unit only.
   `RequirementRow.to_dict(readable=True)` adds it to each value as
   `"shown"`, and the default output does not depend on the extras
   installed.
@@ -129,15 +158,20 @@ and this project adheres to
   `capacity_admissibility` requirement is to be set by an envelope
   (`max`, `min` or `strictest` of `aggregate`, or
   `classify_by_thresholds`, under `propagate`), `evaluate` reads the
-  `bound` of its known members: an arc the bound fails whatever the
-  unknown members fails for certain (`Reason.VIOLATED`), every other arc
-  in scope is `unknown` (the new `Reason.VALUE_TO_BE_SET`), counted and
+  `bound` of its known members and decides an arc only when every value
+  the bound allows decides it alike: it fails for certain where every
+  such value fails (`Reason.VIOLATED`), passes where every one passes (an
+  arc without a limit for a quantity at least its bound, an arc that
+  admits the strictest label of the order for a class), and is `unknown`
+  elsewhere in scope (the new `Reason.VALUE_TO_BE_SET`), counted and
   handled by the policy for the unknown of the search; without a known
-  member, every arc in scope is `unknown`. This is the Kleene conjunction
-  of the verdicts of the members, a tested property: the unknown is never
-  presumed compatible. `verify_route` and `verify_flow` give
-  `not_applied` or `partial` with the bound in their reason (`"... at
-  least 3.5 m (B)"`), and `check_inputs` the arcs that fail already.
+  member, the value may be any. This is the Kleene conjunction of the
+  verdicts of the members, a property the tests check exactly, on chains
+  too (the class of a partial envelope, the strictest of partial
+  classes): the unknown is never presumed compatible. `verify_route` and
+  `verify_flow` give `not_applied`, `partial` or `applied` with the bound
+  in their reason (`"... at least 3.5 m (B)"`), and `check_inputs` the
+  arcs that fail already and those that pass whatever the value.
 - The trace of derived values in the requirement table and the
   provenance. `RequirementRow.to_dict` gives each value, retained or
   discarded, the reason it is not applicable (`"not_applicable"`) and its
@@ -148,15 +182,17 @@ and this project adheres to
   conversions, the unknown inputs, the bound of a value to be set, and a
   `"summary"` in words: the rule, the value and the member that fixes it
   with its source (`"max of 'width' over G: 3.5 m, fixed by B (Sheet B
-  (2), p. 4)"`), the threshold a characteristic crosses, the bound of a
-  value to be set and its members without a value, a decision despite
-  unknown values, the assumptions, the inputs left out with their
-  reasons, the conversions; `to_dict(readable=True)` adds `"shown"` at
-  every depth. `Provenance.derivations` records, for each derived value
-  used and those it reads in turn, its parameter, subject, derivation,
-  rule and the inputs that fix it; the fingerprint of the inputs covers
-  every input of every derivation, so that a member that fixes no value
-  still changes it.
+  (2), p. 4)"`), the threshold a characteristic crosses, the group of a
+  column with the source of each gap, density or pace it gives, the
+  bound of a value to be set and its members without a value, a
+  decision despite unknown values (by a bound, when it is one), the
+  assumptions, the inputs left out with their reasons, the conversions;
+  `to_dict(readable=True)` adds `"shown"` at every depth.
+  `Provenance.derivations` records, for each derived value used,
+  retained or set aside, and those it reads in turn, its parameter,
+  subject, derivation, rule and the inputs that fix it; the fingerprint
+  of the inputs covers every input of every derivation, so that a member
+  that fixes no value still changes it.
 
 ### Changed
 
@@ -168,19 +204,24 @@ and this project adheres to
   provenance recorded with 0.3.0 does not replay, as with any other
   version.
 - `resolve_values`: a value not applicable and a value to be set of the
-  same precedence disagree, and are refused. Migration: declare which one
-  prevails by a precedence.
+  same precedence disagree, and are refused; so do two values to be set
+  that may take different values, and so decide arcs differently: an
+  envelope to be set, bounded or not, and a value to be set that is no
+  envelope; envelopes of different bounds; label bounds whose orders
+  allow different labels. The names of their rulebooks never settle it.
+  Migration: declare which one prevails by a precedence.
 - `check_inputs`: `missing_values` lists the values missing or to be set,
   not those declared not applicable; the reason of a value without one is
   that of `evaluate`.
 - `evaluate`: an admissibility requirement whose value is to be set by an
   envelope with a bound, or without any known member, is no longer an
-  effect that does not apply: its arcs fail where the bound fails them,
-  and are `unknown` elsewhere. `verify_route` and `verify_flow` give it
-  `not_applied` or `partial` instead of `not_applicable`, `check_inputs`
-  expects `not_applied` or `partial`, and `RouteSearch` and `FlowSearch`
-  bar the arcs that fail and apply their policy for the unknown to the
-  others, where the requirement was left out. A value to be set that is
+  effect that does not apply: its arcs fail where every value the bound
+  allows fails them, pass where every one passes them, and are `unknown`
+  elsewhere. `verify_route` and `verify_flow` give it `not_applied`,
+  `partial` or `applied` instead of `not_applicable`, `check_inputs`
+  expects one of them, and `RouteSearch` and `FlowSearch` bar the arcs
+  that fail and apply their policy for the unknown to the undecided
+  ones, where the requirement was left out. A value to be set that is
   not derived, or derived by another rule (`sum`, `select_by_class`,
   `column_length`), still makes its requirement not applicable.
   Migration: a search that relied on such a requirement being ignored now
@@ -193,13 +234,22 @@ and this project adheres to
   default. Migration: a comparison of a whole entry of the table, or of a
   provenance built field by field, takes them into account.
 - The tables of the requirement model (`ValueSet.values`, `Rulebook.title`,
-  `Parameter.aliases`, the mappings of `Requirement`, `ResolvedValues`) are
-  frozen mappings (`FrozenMap`) instead of `types.MappingProxyType`: still
-  read-only, they pickle and copy, so that value sets, requirement sets and
-  resolved values can leave a worker process; rulebooks, parameters and
-  requirements hash. Migration: a test
+  `Parameter.aliases`, the mappings of `Requirement`, `ResolvedValues`) and
+  of its results (`RequirementRow`, `InputCheck`, `InputReport`,
+  `Verification` and its `statuses`) are frozen mappings (`FrozenMap`)
+  instead of `types.MappingProxyType`: still read-only, they pickle and
+  copy, so that value sets, requirement sets, resolved values, rows of the
+  requirement table and reports can leave a worker process; rulebooks,
+  parameters and requirements hash. Migration: a test
   `isinstance(x, types.MappingProxyType)` becomes
   `isinstance(x, collections.abc.Mapping)`.
+- `Value` keeps a number of another type, a NumPy integer or float, as the
+  Python `int` or `float` of the same value (a NumPy integer, and a NumPy
+  float other than a 64-bit one, were refused; a 64-bit one was kept as
+  is); a number that no Python number equals, a
+  fraction or a decimal is refused. So do the bound of a `Derivation` and
+  the numbers of a `Conversion`, and `readable` shows such a number as
+  the Python one.
 
 ## [0.3.0] - 2026-11-28
 

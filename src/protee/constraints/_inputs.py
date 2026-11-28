@@ -8,10 +8,10 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from types import MappingProxyType
 
 import numpy as np
 
+from protee._frozen import FrozenMap
 from protee.constraints._data import ArcData
 from protee.constraints._effects import (
     Reason,
@@ -42,12 +42,15 @@ class InputCheck:
         attribute is absent, ``not_applicable`` when a value is to be set
         or not applicable, or no arc is in scope. An admissibility
         requirement whose value is to be set by an envelope reads the
-        bound of its known inputs (see :func:`evaluate`): ``not_applied``
-        when the bound fails every arc in scope, ``partial`` otherwise.
+        bound of its known inputs (see :func:`evaluate`): ``applied`` when
+        an arc in scope passes whatever the value the bound allows,
+        ``not_applied`` when the bound fails every arc in scope,
+        ``partial`` otherwise.
     reason : str
         For a value to be set or not applicable, the reason
         :func:`evaluate` gives; for a value to be set by an envelope, with
-        its bound and the arcs that fail already.
+        its bound, the arcs that fail already and those that pass whatever
+        the value.
     missing_values : tuple of str
         Parameters to be set or without a value (not those declared not
         applicable).
@@ -75,13 +78,13 @@ class InputCheck:
     missing_attributes: tuple[str, ...] = ()
     known: int = 0
     total: int = 0
-    coverage: Mapping[str | None, tuple[int, int]] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    coverage: Mapping[str | None, tuple[int, int]] = field(default_factory=FrozenMap)
     provable: bool | None = None
-    derived: Mapping[str, str | None] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    derived: Mapping[str, str | None] = field(default_factory=FrozenMap)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "coverage", FrozenMap(self.coverage))
+        object.__setattr__(self, "derived", FrozenMap(self.derived))
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +98,7 @@ class InputReport:
         checks = tuple(self.checks)
         object.__setattr__(self, "checks", checks)
         object.__setattr__(
-            self, "_by_id", MappingProxyType({c.requirement: c for c in checks})
+            self, "_by_id", FrozenMap({c.requirement: c for c in checks})
         )
 
     def __iter__(self) -> Iterator[InputCheck]:
@@ -166,7 +169,7 @@ def _check(
     missing_attributes = tuple(
         n for n in requirement.attributes.values() if n not in data
     )
-    derived = MappingProxyType(
+    derived = FrozenMap(
         {
             n: data[n].quality
             for n in requirement.attributes.values()
@@ -225,7 +228,7 @@ def _check(
     known = int(known_mask.sum())
     totals = Counter(e for e, s in zip(elements, scope, strict=True) if s)
     knowns = Counter(e for e, k in zip(elements, known_mask, strict=True) if k)
-    coverage = MappingProxyType(
+    coverage = FrozenMap(
         {
             e: (knowns[e], totals[e])
             for e in sorted(totals, key=lambda e: (e is None, e or ""))
@@ -246,12 +249,16 @@ def _check(
     if undecided is not None:
         assert effect.reasons is not None
         failed = int((scope & (effect.reasons == Reason.VIOLATED)).sum())
-        expected = (
-            RequirementStatus.NOT_APPLIED
-            if failed == total
-            else RequirementStatus.PARTIAL
-        )
+        passed = int(passing.sum())
+        if passed:
+            expected = RequirementStatus.APPLIED
+        elif failed == total:
+            expected = RequirementStatus.NOT_APPLIED
+        else:
+            expected = RequirementStatus.PARTIAL
         reason = f"{undecided}; {reason}, {failed} fail at the bound"
+        if passed:
+            reason += f", {passed} pass whatever the value"
     elif provable is False:
         reason += "; no known arc passes: the requirement cannot be proved on any arc"
     return replace(

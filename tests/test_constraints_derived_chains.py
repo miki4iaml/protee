@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import json
 import math
+import pickle
+import re
+from collections.abc import Callable
+from dataclasses import replace
 
+import numpy as np
 import pytest
 from constraints_cases import LINKS, PROFILE
 from derive_cases import (
@@ -39,6 +44,7 @@ from derive_cases import (
     measure,
     member,
     plan,
+    regulation,
     select,
     sheet,
 )
@@ -50,6 +56,7 @@ from protee.constraints import (
     ArcData,
     Attribute,
     Comparison,
+    Conversion,
     Derivation,
     DerivationInput,
     Derived,
@@ -84,6 +91,7 @@ from protee.constraints import (
     provenance,
     requirement_table,
     resolve_values,
+    select_by_class,
     verify_flow,
     verify_route,
 )
@@ -92,7 +100,7 @@ from protee.flow import FlowProblem
 from protee.graph import Digraph
 
 S = RequirementStatus
-FAIL, UNKNOWN = int(Verdict.FAIL), int(Verdict.UNKNOWN)
+FAIL, UNKNOWN, PASS = int(Verdict.FAIL), int(Verdict.UNKNOWN), int(Verdict.PASS)
 
 # A group that crosses fords -------------------------------------------------
 #
@@ -359,20 +367,19 @@ def verdicts(
     return [int(v) for v in effect.verdict]
 
 
-def kleene(columns: list[list[int]]) -> list[int] | None:
-    """The Kleene conjunction of the verdicts of several members, ``None``
-    without a member."""
-    if not columns:
-        return None
+def kleene(columns: list[list[int]]) -> list[int]:
+    """The Kleene conjunction of the verdicts of several members."""
     return [min(column) for column in zip(*columns, strict=True)]
 
 
-def partial(known: list[int] | None, m: int) -> list[int]:
-    """The verdicts of an envelope to be set: a failure of a known member
-    is certain, any other arc unknown."""
-    if known is None:
-        return [UNKNOWN] * m
-    return [FAIL if v == FAIL else UNKNOWN for v in known]
+def alike(columns: list[list[int]]) -> list[int]:
+    """The verdicts that every column gives alike, unknown where they
+    differ: the verdicts of a value that may be any of those of the
+    columns (a member without a value, all the completions of a chain)."""
+    return [
+        column[0] if len(set(column)) == 1 else UNKNOWN
+        for column in zip(*columns, strict=True)
+    ]
 
 
 def depth_values(x: float) -> ResolvedValues:
@@ -396,9 +403,9 @@ WATERS = st.lists(
 def test_the_minimum_of_a_capacity_is_its_kleene_conjunction(
     depths: list[float | None], waters: list[float | None]
 ) -> None:
-    # Every member known: the verdict of the minimum is the conjunction of
-    # the verdicts of the members; some unknown: a known member that fails
-    # an arc fails it for certain, the others are unknown.
+    # The verdict of the minimum is the conjunction of the verdicts of the
+    # members; a member without a depth decides an arc only where every
+    # depth decides it alike, the least and the largest.
     graph, data = parallel(Attribute.numeric("water_depth", waters, unit="m"))
     req = Requirement(
         "DEPTH",
@@ -418,6 +425,9 @@ def test_the_minimum_of_a_capacity_is_its_kleene_conjunction(
     )
     known = [x for x in depths if x is not None]
     each = [verdicts(req, graph, data, depth_values(x)) for x in known]
+    if len(known) < len(depths):
+        ends = (-math.inf, math.inf)
+        each.append(alike([verdicts(req, graph, data, depth_values(x)) for x in ends]))
     d = aggregate(
         group,
         {"fording_depth": Aggregation.min("fording_depth")},
@@ -426,11 +436,7 @@ def test_the_minimum_of_a_capacity_is_its_kleene_conjunction(
         edition="1",
     )
     found = verdicts(req, graph, data, resolve_values([d.values], reqs))
-    conjunction = kleene(each)
-    if len(known) == len(depths):
-        assert found == conjunction
-    else:
-        assert found == partial(conjunction, len(waters))
+    assert found == kleene(each)
 
 
 ARC_CLASSES = st.lists(st.one_of(st.none(), st.sampled_from(CLASSES)), min_size=1)
@@ -466,18 +472,24 @@ def test_the_strictest_class_is_its_kleene_conjunction(
             for k, x in enumerate(labels)
         ),
     )
+    # A member without a class may be of any class of the order: an arc
+    # that admits the strictest one passes whatever its class.
     known = [x for x in labels if x is not None]
     each = [
         verdicts(LOAD_CLASS, graph, data, label_values("load_class", x)) for x in known
     ]
+    if len(known) < len(labels):
+        each.append(
+            alike(
+                [
+                    verdicts(LOAD_CLASS, graph, data, label_values("load_class", c))
+                    for c in CLASSES
+                ]
+            )
+        )
     d = derive(group, {"load_class": Aggregation.strictest("load_class", CLASSES)})
     found = verdicts(LOAD_CLASS, graph, data, resolve_values([d.values], LOAD_CLASSES))
-    conjunction = kleene(each)
-    if d["load_class"].value is not None:
-        # Every member known, or the strictest label reached (DD9).
-        assert found == conjunction
-    else:
-        assert found == partial(conjunction, len(arcs))
+    assert found == kleene(each)
 
 
 CATEGORY = Requirement(
@@ -504,7 +516,8 @@ def test_a_partial_class_is_the_kleene_conjunction_of_its_characteristics(
     width: float | None, mass: float | None, arcs: list[str | None]
 ) -> None:
     # The characteristics are the members of a classification: the class
-    # of each known one alone gives its verdicts.
+    # of each known one alone gives its verdicts; an unknown one may be of
+    # any class.
     graph, data = parallel(Attribute.categorical("arc_category", arcs, CATEGORIES))
     given_ = {k: x for k, x in (("width", width), ("mass", mass)) if x is not None}
     each = []
@@ -519,13 +532,232 @@ def test_a_partial_class_is_the_kleene_conjunction_of_its_characteristics(
             each.append(
                 verdicts(CATEGORY, graph, data, label_values("category", label))
             )
+    if len(given_) < 2:
+        each.append(any_category(graph, data))
     d = classify(sheet("sheet-S", **given_))
     found = verdicts(CATEGORY, graph, data, resolve_values([d.values], CATEGORY_REQS))
-    conjunction = kleene(each)
-    if d["category"].value is not None:
-        assert found == conjunction
-    else:
-        assert found == partial(conjunction, len(arcs))
+    assert found == kleene(each)
+
+
+def any_category(graph: Digraph, data: ArcData) -> list[int]:
+    """The verdicts of a category that may be any."""
+    return alike(
+        [
+            verdicts(CATEGORY, graph, data, label_values("category", c))
+            for c in CATEGORIES
+        ]
+    )
+
+
+# Chains whose inputs are partial envelopes -----------------------------------
+
+#: Widths that reach every category and its thresholds (3 m and 4 m, "up
+#: to"): what a member without a width may be.
+ANY_WIDTH = (-math.inf, 2.5, 3.0, 3.5, 4.0, 4.5, math.inf)
+
+
+def chain_verdicts(
+    widths: list[float | None], graph: Digraph, data: ArcData
+) -> list[int]:
+    """The verdicts of the category of the envelope of a group of the given
+    widths (``None`` unknown): max, then classification, under propagate."""
+    group = Group(
+        "G",
+        tuple(
+            (member(f"m{k}") if w is None else member(f"m{k}", width=w), 1)
+            for k, w in enumerate(widths)
+        ),
+    )
+    envelope = derive(group, {"width": Aggregation.max("width")})
+    category = classify(envelope, characteristics=[WIDTH])
+    return verdicts(
+        CATEGORY, graph, data, resolve_values([category.values], CATEGORY_REQS)
+    )
+
+
+@given(
+    st.lists(st.one_of(st.none(), st.sampled_from(ANY_WIDTH[1:-1])), min_size=1),
+    st.lists(st.one_of(st.none(), st.sampled_from(CATEGORIES)), min_size=1),
+)
+def test_a_class_of_a_partial_envelope_is_exact(
+    widths: list[float | None], arcs: list[str | None]
+) -> None:
+    # The envelope of a group with members without a width, classified,
+    # then compared with the category of each arc: an arc is decided when
+    # every completion of the unknown widths decides it alike. The maximum
+    # depends on the largest of them: one width for all covers every case.
+    graph, data = parallel(Attribute.categorical("arc_category", arcs, CATEGORIES))
+    found = chain_verdicts(widths, graph, data)
+    completions = [
+        chain_verdicts([x if w is None else w for w in widths], graph, data)
+        for x in ANY_WIDTH
+    ]
+    assert found == alike(completions)
+
+
+#: What a vehicle described by its width and its mass may be, by category
+#: (the first value of each is of the first category, and so on).
+WIDTH_BY_RANK = (2.5, 3.5, 4.5)
+MASS_BY_RANK = (10.0, 30.0, 50.0)
+
+
+def nested_verdicts(
+    vehicles: list[tuple[float | None, float | None]], graph: Digraph, data: ArcData
+) -> list[int]:
+    """The verdicts of the strictest category of a group of vehicles, each
+    classified by its own width and mass (``None`` unknown), under
+    propagate: the category of a vehicle may be partial itself."""
+    members = []
+    for k, (width, mass) in enumerate(vehicles):
+        given_ = {n: x for n, x in (("width", width), ("mass", mass)) if x is not None}
+        own = classify(sheet(f"sheet-v{k}", **given_)).values
+        members.append((Member(f"v{k}", (own,)), 1))
+    d = aggregate(
+        Group("G", tuple(members)),
+        {"category": Aggregation.strictest("category", CATEGORIES)},
+        parameters=VOCABULARY,
+        unknown=PROPAGATE,
+        edition="1",
+    )
+    return verdicts(CATEGORY, graph, data, resolve_values([d.values], CATEGORY_REQS))
+
+
+VEHICLE = st.tuples(
+    st.one_of(st.none(), st.sampled_from(WIDTH_BY_RANK)),
+    st.one_of(st.none(), st.sampled_from(MASS_BY_RANK)),
+)
+
+
+@given(
+    st.lists(VEHICLE, min_size=1, max_size=3),
+    st.lists(st.one_of(st.none(), st.sampled_from(CATEGORIES)), min_size=1),
+)
+def test_the_strictest_of_partial_classes_is_exact(
+    vehicles: list[tuple[float | None, float | None]], arcs: list[str | None]
+) -> None:
+    # The category of the group is the highest rank of every known or
+    # unknown characteristic of every vehicle: completing all the unknown
+    # ones at one rank covers every case.
+    graph, data = parallel(Attribute.categorical("arc_category", arcs, CATEGORIES))
+    found = nested_verdicts(vehicles, graph, data)
+    completions = [
+        nested_verdicts(
+            [
+                (
+                    WIDTH_BY_RANK[r] if w is None else w,
+                    MASS_BY_RANK[r] if m is None else m,
+                )
+                for w, m in vehicles
+            ],
+            graph,
+            data,
+        )
+        for r in range(len(CATEGORIES))
+    ]
+    assert found == alike(completions)
+
+
+def test_a_known_member_at_the_top_decides_through_a_chain() -> None:
+    # A is 4.5 m wide, beyond the last threshold; U has no width. The
+    # envelope is to be set, at least 4.5 m: its category is the third,
+    # decided despite U, as for A alone.
+    group = Group("G", ((member("A", width=4.5), 1), (member("U"), 1)))
+    envelope = derive(group, {"width": Aggregation.max("width")})
+    assert envelope["width"].to_be_set
+    derived = classify(envelope, characteristics=[WIDTH])
+    category = derived["category"]
+    assert category.value == "3"
+    assert category.derivation is not None
+    assert (category.derivation.fixed_by, category.derivation.unknown) == (
+        ("width",),
+        ("width",),
+    )
+    graph, data = parallel(
+        Attribute.categorical("arc_category", ["2", "1"], CATEGORIES)
+    )
+    values = resolve_values([derived.values], CATEGORY_REQS)
+    assert verdicts(CATEGORY, graph, data, values) == [FAIL, FAIL]
+    assert said(category) == (
+        "highest rank of width: '3', fixed by 'width' (at least 4.5 m above 4 m, "
+        "art. 3); decided by the bound of width despite unknown values for width"
+    )
+    # Below the top, the class is to be set, at least as strict as the
+    # rank of the bound.
+    group = Group("G", ((member("A", width=3.5), 1), (member("U"), 1)))
+    envelope = derive(group, {"width": Aggregation.max("width")})
+    category = classify(envelope, characteristics=[WIDTH])["category"]
+    assert category.to_be_set
+    assert category.derivation is not None
+    assert (category.derivation.bound, category.derivation.bound_fixed_by) == (
+        "2",
+        ("width",),
+    )
+    # A minimum bounds nothing upward: under "above", the class has no
+    # bound.
+    least = derive(group, {"width": Aggregation.min("width")})
+    category = classify(least, characteristics=[WIDTH])["category"]
+    assert category.derivation is not None
+    assert (category.to_be_set, category.derivation.bound) == (True, None)
+
+
+def test_a_bound_class_counts_in_the_strictest_of_a_group() -> None:
+    # X is at least of the second category by its width, its mass
+    # unknown; Y is of the first: the group is at least of the second,
+    # bounded by X.
+    x = classify(sheet("sheet-X", width=3.5)).values
+    y = classify(sheet("sheet-Y", width=2.5, mass=10.0)).values
+    assert x.values["category"].to_be_set
+    group = Group("G", ((Member("X", (x,)), 1), (Member("Y", (y,)), 1)))
+    rules = {"category": Aggregation.strictest("category", CATEGORIES)}
+    d = aggregate(group, rules, parameters=VOCABULARY, unknown=PROPAGATE, edition="1")
+    trace = d["category"].derivation
+    assert trace is not None
+    assert (d["category"].value, trace.bound, trace.bound_fixed_by, trace.unknown) == (
+        None,
+        "2",
+        ("X",),
+        ("X",),
+    )
+    assert said(d["category"]) == (
+        "strictest of 'category' over G: unknown, at least as strict as '2' (fixed "
+        "by X (at least as strict as '2', classify_by_thresholds of classes "
+        "(1))); 1 member without a value: X"
+    )
+    # A bound at the last label decides the group (DD9).
+    w = classify(sheet("sheet-W", mass=30.0), characteristics=[MASS]).values
+    top = Group(
+        "T",
+        (
+            (Member("W", (w,)), 1),
+            (Member("X", (_bounded_at_top(),)), 1),
+            (Member("Y", (y,)), 1),
+        ),
+    )
+    d = aggregate(top, rules, parameters=VOCABULARY, unknown=PROPAGATE, edition="1")
+    trace = d["category"].derivation
+    assert trace is not None
+    assert (d["category"].value, trace.fixed_by, trace.unknown) == ("3", ("X",), ("X",))
+    # A label the bound allows outside the order of the group is refused.
+    narrow = {"category": Aggregation.strictest("category", ("1", "2"))}
+    with pytest.raises(ValueError, match="may be '3', not one of the order"):
+        aggregate(group, narrow, parameters=VOCABULARY, unknown=PROPAGATE, edition="1")
+
+
+def _bounded_at_top() -> ValueSet:
+    """A category to be set, at least as strict as the last one: by hand,
+    since a classification decides it already (DD9)."""
+    trace = Derivation(
+        "aggregate",
+        "strictest",
+        {"of": "category", "order": CATEGORIES, "unknown": "propagate"},
+        (),
+        (),
+        unknown=("U",),
+        bound="3",
+        bound_fixed_by=("A",),
+    )
+    value = Value(None, Source("By hand"), Origin.DERIVED, derivation=trace)
+    return ValueSet("by-hand", "1", {"category": value})
 
 
 def width_requirement() -> tuple[Requirement, RequirementSet]:
@@ -622,14 +854,23 @@ def test_a_bound_is_read_with_the_type_and_the_order_of_its_pattern() -> None:
     with pytest.raises(ValueError, match="class 'C70' is not one of"):
         evaluate(LOAD_CLASS, arcs, classes, by_hand("load_class", "strictest", "C50"))
     narrow = by_hand("load_class", "strictest", "C50", order=("C30", "C50"))
-    assert verdicts(LOAD_CLASS, arcs, classes, narrow) == [FAIL, UNKNOWN]
+    # C50, the strictest label of the order: the value is C50 for certain.
+    assert verdicts(LOAD_CLASS, arcs, classes, narrow) == [FAIL, PASS]
     # An order of the arcs reversed: no class fails every label the value
-    # may take.
+    # may take, and C30, the strictest class of the arcs, admits them all.
     reversed_ = ArcData(
         2, (Attribute.categorical("arc_class", ["C50", "C30"], ("C50", "C30")),)
     )
     loose = by_hand("load_class", "strictest", "C30", order=("C30", "C50"))
-    assert verdicts(LOAD_CLASS, arcs, reversed_, loose) == [UNKNOWN, UNKNOWN]
+    assert verdicts(LOAD_CLASS, arcs, reversed_, loose) == [UNKNOWN, PASS]
+    # A trace without a bound nor an order: nothing tells what the value
+    # may be, every arc is unknown.
+    blind = Derivation(
+        "aggregate", "strictest", {"of": "load_class"}, (), (), unknown=("U",)
+    )
+    unset = Value(None, Source("By hand"), Origin.DERIVED, derivation=blind)
+    values = resolve_values([ValueSet("G", "1", {"load_class": unset})], LOAD_CLASSES)
+    assert verdicts(LOAD_CLASS, arcs, classes, values) == [UNKNOWN, UNKNOWN]
 
 
 # An equipment in several packagings, in a life-cycle profile ---------------
@@ -931,7 +1172,8 @@ THRESHOLD = Value(
             ],
             (
                 "column_length (geometric) of pair: 70 m, fixed by A (Sheet sheet-A "
-                "(1), p. 4), B (Sheet sheet-B (1), p. 4), pair"
+                "(1), p. 4), B (Sheet sheet-B (1), p. 4), pair ('gap': Plan of pair "
+                "(1), sec. 2)"
             ),
         ),
     ],
@@ -959,6 +1201,18 @@ def test_the_table_says_less_of_a_trace_built_by_hand() -> None:
         "highest rank of its characteristics: '2', fixed by 'q', 'width' (3 m)"
     )
     assert _value(value)["derivation"]["settings"] == {"kinds": ["a", "b"]}
+    unset_q = Value(None, Source("Sheet S"), Origin.STATEMENT, unit="m")
+    unranked = Derivation(
+        "classify_by_thresholds",
+        "highest_rank",
+        {},
+        ("q",),
+        (DerivationInput("characteristic", "q", None, ValueState.UNKNOWN, unset_q),),
+        unknown=("q",),
+    )
+    assert said(Value("2", source, Origin.DERIVED, derivation=unranked)) == (
+        "highest rank of its characteristics: '2', fixed by 'q'"
+    )
     chosen_ = Derivation("select_by_class", "table", {"by": "class"}, (), ())
     assert said(Value(5.0, source, Origin.DERIVED, unit="m", derivation=chosen_)) == (
         "selected by 'class': 5 m"
@@ -967,3 +1221,588 @@ def test_the_table_says_less_of_a_trace_built_by_hand() -> None:
     assert said(Value(None, source, Origin.DERIVED, derivation=unset)) == (
         "max of 'w' over hand: to be set"
     )
+
+
+# Certain passes, disagreements and records -----------------------------------
+
+
+def test_an_arc_that_every_value_passes_passes_for_certain() -> None:
+    # The width is to be set, at least 3.5 m (B): an arc without a limit
+    # passes whatever it is; an arc of 3 m fails; one of 4 m is unknown.
+    req, reqs = width_requirement()
+    graph, data = parallel(
+        Attribute.numeric("width_limit", [math.inf, 3.0, 4.0], unit="m")
+    )
+    group = Group("G", ((B, 1), (member("U"), 1)))
+    values = resolve_values(
+        [derive(group, {"width": Aggregation.max("width")}).values], reqs
+    )
+    effect = evaluate(req, graph, data, values)
+    assert effect.verdict is not None
+    assert effect.reasons is not None
+    assert effect.verdict.tolist() == [PASS, FAIL, UNKNOWN]
+    assert effect.reasons.tolist() == [
+        Reason.SATISFIED,
+        Reason.VIOLATED,
+        Reason.VALUE_TO_BE_SET,
+    ]
+    report = check_inputs(reqs, graph, data, values)["ADM-WIDTH"]
+    assert (report.expected, report.provable) == (S.APPLIED, True)
+    assert report.reason == (
+        "value of 'width' to be set: no value for U; at least 3.5 m (B); data on "
+        "3 of the 3 arcs in scope, 1 fail at the bound, 1 pass whatever the value"
+    )
+    applied = verify_route((0,), reqs, graph, data, values)["ADM-WIDTH"]
+    assert (applied.status, applied.reason) == (
+        S.APPLIED,
+        (
+            "verified on 1 arcs; value of 'width' to be set: no value for U; at "
+            "least 3.5 m (B)"
+        ),
+    )
+    # Without a known member, a value may be any: the arc without a limit
+    # still passes, the others are unknown.
+    none = Group("N", ((member("U"), 1), (member("V"), 1)))
+    values = resolve_values(
+        [derive(none, {"width": Aggregation.max("width")}).values], reqs
+    )
+    assert verdicts(req, graph, data, values) == [PASS, UNKNOWN, UNKNOWN]
+    # A minimum is at most its bound (a direction the code does not check
+    # against the pattern): under a limit, an arc at least the bound passes.
+    least = resolve_values(
+        [derive(group, {"width": Aggregation.min("width")}).values], reqs
+    )
+    assert verdicts(req, graph, data, least) == [PASS, UNKNOWN, PASS]
+
+
+@pytest.mark.parametrize("book", ["aa-plan", "zz-plan"])
+def test_values_to_be_set_bounded_apart_disagree_whatever_their_names(
+    book: str,
+) -> None:
+    # The depth of the column is to be set, at most 0.5 m (truck-b); a plan
+    # leaves it to be set, without a bound. The bound bars a1: of the same
+    # precedence, the two disagree, whatever the name of the plan.
+    d = aggregate(COLUMN, ENVELOPE, parameters=FORD, unknown=PROPAGATE, edition="1")
+    unset = Value(None, Source("Planning sheet"), Origin.PROVISIONAL, unit="m")
+    plan_ = ValueSet(book, "1", {"fording_depth": unset})
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "parameter 'fording_depth': values "
+            + (
+                "[None, 'to be set, at most 0.5 m']"
+                if book == "aa-plan"
+                else "['to be set, at most 0.5 m', None]"
+            )
+            + " disagree with the same precedence"
+        ),
+    ):
+        resolve_values([d.values, plan_], FORDS)
+    # A precedence settles it.
+    first = ValueSet(
+        book,
+        "1",
+        {
+            "fording_depth": Value(
+                None,
+                Source("Planning sheet"),
+                Origin.PROVISIONAL,
+                unit="m",
+                precedence=1,
+            )
+        },
+    )
+    kept = resolve_values([d.values, first], FORDS).values["fording_depth"]
+    assert kept.derivation is None
+    # Two groups bounded apart disagree; bounded alike, or not at all,
+    # they agree.
+    tank = Group(
+        "b-other", ((vehicle("tank", fording_depth=0.2), 1), (vehicle("x"), 1))
+    )
+    other = aggregate(
+        tank,
+        {"fording_depth": Aggregation.min("fording_depth")},
+        parameters=FORD,
+        unknown=PROPAGATE,
+        edition="1",
+    )
+    with pytest.raises(ValueError, match="disagree with the same precedence"):
+        resolve_values([d.values, other.values], FORDS)
+    alike_ = Group(
+        "b-alike", ((vehicle("truck-z", fording_depth=0.5), 1), (vehicle("y"), 1))
+    )
+    same = aggregate(
+        alike_,
+        {"fording_depth": Aggregation.min("fording_depth")},
+        parameters=FORD,
+        unknown=PROPAGATE,
+        edition="1",
+    )
+    kept = resolve_values([d.values, same.values], FORDS).values["fording_depth"]
+    assert kept.source.rulebook == "b-alike"
+
+
+SPEED = Requirement(
+    "SPEED",
+    "speed_cap",
+    {"en": "The speed is capped by the category."},
+    Source("Regulation C", locator="art. 14"),
+    parameters={"maximum": "speed_cap"},
+    attributes={"length": "km", "speed": "free_speed"},
+)
+SPEED_REQS = RequirementSet((SPEED,), VOCABULARY, (ALIAS_BOOK,))
+
+
+def speed_cap(category: Derived, edition: str, precedence: int) -> Derived:
+    """The speed cap a category selects, in a rulebook of speeds."""
+    return select_by_class(
+        category,
+        by="category",
+        table={"1": "speed_2", "2": "speed_2", "3": "speed_3"},
+        values=REGULATION_SPEEDS,
+        output="speed_cap",
+        parameters=VOCABULARY,
+        unknown=PROPAGATE,
+        rulebook="speeds",
+        edition=edition,
+        precedence=precedence,
+    )
+
+
+REGULATION_SPEEDS = regulation(speed_2=60.0, speed_3=40.0)
+
+
+def test_the_provenance_walks_the_chain_of_a_value_set_aside() -> None:
+    # Two editions of the same selection, both of class 2: by the width in
+    # the one retained, by the mass in the one set aside. Their entries are
+    # alike; the derivations they read are not, and both are recorded.
+    by_width = classify(sheet("sheet-S", width=3.5, mass=10.0))
+    by_mass = classify(sheet("sheet-S", width=2.0, mass=30.0))
+    values = resolve_values(
+        [speed_cap(by_width, "1", 1).values, speed_cap(by_mass, "2", 0).values],
+        SPEED_REQS,
+    )
+    record = provenance(
+        "dijkstra", {}, inputs={}, requirements=SPEED_REQS, values=values, result=()
+    )
+    assert record.derivations == (
+        ("category", "classes", "classify_by_thresholds", "highest_rank", ("mass",)),
+        ("category", "classes", "classify_by_thresholds", "highest_rank", ("width",)),
+        ("speed_cap", "speeds", "select_by_class", "table", ("category",)),
+    )
+
+
+def test_the_results_of_the_requirement_model_pickle() -> None:
+    d, values, search = crossing(PROPAGATE, UnknownPolicy.ADMIT_AND_COUNT)
+    check = search.verify(search.solve())
+    rows = requirement_table(
+        check,
+        FORDS,
+        values,
+        view=search.view(),
+        impacts={"FORD-DEPTH": search.impact("FORD-DEPTH")},
+    )
+    report = check_inputs(FORDS, CROSSING, CROSSING_DATA, values)
+    for result in (d, values, check, report, *rows):
+        again = pickle.loads(pickle.dumps(result))
+        assert again == result
+    again_rows = pickle.loads(pickle.dumps(rows))
+    assert [r.to_dict() for r in again_rows] == [r.to_dict() for r in rows]
+    assert pickle.loads(pickle.dumps(report))["FORD-DEPTH"] == report["FORD-DEPTH"]
+    assert dict(pickle.loads(pickle.dumps(check.statuses))) == dict(check.statuses)
+
+
+def test_numpy_numbers_are_read_as_the_python_numbers_of_their_value() -> None:
+    # Values taken from arrays: a NumPy float or integer is the Python
+    # number of the same value, for every derivation.
+    def described(id: str, **values: object) -> Member:
+        source = Source(f"Sheet {id}", locator="p. 4")
+        units = {"width": "m", "mass": "t", "length": "m", "speed": "km/h"}
+        return Member(
+            id,
+            (
+                ValueSet(
+                    f"sheet-{id}",
+                    "1",
+                    {
+                        k: Value(x, source, Origin.STATEMENT, unit=units[k])  # type: ignore[arg-type]
+                        for k, x in values.items()
+                    },
+                ),
+            ),
+        )
+
+    with_numpy = Group(
+        "G",
+        (
+            (described("A", width=np.float64(2.5), length=np.int64(6)), 2),
+            (described("B", width=np.float32(3.5), length=np.int64(12)), 1),
+            (described("U"), 1),
+        ),
+    )
+    plain = Group(
+        "G",
+        (
+            (described("A", width=2.5, length=6), 2),
+            (described("B", width=3.5, length=12), 1),
+            (described("U"), 1),
+        ),
+    )
+    limit = Value(np.float64(3.0), Source("Regulation A"), Origin.RULEBOOK, unit="m")
+    rules = {
+        "width": Aggregation.max("width"),
+        "length": Aggregation.sum("length"),
+        "heavy": Aggregation.threshold_count("width", limit, Comparison.AT_LEAST),
+    }
+    assumed = OnUnknown.assume(
+        {
+            "width": chosen(np.float64(3.0), "m"),
+            "length": chosen(np.int64(8), "m"),  # type: ignore[arg-type]
+        }
+    )
+    envelope = derive(with_numpy, rules, assumed)
+    assert envelope == derive(plain, rules, assumed)
+    assert (envelope["width"].value, envelope["length"].value) == (3.5, 32)
+    assert type(envelope["length"].value) is int
+    # A classification and a selection, thresholds and speeds from arrays.
+    limits = regulation(
+        width_1=np.float64(3.0),
+        width_2=np.float64(4.0),
+        mass_1=np.float64(20.0),
+        mass_2=np.float64(40.0),
+        speed_2=np.float64(60.0),
+        speed_3=np.float64(40.0),
+    )
+    subject = sheet("sheet-S", width=np.float64(3.5), mass=np.float32(30.0))  # type: ignore[arg-type]
+    category = classify(subject, thresholds=limits)
+    assert category == classify(sheet("sheet-S", width=3.5, mass=30.0))
+    assert select(category, values=limits) == select(category)
+    # A column, its lengths and its gap from arrays.
+    gaps = plan("pair", gap=np.float64(20.0))
+    pair = Group(
+        "pair",
+        (
+            (described("A", length=np.int64(6)), 1),
+            (described("B", length=np.float64(12.0)), 2),
+        ),
+        values=gaps,
+    )
+    length = measure(pair, spacing=[GAP])["column_length"]
+    assert length.value == 70.0
+    plain_pair = Group(
+        "pair",
+        ((described("A", length=6), 1), (described("B", length=12.0), 2)),
+        values=plan("pair", gap=20.0),
+    )
+    assert length == measure(plain_pair, spacing=[GAP])["column_length"]
+
+
+def _wide(id: str, x: float | None) -> Member:
+    """A member whose width is stated in cm, or unknown."""
+    source = Source(f"Sheet {id}")
+    sheet_ = (
+        {} if x is None else {"width": Value(x, source, Origin.STATEMENT, unit="cm")}
+    )
+    return Member(id, (ValueSet(f"sheet-{id}", "1", sheet_),))
+
+
+def _to_be_set(
+    parameter: str, rule: str, bound: float | str, **settings: object
+) -> Member:
+    """A member whose value is to be set by a trace built by hand."""
+    trace = Derivation(
+        "aggregate",
+        rule,
+        {"of": parameter, **settings},
+        (),
+        (),
+        unknown=("U",),
+        bound=bound,
+        bound_fixed_by=("A",),
+    )
+    unit = "m" if parameter == "width" else None
+    value = Value(None, Source("By hand"), Origin.DERIVED, unit=unit, derivation=trace)
+    return Member("H", (ValueSet("hand", "1", {parameter: value}),))
+
+
+def test_an_envelope_reads_the_bound_of_a_partial_envelope() -> None:
+    # A sub-group measured in cm: B 350 cm, U unknown, at least 350 cm. The
+    # maximum of it and of C, 3 m, is at least 3.5 m, bounded by the
+    # sub-group, which stays unknown.
+    inner = aggregate(
+        Group("S", ((_wide("B", 350), 1), (_wide("U", None), 1))),
+        {"width": Aggregation.max("width")},
+        parameters=[Parameter("width", unit="cm")],
+        unknown=PROPAGATE,
+        edition="1",
+    )
+    trace = inner["width"].derivation
+    assert trace is not None
+    assert trace.bound == 350
+    column = Group("G", ((Member("S", (inner.values,)), 1), (C, 1)))
+    widest = derive(column, {"width": Aggregation.max("width")})["width"]
+    trace = widest.derivation
+    assert trace is not None
+    assert (widest.value, trace.bound, trace.bound_fixed_by, trace.unknown) == (
+        None,
+        3.5,
+        ("S",),
+        ("S",),
+    )
+    # The bound of S, read in cm, is converted, and the conversion recorded.
+    assert trace.conversions == (
+        Conversion("S", "width", 350, "cm", 3.5, "m", "1/100"),
+    )
+    # A classification reads it too, and records it.
+    wide = aggregate(
+        Group("S", ((_wide("B", 450), 1), (_wide("U", None), 1))),
+        {"width": Aggregation.max("width")},
+        parameters=[Parameter("width", unit="cm")],
+        unknown=PROPAGATE,
+        edition="1",
+    )
+    category = classify(wide, characteristics=[WIDTH])["category"]
+    assert category.value == "3"
+    assert category.derivation is not None
+    assert category.derivation.conversions == (
+        Conversion(None, "width", 450, "cm", 4.5, "m", "1/100"),
+    )
+    # At most nothing: a minimum is bounded by C alone.
+    least = derive(column, {"width": Aggregation.min("width")})["width"]
+    assert least.derivation is not None
+    assert (least.derivation.bound, least.derivation.bound_fixed_by) == (3.0, ("C",))
+    # The same unit needs no conversion.
+    same = Group("G", ((_to_be_set("width", "max", 4.0), 1), (C, 1)))
+    trace = derive(same, {"width": Aggregation.max("width")})["width"].derivation
+    assert trace is not None
+    assert (trace.bound, trace.bound_fixed_by) == (4.0, ("H",))
+    # The bound of a rule that bounds nothing is not read.
+    summed = Group("G", ((_to_be_set("width", "sum", 9.0), 1), (C, 1)))
+    trace = derive(summed, {"width": Aggregation.max("width")})["width"].derivation
+    assert trace is not None
+    assert (trace.bound, trace.bound_fixed_by) == (3.0, ("C",))
+
+
+def test_a_bound_that_does_not_fit_its_derivation_is_refused() -> None:
+    labelled = Group("G", ((_to_be_set("width", "max", "C50"), 1), (C, 1)))
+    with pytest.raises(
+        TypeError,
+        match=re.escape(
+            "member 'H': 'width': the bound of a max is a number, got 'C50'"
+        ),
+    ):
+        derive(labelled, {"width": Aggregation.max("width")})
+    outside = Group(
+        "G", ((_to_be_set("load_class", "strictest", "C90", order=CLASSES), 1), (C, 1))
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "member 'H': 'load_class': the bound 'C90' is not a label of the order "
+            "of its derivation"
+        ),
+    ):
+        derive(outside, {"load_class": Aggregation.strictest("load_class", CLASSES)})
+
+
+# Agreement of values to be set, and assumptions against a bound ----------------
+
+
+def _renamed(values: ValueSet, book: str) -> ValueSet:
+    """A value set under another rulebook, its values with it."""
+    return ValueSet(
+        book,
+        values.edition,
+        {
+            k: replace(v, source=replace(v.source, rulebook=book))
+            for k, v in values.values.items()
+        },
+    )
+
+
+def _depth_without_bound() -> ValueSet:
+    """The depth of a group whose only member is unknown: an envelope to be
+    set, without a bound."""
+    nobody = Group("g", ((vehicle("z"), 1),))
+    rules = {"fording_depth": Aggregation.min("fording_depth")}
+    return aggregate(
+        nobody, rules, parameters=FORD, unknown=PROPAGATE, edition="1"
+    ).values
+
+
+def _depth_to_be_set() -> ValueSet:
+    """A depth left to be set by a plan: no envelope."""
+    unset = Value(None, Source("Planning sheet"), Origin.PROVISIONAL, unit="m")
+    return ValueSet("plan", "1", {"fording_depth": unset})
+
+
+def _strictest_load(order: tuple[str, ...]) -> ValueSet:
+    """The load class of a group of C50 and an unknown member, strictest in
+    ``order``: to be set, at least as strict as C50."""
+    group = Group("g", ((member("A", load_class="C50"), 1), (member("U"), 1)))
+    return derive(
+        group, {"load_class": Aggregation.strictest("load_class", order)}
+    ).values
+
+
+def _classified() -> ValueSet:
+    """A category to be set, at least as strict as '2', of the classes 1 to
+    3."""
+    return classify(sheet("sheet-S", width=3.5)).values
+
+
+def _strictest_category(order: tuple[str, ...]) -> ValueSet:
+    """A category to be set, at least as strict as '2', strictest in
+    ``order``."""
+    stated = ValueSet(
+        "sheet-A", "1", {"category": Value("2", Source("Sheet A"), Origin.STATEMENT)}
+    )
+    group = Group("g", ((Member("A", (stated,)), 1), (Member("U"), 1)))
+    rules = {"category": Aggregation.strictest("category", order)}
+    return aggregate(
+        group, rules, parameters=VOCABULARY, unknown=PROPAGATE, edition="1"
+    ).values
+
+
+AGREEMENTS = [
+    pytest.param(
+        _depth_without_bound, _depth_to_be_set, FORDS, False, id="envelope-vs-plain"
+    ),
+    pytest.param(
+        _depth_without_bound, _depth_without_bound, FORDS, True, id="two-envelopes"
+    ),
+    pytest.param(
+        lambda: _strictest_load(CLASSES),
+        lambda: _strictest_load((*CLASSES, "C90")),
+        LOAD_CLASSES,
+        False,
+        id="strictest-on-two-scales",
+    ),
+    pytest.param(
+        _classified,
+        lambda: _strictest_category((*CATEGORIES, "4")),
+        CATEGORY_REQS,
+        False,
+        id="classification-vs-strictest-on-a-wider-scale",
+    ),
+    pytest.param(
+        _classified,
+        lambda: _strictest_category(CATEGORIES),
+        CATEGORY_REQS,
+        True,
+        id="classification-vs-strictest-on-its-scale",
+    ),
+]
+
+
+@pytest.mark.parametrize("names", [("a-left", "b-right"), ("b-left", "a-right")])
+@pytest.mark.parametrize(("left", "right", "reqs", "agree"), AGREEMENTS)
+def test_values_to_be_set_agree_when_they_allow_the_same_values(
+    left: Callable[[], ValueSet],
+    right: Callable[[], ValueSet],
+    reqs: RequirementSet,
+    agree: bool,
+    names: tuple[str, str],
+) -> None:
+    # Two values to be set of the same precedence agree when they evaluate
+    # alike: the same interval of numbers, the same labels, or no envelope
+    # at all. Otherwise the name of a rulebook would decide which applies.
+    sets = [_renamed(left(), names[0]), _renamed(right(), names[1])]
+    if not agree:
+        with pytest.raises(ValueError, match="disagree with the same precedence"):
+            resolve_values(sets, reqs)
+        return
+    (kept,) = resolve_values(sets, reqs).values.values()
+    assert kept.source.rulebook is not None
+    assert kept.source.rulebook.startswith("a-")
+
+
+def test_a_disagreement_says_what_each_value_may_be() -> None:
+    sets = [
+        _renamed(_strictest_load(CLASSES), "a-short"),
+        _renamed(_strictest_load((*CLASSES, "C90")), "b-long"),
+    ]
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "parameter 'load_class': values [\"to be set, at least as strict as "
+            "'C50': one of ['C50', 'C70']\", \"to be set, at least as strict as "
+            "'C50': one of ['C50', 'C70', 'C90']\"] disagree"
+        ),
+    ):
+        resolve_values(sets, LOAD_CLASSES)
+    sets = [_renamed(_depth_without_bound(), "a-env"), _depth_to_be_set()]
+    with pytest.raises(
+        ValueError,
+        match=re.escape("values ['to be set by min, without a bound', None] disagree"),
+    ):
+        resolve_values(sets, FORDS)
+
+
+def test_an_assumed_value_respects_the_bound_of_an_input_to_be_set() -> None:
+    # G1 is at least 4.5 m wide, fixed by A, its member U unknown. Read as a
+    # member of G2, it may not be assumed 2.5 m wide: that would pass the
+    # arcs A fails for certain.
+    g1 = derive(
+        Group("G1", ((member("A", width=4.5), 1), (member("U"), 1))),
+        {"width": Aggregation.max("width")},
+    ).values
+    g2 = Group("G2", ((Member("G1", (g1,)), 1), (member("B", width=3.0), 1)))
+    narrow = OnUnknown.assume({"width": chosen(2.5, "m")})
+    contradicts = (
+        "is to be set, at least 4.5 m (fixed by A): the value assumed for 'width', "
+        "2.5 m, contradicts its bound"
+    )
+    with pytest.raises(
+        ValueError, match=re.escape(f"member 'G1': 'width' {contradicts}")
+    ):
+        derive(g2, {"width": Aggregation.max("width")}, narrow)
+    # A value the bound allows is assumed, as for any input.
+    broad = OnUnknown.assume({"width": chosen(500, "cm")})
+    width = derive(g2, {"width": Aggregation.max("width")}, broad)["width"]
+    assert width.derivation is not None
+    assert (width.value, width.derivation.fixed_by) == (5.0, ("G1",))
+    # The same for a classification of G1, and for a selection by its class.
+    envelope = derive(
+        Group("G1", ((member("A", width=4.5), 1), (member("U"), 1))),
+        {"width": Aggregation.max("width")},
+    )
+    with pytest.raises(ValueError, match=re.escape(f"subject: 'width' {contradicts}")):
+        classify(envelope, narrow, characteristics=[WIDTH])
+    assert classify(envelope, broad, characteristics=[WIDTH])["category"].value == "3"
+    category = classify(sheet("sheet-S", width=3.5))
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "subject: 'category' is to be set, at least as strict as '2' (fixed by "
+            "width): the value assumed for 'category', '1', contradicts its bound"
+        ),
+    ):
+        select(category, OnUnknown.assume({"category": chosen("1")}))
+    speed = select(category, OnUnknown.assume({"category": chosen("3")}))
+    assert speed["speed_cap"].value == 40.0
+    # At most a bound: the depth of the column, at most 0.5 m (truck-b).
+    column = aggregate(
+        COLUMN, ENVELOPE, parameters=FORD, unknown=PROPAGATE, edition="1"
+    )
+    group = Group("G", ((Member("column", (column.values,)), 1),))
+    rules = {"fording_depth": Aggregation.min("fording_depth")}
+    deep = OnUnknown.assume(
+        {
+            "fording_depth": Value(
+                0.6,
+                Source("Planning note"),
+                Origin.CHOICE,
+                unit="m",
+                justification="a guess",
+            )
+        }
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "member 'column': 'fording_depth' is to be set, at most 0.5 m (fixed by "
+            "truck-b): the value assumed for 'fording_depth', 0.6 m, contradicts"
+        ),
+    ):
+        aggregate(group, rules, parameters=FORD, unknown=deep, edition="1")

@@ -122,7 +122,14 @@ If every input is not applicable, the derived value is not applicable
 too (`"not applicable to any member of 'G': A (carried by B)"`), and a
 requirement that needs it is not applicable, with that reason. In
 `resolve_values`, a value not applicable and a value to be set of the
-same precedence disagree: one of them must prevail by its precedence.
+same precedence disagree: one of them must prevail by its precedence. So
+do two values to be set that may take different values, since they
+decide arcs differently: an envelope to be set, bounded or not, and a
+value to be set that is no envelope (which leaves its requirement not
+applicable); two envelopes of different bounds; two classes at least as
+strict as the same label in orders that end differently (a class at
+least '2' among 1 to 3, and among 1 to 4). The names of their rulebooks
+never settle it.
 
 ## The policy for the unknown
 
@@ -144,6 +151,15 @@ default:
   parameter has no assumed value is refused, and so is a value assumed
   for a parameter that no rule reads. A value that replaces no input is
   allowed, and not recorded: the same policy serves several variants.
+- **An assumption respects a bound.** An input to be set whose
+  derivation bounds it (a partial envelope read as a member, a partial
+  class) takes the assumed value only if the bound allows it: at least a
+  bound "at least", at most a bound "at most", a label at least as strict
+  as a label bound. Otherwise the derivation is refused, naming the
+  input, the bound, the inputs that fix it and the value assumed
+  (`member 'G1': 'width' is to be set, at least 4.5 m (fixed by A): the
+  value assumed for 'width', 2.5 m, contradicts its bound`): an
+  assumption never passes an arc that a known member fails.
 - **One policy per call.** Two parameters that need two policies take
   two calls on the same group, joined by `Derived.merge`.
 - **Counting the known members only.** `known_only` is refused for
@@ -154,10 +170,12 @@ default:
 **Refined propagation for ordered labels.** Under `propagate`, the known
 inputs sometimes decide already, whatever the unknown ones:
 
-- `strictest`, when a known value is the last label of the order: no
-  member can be stricter;
-- `classify_by_thresholds`, when a known characteristic reaches the
-  highest rank of the scale.
+- `strictest`, when a known value, or the bound of a member to be set
+  (a class at least as strict as a label), is the last label of the
+  order: no member can be stricter;
+- `classify_by_thresholds`, when a known characteristic, or the bound of
+  a characteristic to be set (the maximum of a group, at least its
+  bound), reaches the highest rank of the scale.
 
 The value is then computed, and its trace keeps the inputs without a
 value: `decided by width despite unknown values for mass`. Never for a
@@ -182,10 +200,14 @@ What they share:
   the aliases of the sheets, as in `resolve_values`: the parameters of
   the requirements and those of the rulebooks read.
 - **Exact arithmetic.** A float is read as the decimal it shows (`0.1`
-  is one tenth), an integer exactly, `inf` as a known value (no limit).
-  Every computation is exact, and its result rounded once: it depends on
-  the members and their counts, never on their order, and a value at a
-  threshold is compared exactly.
+  is one tenth), an integer exactly, `inf` as a known value (no limit). A
+  NumPy integer or float is the Python number of the same value. Every
+  computation is exact, and its result rounded once: it depends on the
+  members and their counts, never on their order, and a value at a
+  threshold is compared exactly. A converted value is a float, read as
+  the decimal it shows like any other: a value compared directly and the
+  same value read again after a derivation compare alike (see
+  [the optional extra units](#the-optional-extra-units)).
 - **The derived value.** Origin `derived`, the unit of its output
   parameter, and a precedence (keyword `precedence`, 0 by default). Its
   value set is named after the group (`aggregate`, `column_length`) or
@@ -196,7 +218,18 @@ What they share:
   label have no unit. An input in another unit is converted with the
   [extra `units`](#the-optional-extra-units), refused without it.
 - **Chains.** A classification reads derived values (an envelope), a
-  selection reads the class. `Derived.merge` joins the values of several
+  selection reads the class, an envelope may read members whose values
+  are derived. A value to be set whose derivation bounds it (see
+  [the partial envelope](#the-partial-envelope)) is read with its bound
+  where the bound says something: by an envelope of the same direction
+  (a maximum reads a member at least 3.5 m as at least 3.5 m, a
+  `strictest` a member at least as strict as a label), and by a
+  classification whose comparison goes the way of the bound (a maximum
+  under `above` and `at_least`, a minimum under `below` and `at_most`),
+  which ranks it at least as its bound; the input stays unknown and
+  counted, and a bound read in another unit is converted, the conversion
+  recorded. A selection by a class to be set gives a value to be set,
+  even when the class is bounded. `Derived.merge` joins the values of several
   derivations of the same rulebook and edition into one value set:
   `resolve_values` takes one value set per rulebook and edition.
 
@@ -249,7 +282,12 @@ stays below the threshold of 25 m, and the next float beyond it crosses.
   not applicable is refused (a threshold is a number).
 - Under `propagate`, a known characteristic at the highest rank decides;
   otherwise the class is to be set, and its trace keeps the class of the
-  known characteristics as a bound (the class is at least as strict).
+  known characteristics as a bound (the class is at least as strict). A
+  characteristic to be set with a bound on the side of its comparison
+  counts with the rank of its bound, for the bound of the class and for
+  the decision at the highest rank: the envelope of a group in which a
+  known member of 27 m crosses the last threshold of 25 m is of the
+  highest category, whatever its members without a length.
   `known_only` classifies on the known characteristics, which may
   underestimate the class: its justification says why it may.
 
@@ -266,8 +304,10 @@ in the values of a text, in the unit of the output.
   value the text does not give, and a requirement would read the arcs
   and count their unknowns for a limit without effect.
 - A class absent from the table is refused, never passed over.
-- An unknown class leaves the value to be set under `propagate`, and
-  takes the class assumed under `assume`; `known_only` is refused.
+- An unknown class leaves the value to be set under `propagate`, a
+  bounded class too (the values of the classes it may be are not
+  ordered), and takes the class assumed under `assume`; `known_only` is
+  refused.
 - A class not applicable, or a value selected not applicable, gives a
   value not applicable; a value selected to be set, a value to be set.
 - A table with two keys (a class and a kind of road) takes one call per
@@ -330,7 +370,7 @@ does not depend on the order of the members:
 | `left_out` | the members or inputs left out, with their cause (`zero_count`, `excluded`, `not_applicable`, `unknown`) and reason (`LeftOut`) |
 | `conversions` | each input converted into the unit it is read in, with the exact factor (`Conversion`) |
 | `unknown` | the inputs without a value, whatever the policy |
-| `bound`, `bound_fixed_by` | for a value to be set by an envelope or a classification, the extreme of the known inputs, and the inputs that fix it |
+| `bound`, `bound_fixed_by` | for a value to be set by an envelope or a classification, the extreme of the known inputs and of the bounds of the inputs to be set, and the inputs that fix it |
 
 The trace keeps every input, not only those that fix the value. The
 fingerprint of the inputs (`provenance`, `fingerprint`) covers them all:
@@ -375,8 +415,10 @@ Summaries, as the tests produce them:
   `max of 'width' over Z2: 2.5 m, fixed by A (Sheet sheet-A (1), p. 4); left out: B (count 0 in the table), C (excluded: sent ahead)`
 - A conversion:
   `max of 'vehicle_mass' over convoy: 40 t, fixed by A (Sheet (1), p. 4); converted: A 40000 kg to 40 t (x1/1000)`
-- A column:
-  `column_length (geometric) of pair: 70 m, fixed by A (Sheet sheet-A (1), p. 4), B (Sheet sheet-B (1), p. 4), pair`
+- A class decided by the bound of an envelope to be set:
+  `highest rank of width: '3', fixed by 'width' (at least 4.5 m above 4 m, art. 3); decided by the bound of width despite unknown values for width`
+- A column, with the source of the gap its group gives:
+  `column_length (geometric) of pair: 70 m, fixed by A (Sheet sheet-A (1), p. 4), B (Sheet sheet-B (1), p. 4), pair ('gap': Plan of pair (1), sec. 2)`
 
 ## The partial envelope
 
@@ -392,26 +434,37 @@ ones as `bound`, which says on which side the unknown value lies:
 | `classify_by_thresholds` | at least as strict as the bound, in the order of the classes |
 
 The three admissibility patterns (`threshold_admissibility`,
-`capacity_admissibility`, `class_admissibility`) read it. On each arc in
-scope:
+`capacity_admissibility`, `class_admissibility`) read it. An arc in scope
+is decided only when every value the bound allows decides it alike:
 
-- **certain failure**: an arc that fails whatever value the bound admits
-  fails (`Verdict.FAIL`, `Reason.VIOLATED`): a known member already
-  fails it;
+- **certain failure**: an arc that every such value fails fails
+  (`Verdict.FAIL`, `Reason.VIOLATED`): a known member already fails it;
+- **certain pass**: an arc that every such value passes passes
+  (`Verdict.PASS`, `Reason.SATISFIED`);
 - **unknown elsewhere**: every other arc in scope is unknown
   (`Reason.VALUE_TO_BE_SET`, or `Reason.MISSING_DATA` without data);
-- **no bound**: without any known member, every arc in scope is unknown.
+- **no bound**: without any known member, the value may be any (a
+  number from `-inf` to `inf`, any label of the order), and the same rule
+  applies.
 
-This is the Kleene conjunction of the verdicts of the members: the group
-fails an arc when one member fails it, and passes it only when every
-member does; a property the tests check.
+A bound limits the unknown value on one side only: the members without
+a value may need more than the known ones (a larger quantity, a smaller
+capacity, a stricter class). So a certain pass is rare, and never
+presumed (objective 6):
 
-**Never a certain pass.** A bound limits the unknown value on one side
-only: the members without a value may need more than the known ones (a
-larger quantity, a smaller capacity, a stricter class). An arc the
-known members pass may fail for them, so it stays unknown, never
-presumed compatible (objective 6). The rule is kept simple: even an arc
-that would pass any value, an arc without a limit, stays unknown.
+| Bound | An arc passes for certain when |
+|---|---|
+| `max`, at least the bound (`threshold_admissibility`) | its limit is infinite |
+| `strictest` or a classification, at least as strict as the bound (`class_admissibility`) | it admits the strictest label of the order |
+| `min`, at most the bound (`capacity_admissibility`) | its demand is `-inf`: in practice, never |
+
+This is the Kleene conjunction of the verdicts of the members, a member
+without a value deciding an arc only where every value it may take
+decides it alike: the group fails an arc when one member fails it, and
+passes it when every member does. The tests check it exactly, for an
+envelope, a classification, and chains of them (the class of a partial
+envelope, the strictest of partial classes) against every completion of
+the unknown values.
 
 **The policy of the search.** The unknown arcs are counted, and
 `RouteSearch` or `FlowSearch` applies its own policy to them
@@ -422,8 +475,10 @@ an arc of unknown verdict. `verify_route` and `verify_flow` give
 `not_applied` when the result uses an arc that fails for certain,
 `partial` when it uses unknown arcs, with the bound in their reason:
 `1 arcs unknown; value of 'fording_depth' to be set: no value for
-carrier-c; at most 0.5 m (truck-b)`. `check_inputs` says beforehand how
-many arcs fail at the bound.
+carrier-c; at most 0.5 m (truck-b)`, and `applied`, with the bound in
+its reason too, when every arc it uses passes for certain: `applied`
+does not mean that the value is set. `check_inputs` says beforehand how many arcs
+fail at the bound, and how many pass whatever the value.
 
 **Values to be set that stay not applicable.** A requirement whose value
 is to be set is not applicable, with its reason (for a derived value,
@@ -475,29 +530,45 @@ The extra brings pint (0.26 or later), imported on first use, never by
   of a column into its unit, a density into its inverse, a pace into the
   unit of the column per the unit of the gaps in time. Each conversion
   is recorded with its exact factor (`"1/1000"` from kg to t, `"5/18"`
-  from km/h to m/s); a converted value is a float rounded once, `inf`
-  stays `inf`, and comparisons stay exact: 72 t is in the 2nd category
-  against a threshold of 72 000 kg.
+  from km/h to m/s). A converted value is a float rounded once, `inf`
+  stays `inf`, and every comparison reads that float as the decimal it
+  shows, like any other float: 72 t is in the 2nd category against a
+  threshold of 72 000 kg, and a speed of 80 km/h against a threshold
+  "from 80 km/h", in a vocabulary in m/s, compares the same decimal
+  (that of the float of 200/9) whether it is read directly or after an
+  envelope.
 - **Refusals.** A conversion is refused, never guessed, for a unit pint
   does not know (a unit of count: write `1/km`, not `veh/km`), two units
-  of different dimensions, a unit with an offset (`degC`), a calendar
-  convention (a year or a month: pint counts 365.25 days and a twelfth
-  of it, a life-cycle profile 366 and 30.5 days; state such a duration
-  in days), a text, and a value without a unit into a parameter with
-  one, or the reverse. `resolve_values` converts nothing: every value it
+  of different dimensions, an angle and a unit that is not one (pint
+  counts both without dimension, but a grade in % is the tangent of its
+  angle, not a multiple of it), a factor that is not a rational number
+  (degrees to radians involves pi, which pint gives to 50 digits; the
+  root of a unit scaled by 1000, `km**0.5` to `m**0.5`): no truncated
+  factor is recorded as exact, while a root whose factor is rational
+  converts (`cm**0.5` to `m**0.5`, by 1/10); a unit
+  with an offset (`degC`), a calendar convention (a year or a month: pint
+  counts 365.25 days and a twelfth of it, a life-cycle profile 366 and
+  30.5 days; state such a duration in days), a text, and a value without
+  a unit into a parameter with one, or the reverse. `resolve_values` converts nothing: every value it
   reads, derived or not, must be in the unit of its parameter.
 - **Readable display.** `readable(value)` shows a value as a person
   reads it: a duration in days, hours and minutes (`"1 h 30 min"`), a
   length in km from 1 km on (`"12.4 km"`) and in m below (`"0.75 m"`),
-  `"no limit"`, `"to be set"`, `"not applicable"`.
+  any other number with six significant digits, its integer part whole
+  (`"1234567 kg"`, `"0.123457"`, scientific notation beyond 1e15 or
+  under 1e-6), `"no limit"`, `"to be set"`, `"not applicable"`; each
+  number rounded once, half up, from the decimal it shows.
   `RequirementRow.to_dict(readable=True)` adds it to each value as
   `"shown"`; the default output is the same with or without the extra.
 - **Without the extra.** A value already in the unit it is read in never
   needs pint. An input in another unit raises an `ImportError` that
   names the extra (`member 'A': 'mass' in 't', the parameter is in 'kg':
   converting needs pint, install the optional extra protee[units]`), and
-  so do `readable` and `to_dict(readable=True)`. The values never differ:
-  the extra gives a value where its absence gives an error.
+  so do `readable` and `to_dict(readable=True)` for a finite number with
+  a unit, which may be a length or a duration to convert; a label, a
+  number without a unit, `inf`, a value to be set or not applicable are
+  shown without it. The values never differ: the extra gives a value
+  where its absence gives an error.
 
 ## Example: the order of 4 May 2006
 
@@ -677,12 +748,8 @@ of one variant with the largest number of occurrences of another. In the
 tests, three packagings whose worst cases are 10, 6 and 14 give an
 envelope whose worst case is 14.
 
-**Minima do not envelope as maxima do.** For a maximum, the most
-demanding value of the variants, the largest, also admits every
-variant: it is the dimensioning value and a bound at once. For a minimum
-number of occurrences, these are two different values. The most
-demanding, the largest minimum, restricts the profiles admitted and may
-leave none (the problem becomes infeasible): it is no bound. The
-smallest minimum admits every variant: a bound, but not a dimensioning
-value. Where the variants differ in their minima, compute the worst case
-of each variant alone.
+**Minima do not envelope as maxima do.** The largest minimum number of
+occurrences of the variants is not prudent as the largest maximum is: it
+restricts the profiles admitted, and may leave none (the problem becomes
+infeasible). An envelope is only a bound there: where the variants
+differ in their minima, compute the worst case of each variant alone.

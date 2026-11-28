@@ -633,7 +633,7 @@ def _call(**changes: object) -> Callable[[], Derived]:
             ValueError,
             (
                 "characteristic 'width': thresholds must increase strictly for 'above', "
-                "got 4.0 then 3.0"
+                "got 4 m then 3 m"
             ),
         ),
         (
@@ -654,7 +654,7 @@ def _call(**changes: object) -> Callable[[], Derived]:
             ValueError,
             (
                 "characteristic 'width': thresholds must decrease strictly for 'below', "
-                "got 3.0 then 4.0"
+                "got 3 m then 4 m"
             ),
         ),
         (
