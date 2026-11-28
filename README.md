@@ -27,6 +27,12 @@ online solver, service or engine).
 > (`protee.constraints`); their API is provisional until version 1.0,
 > and the model of life-cycle profiles is being designed.
 
+Every method returns the same [result model](docs/results.md)
+(`protee.results`): a status, the certificate it calls for (a violated
+cut, an improving cycle, the nodes a search reached), the guarantee of
+the method, deterministic work counters, the version and a fingerprint
+of the inputs. Each module lists its methods with `methods()`.
+
 Typed graphs are exchanged with other projects in the node-link format
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`), and
 drawn by `protee.viz`: selection, groups, loops, contraction, colour by

@@ -31,8 +31,11 @@ The phases come in a fixed order:
 When requirements cannot hold together, :func:`minimal_conflict`,
 :func:`minimal_relaxation` and :func:`relax_by_tiers` explain the failure
 and propose relaxations, with their :class:`Impact`, on a
-:class:`RouteSearch` or a :class:`FlowSearch`. :func:`provenance` records
-how a result was produced, with :func:`fingerprint` of its inputs.
+:class:`RouteSearch` or a :class:`FlowSearch`. Their results are built on
+the common model of :mod:`protee.results` (status, guarantee, counters,
+version, fingerprint of the inputs); :func:`methods` lists their methods,
+always named by the caller. :func:`provenance` records how a result was
+produced, with :func:`fingerprint` of its inputs.
 :class:`RulebookValues` reads rulebooks and values from TOML, and loads
 the ones embedded from public texts.
 
@@ -51,8 +54,10 @@ from protee.constraints._failure import (
     Conflict,
     FlowSearch,
     Impact,
+    InfeasibleSubset,
     Relaxation,
     RouteSearch,
+    RouteSearchResult,
     Tier,
     TieredRelaxation,
     minimal_conflict,
@@ -77,6 +82,7 @@ from protee.constraints._model import (
 )
 from protee.constraints._patterns import EffectKind, Family, Pattern, Subject, patterns
 from protee.constraints._provenance import Provenance, fingerprint, provenance
+from protee.constraints._registry import methods
 from protee.constraints._table import RequirementRow, requirement_table
 from protee.constraints._toml import RulebookValues
 from protee.constraints._verify import (
@@ -98,6 +104,7 @@ __all__ = [
     "Family",
     "FlowSearch",
     "Impact",
+    "InfeasibleSubset",
     "InputCheck",
     "InputReport",
     "Origin",
@@ -114,6 +121,7 @@ __all__ = [
     "RequirementStatus",
     "ResolvedValues",
     "RouteSearch",
+    "RouteSearchResult",
     "Rulebook",
     "RulebookKind",
     "RulebookValues",
@@ -130,6 +138,7 @@ __all__ = [
     "compose",
     "evaluate",
     "fingerprint",
+    "methods",
     "minimal_conflict",
     "minimal_relaxation",
     "patterns",

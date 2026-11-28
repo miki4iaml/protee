@@ -25,7 +25,7 @@ the conventions; the docstrings give the fields of each result type.
 |---|---|---|
 | `optimal` | an optimum is proven, or a problem without objective is answered exactly | dual values when the problem has some (potentials, distances); otherwise the exactness of the method |
 | `feasible` | a feasible solution whose optimality is not proven | a bound and its gap when the method is `bounded`; otherwise the property the method guarantees |
-| `infeasible` | no solution exists | required: for a flow, a violated cut (`InfeasibleCut`); for a path, the nodes reached from the sources and the arcs leaving them, all barred (`SeparatingCut`), or two such cuts when no order visits two waypoints (`CrossedCuts`) |
+| `infeasible` | no solution exists | required: for a flow, a violated cut (`InfeasibleCut`); for a path, the nodes reached from the sources and the arcs leaving them, all barred (`SeparatingCut`), or two such cuts when no order visits two waypoints (`CrossedCuts`); for requirements that no declared tier can relax enough, the subset tested infeasible together (`InfeasibleSubset`) |
 | `unbounded` | the objective is unbounded | required: an improving cycle (`NegativeCycle`); the shortest distances of the nodes it reaches are `-inf` |
 | `limit` | a work limit was reached, measured by a counter, never by the clock | the best solution found, if any, with its bound when it is known |
 
@@ -74,6 +74,7 @@ timings. For instance:
 | `bellman_ford` | `passes` |
 | routes | `dijkstra_runs`, `settled_nodes`, `scanned_arcs`; `states` of the dynamic programming over waypoints, `candidates` of Yen |
 | flow diagnostics | `solves`, and the counters of the flow method they run |
+| conflicts, relaxations, tiers | `feasibility_tests`: the distinct sets of requirements tested |
 
 The docstring of each result type names its counters.
 

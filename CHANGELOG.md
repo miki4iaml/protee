@@ -49,7 +49,25 @@ and this project adheres to
   and `replacement_paths`; they iterate, index and measure like the
   sequences they replace.
 - `protee.constraints.verify_route` accepts a route result
-  (`WaypointRoute`, `ReliableRoute`).
+  (`WaypointRoute`, `ReliableRoute`, `RouteSearchResult`).
+- `protee.constraints.methods(problem=None)`: the methods of
+  `minimal_conflict`, `minimal_relaxation` and `relaxation_by_tiers`, each
+  with its guarantee (`enumeration` exact, minimum cardinality;
+  `deletion_filter` irreducible; `greedy` no relaxed requirement can be
+  restored), its complexity in feasibility tests and its reference.
+- `Conflict`, `Relaxation` and `TieredRelaxation` are built on
+  `ResultCore`: status `optimal` with `enumeration`, `feasible` with
+  `deletion_filter` or `greedy`; their fingerprint covers the problem, the
+  method, the identifiers in their order and the tiers (the feasibility
+  test and the cost function, callables, are not part of it).
+- `protee.results.InfeasibleSubset`: when no tier is feasible,
+  `relax_by_tiers` returns the status `infeasible` with, as certificate,
+  the requirements that no tier allows to relax, tested infeasible
+  together; `level` stays `None`.
+- `RouteSearchResult`, returned by `RouteSearch.solve`: status `optimal`
+  with the route, or `infeasible` with the `SeparatingCut` of the arcs the
+  active requirements bar; the method, guarantee and counters of the
+  shortest path method run, and the active requirements.
 
 ### Changed
 
@@ -108,6 +126,21 @@ and this project adheres to
 - The shortest path and route functions refuse a target, start, end,
   waypoint or path arc that is not in the graph (`ValueError`), where they
   used to run on or fail later with an `IndexError`.
+- `Conflict`, `Relaxation` and `TieredRelaxation` take keyword arguments
+  only; their `evaluations` becomes the counter
+  `counters["feasibility_tests"]`, and stays as a read-only property.
+- `RouteSearch.solve` returns a `RouteSearchResult` instead of
+  `Route | None`. Migration: replace `route is None` with
+  `route.status is Status.INFEASIBLE`; `arcs` and `cost` read as before.
+  `RouteSearch.methods()` returns the `MethodInfo` of its two methods
+  instead of their names.
+- `provenance()` takes the method, parameters, counters and version from a
+  result built on `ResultCore`; `method` and `parameters` become optional
+  for such a result, and the call style of 0.2 keeps working. Its `inputs`
+  now also covers the fingerprint of the result's own inputs. A `method`
+  other than the result's raises `ValueError`.
+- An unknown method of `minimal_conflict`, `minimal_relaxation` and
+  `relax_by_tiers` raises `ValueError` naming the problem and its methods.
 - `Status`, `InfeasibleCut`, `NegativeCycle` and `MethodInfo` live in
   `protee.results`; `protee.flow` and `protee.paths` still export them
   (the same objects).
