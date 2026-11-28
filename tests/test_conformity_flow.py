@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import itertools
 from collections import Counter, deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 import pytest
-from conformity import check_core, check_registry
+from conformity import check_core, check_options, check_registry
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from oracles import (
@@ -69,6 +69,18 @@ TRIANGLE = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
 EXAMPLE = FlowProblem(TRIANGLE, upper=(2, 2, 1), cost=(1, 1, 3), supply=(3, 0, -3))
 # Two arc-disjoint paths from 0 to 2, both through node 1.
 BOTTLENECK = Digraph.from_arcs(3, [(0, 1), (0, 1), (1, 2), (1, 2)])
+# The counters of each minimum cost flow method, as FlowResult documents
+# them: the same names whatever the outcome.
+COUNTERS = {
+    "network_simplex": {"pivots", "degenerate_pivots", "bound_flips"},
+    "cycle_canceling": {"cycles_canceled", "bellman_ford_runs"},
+    "successive_shortest_paths": {"augmentations", "dijkstra_runs"},
+}
+FEASIBILITY_COUNTERS = {"feasibility_augmentations", "feasibility_phases"}
+TWO_WAYS = Digraph.from_arcs(2, [(0, 1), (1, 0)])
+# One arc cannot carry the supply; a cycle of negative cost and no bound.
+INFEASIBLE = FlowProblem(Digraph.from_arcs(2, [(0, 1)]), upper=(1,), supply=(2, -2))
+UNBOUNDED = FlowProblem(TWO_WAYS, cost=(-1, 0))
 
 
 def test_registry() -> None:
@@ -99,6 +111,42 @@ def test_registry() -> None:
         methods("shortest_paths")
 
 
+def test_registry_options_are_keywords_of_their_functions() -> None:
+    # The minimum cost flow methods take their options through **options,
+    # checked by prepare against the registry.
+    functions: dict[str, Callable[..., object]] = {
+        "disjoint_paths": disjoint_paths,
+        "flow_ranges": flow_ranges,
+        "unattainable_bounds": unattainable_bounds,
+    }
+    for info in methods():
+        if info.problem in functions:
+            check_options(info, functions[info.problem])
+    assert INFOS["flow_ranges", "flow_ranges"].options == ("method", "at_optimum")
+    assert INFOS["unattainable_bounds", "unattainable_bounds"].options == ("method",)
+
+
+def test_counter_names_do_not_depend_on_the_outcome() -> None:
+    # Unbounded is found before the method runs, infeasible by the
+    # feasibility check (cycle canceling) or by the method: the counters of
+    # the method are there all the same, at zero for the work not done.
+    for method in MIN_COST:
+        for problem in (EXAMPLE, INFEASIBLE, UNBOUNDED):
+            result = solve(problem, method=method)
+            assert set(result.counters) == COUNTERS[method], (method, result.status)
+        assert dict(solve(UNBOUNDED, method=method).counters) == dict.fromkeys(
+            COUNTERS[method], 0
+        )
+        names = {"solves", *COUNTERS[method], *FEASIBILITY_COUNTERS}
+        for problem in (EXAMPLE, INFEASIBLE, UNBOUNDED):
+            for at_optimum in (False, True):
+                ranges = flow_ranges(problem, method=method, at_optimum=at_optimum)
+                assert set(ranges.counters) == names, (method, ranges.status)
+    cycle = solve(INFEASIBLE, method="cycle_canceling")
+    assert cycle.status is Status.INFEASIBLE
+    assert dict(cycle.counters) == {"cycles_canceled": 0, "bellman_ford_runs": 0}
+
+
 # Minimum cost flow
 
 
@@ -113,6 +161,7 @@ def test_every_method_conforms(
 
     result = solve(problem, method=method, **options)
     check_core(result, INFOS["min_cost_flow", method], run)
+    assert set(result.counters) == COUNTERS[method]
     if result.status is Status.OPTIMAL:
         assert result.certificate is None
     else:
@@ -159,15 +208,45 @@ def test_fingerprint_follows_the_inputs() -> None:
 
 
 def test_prepared_results_carry_the_costs_they_solved() -> None:
+    # The same fingerprint: the same question on the same inputs, so the
+    # same status and the same optimal value as a cold solve.
     p = EXAMPLE
-    prepared = prepare(p, method="network_simplex")
-    first = prepared.solve()
-    second = prepared.solve((1, 1, 0))
-    assert first.inputs == solve(p, method="network_simplex").inputs
-    assert second.inputs == (
-        solve(p.with_cost((1, 1, 0)), method="network_simplex").inputs
+    for method in MIN_COST:
+        prepared = prepare(p, method=method)
+        first = prepared.solve()
+        second = prepared.solve((1, 1, 0))
+        third = prepared.solve((1, 2, 0), "max")
+        assert first.inputs != second.inputs
+        for warm, costs in ((first, p), (second, p.with_cost((1, 1, 0)))):
+            cold = solve(costs, method=method)
+            assert warm.inputs == cold.inputs
+            assert (warm.status, warm.objective) == (cold.status, cold.objective)
+        cold = solve(p.with_cost((1, 2, 0), "max"), method=method)
+        assert third.inputs == cold.inputs
+        assert (third.status, third.objective) == (cold.status, cold.objective)
+
+
+def test_a_warm_start_may_find_another_optimum_under_the_same_fingerprint() -> None:
+    # The documented limit of the fingerprint (docs/results.md): two
+    # parallel arcs of equal cost, so two optimal flows. Solved cold, the
+    # flow takes the first arc; after another cost vector, the warm-started
+    # tree keeps the second one. The fingerprints, the statuses and the
+    # optimal values agree; the flows and the counters do not.
+    two = FlowProblem(
+        Digraph.from_arcs(2, [(0, 1), (0, 1)]),
+        upper=(1, 1),
+        cost=(1, 1),
+        supply=(1, -1),
     )
-    assert first.inputs != second.inputs
+    prepared = prepare(two, method="network_simplex")
+    first = prepared.solve()
+    prepared.solve((5, 1))
+    again = prepared.solve((1, 1))
+    assert again.inputs == first.inputs == solve(two, method="network_simplex").inputs
+    assert (again.status, again.objective) == (first.status, first.objective)
+    assert (first.flow, again.flow) == ((1, 0), (0, 1))
+    assert dict(first.counters) != dict(again.counters)
+    assert again != first
 
 
 # Maximum flow
@@ -265,11 +344,25 @@ def test_feasibility_conforms(method: str, problem: FlowProblem) -> None:
 
 def test_feasibility_fingerprint() -> None:
     dinic = check_feasibility(EXAMPLE, method="dinic")
-    assert check_feasibility(EXAMPLE).inputs == dinic.inputs
+    again = check_feasibility(
+        FlowProblem(TRIANGLE, upper=[2, 2, 1], cost=[1, 1, 3], supply=[3, 0, -3]),
+        method="dinic",
+    )
+    assert again.inputs == dinic.inputs
     assert check_feasibility(EXAMPLE, method="edmonds_karp").inputs != dinic.inputs
     tighter = FlowProblem(TRIANGLE, upper=(1, 1, 1), supply=(3, 0, -3))
-    assert check_feasibility(tighter).inputs != dinic.inputs
+    assert check_feasibility(tighter, method="dinic").inputs != dinic.inputs
     assert dinic.inputs != solve(EXAMPLE, method="network_simplex").inputs
+
+
+def test_feasibility_has_no_default_method() -> None:
+    # Objective 2 of AGENTS.md: the caller names the method.
+    with pytest.raises(TypeError, match="method"):
+        check_feasibility(EXAMPLE)  # type: ignore[call-arg]
+    # A prepared problem checks its structure with Dinic, and says so.
+    prepared = prepare(EXAMPLE, method="cycle_canceling")
+    assert prepared.feasibility().method == "dinic"
+    assert prepared.feasibility() == check_feasibility(EXAMPLE, method="dinic")
 
 
 # Disjoint paths
@@ -331,6 +424,11 @@ def test_disjoint_paths_conform(
     result = run()
     check_core(result, INFOS["disjoint_paths", method], run)
     assert dict(result.parameters) == {"disjoint": disjoint}
+    assert set(result.counters) == {
+        *COUNTERS[method],
+        "max_flow_augmentations",
+        "max_flow_phases",
+    }
     assert result.counters["max_flow_augmentations"] == result.max_paths
     if result.status is Status.OPTIMAL:
         assert result.certificate is None
@@ -393,9 +491,13 @@ def test_flow_ranges_conform(
 
     result = run()
     check_core(result, INFOS["flow_ranges", "flow_ranges"], run)
-    assert dict(result.parameters) == {
-        "flow_method": flow_method,
-        "at_optimum": at_optimum,
+    assert dict(result.parameters) == {"method": flow_method, "at_optimum": at_optimum}
+    # The parameters are the keyword arguments of the call: they replay it.
+    assert flow_ranges(problem, **result.parameters) == result  # type: ignore[arg-type]
+    assert set(result.counters) == {
+        "solves",
+        *COUNTERS[flow_method],
+        *FEASIBILITY_COUNTERS,
     }
     if result.status is not Status.OPTIMAL:
         assert (result.minimum, result.maximum) == (None, None)
@@ -439,7 +541,8 @@ def test_unattainable_bounds_conform(flow_method: str, problem: FlowProblem) -> 
 
     result = run()
     check_core(result, INFOS["unattainable_bounds", "unattainable_bounds"], run)
-    assert dict(result.parameters) == {"flow_method": flow_method}
+    assert dict(result.parameters) == {"method": flow_method}
+    assert unattainable_bounds(problem, **result.parameters) == result  # type: ignore[arg-type]
     assert result.status is result.ranges.status
     assert dict(result.counters) == dict(result.ranges.counters)
     flows = all_flows(problem)
@@ -511,7 +614,10 @@ def test_counters_of_a_diagnostic_add_up_its_solves() -> None:
     p = FlowProblem(g, lower=(0, 1), upper=(9, 3))
     for at_optimum in (False, True):
         ranges = flow_ranges(p, method="cycle_canceling", at_optimum=at_optimum)
-        expected: Counter[str] = Counter()
+        # Every counter is reported, at zero for the work not done.
+        expected: Counter[str] = Counter(
+            dict.fromkeys({*COUNTERS["cycle_canceling"], *FEASIBILITY_COUNTERS}, 0)
+        )
         if at_optimum:
             expected.update(solve(p, method="cycle_canceling").counters)
         else:

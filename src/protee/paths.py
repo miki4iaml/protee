@@ -160,14 +160,18 @@ class ShortestPaths(ResultCore):
     Attributes
     ----------
     sources : tuple of int
-        The sources, at distance 0.
+        The sources, which start at distance 0. With negative weights
+        (:func:`bellman_ford`, every node being a source when none is
+        given), a path from another source can give a source a negative
+        distance and a predecessor.
     distance : tuple of int or float
         Distance of each node: ``math.inf`` when it is unreachable, and
         ``-math.inf`` when the status is ``unbounded`` and a negative cycle
         reachable from the sources reaches the node.
     predecessor : tuple of int
-        Last arc of a shortest path to each node, ``-1`` for a source, an
-        unreachable node or a node at ``-math.inf``.
+        Last arc of a shortest path to each node; ``-1`` for a source that
+        keeps its distance 0, an unreachable node or a node at
+        ``-math.inf``.
 
     Notes
     -----
@@ -177,6 +181,11 @@ class ShortestPaths(ResultCore):
     (:func:`bellman_ford` only): the certificate is a
     :class:`NegativeCycle`; a node that no negative cycle reaches keeps
     its exact distance and shortest path.
+
+    ``counters``: ``settled_nodes`` and ``scanned_arcs`` for
+    :func:`dijkstra`, ``passes`` for :func:`bellman_ford`. ``inputs``
+    covers the graph, the weights and the sources, with the target and
+    the excluded arcs for :func:`dijkstra`.
     """
 
     sources: tuple[int, ...]
@@ -190,8 +199,8 @@ class ShortestPaths(ResultCore):
         Returns
         -------
         tuple of int or None
-            The arcs in order (empty when ``target`` is a source), or
-            ``None`` when ``target`` is unreachable.
+            The arcs in order (empty when ``target`` is a source that keeps
+            its distance 0), or ``None`` when ``target`` is unreachable.
 
         Raises
         ------
@@ -229,6 +238,10 @@ class LexicographicPaths(ResultCore):
     The status is always ``optimal``; with a target, the distances of the
     target and of the nodes settled before it are exact, the others
     provisional.
+
+    ``counters``: ``settled_nodes`` and ``scanned_arcs``. ``inputs`` covers
+    the graph, the weight vectors, the sources, the target and the
+    excluded arcs.
     """
 
     sources: tuple[int, ...]
@@ -260,21 +273,46 @@ def _source_nodes(graph: Digraph, source: int | Iterable[int]) -> tuple[int, ...
     return found
 
 
-def _check_weights(graph: Digraph, weight: Sequence[Number]) -> None:
+def _finite(x: Number, what: str) -> bool:
+    """Whether ``x`` is finite; an int beyond the float range is refused,
+    as no float sum could hold it."""
+    try:
+        return math.isfinite(x)
+    except OverflowError:
+        raise ValueError(f"{what} is beyond the float range") from None
+
+
+def _overflows() -> ValueError:
+    return ValueError(
+        "the absolute weights sum beyond the float range: "
+        "the sum along a path could overflow"
+    )
+
+
+def _check_weights(graph: Digraph, weight: Sequence[Number]) -> float:
+    """Check one finite weight per arc, and return the sum of their
+    absolute values: finite, so that no sum along a path overflows."""
     if len(weight) != graph.m:
         raise ValueError(f"expected {graph.m} weights, got {len(weight)}")
+    total = 0.0
     for a, w in enumerate(weight):
-        if not math.isfinite(w):
+        if not _finite(w, f"the weight of arc {a}"):
             raise ValueError(f"the weight of arc {a} is not finite: {w}")
+        total += abs(float(w))
+    if not math.isfinite(total):
+        raise _overflows()
+    return total
 
 
-def _check_nonnegative(graph: Digraph, weight: Sequence[Number]) -> None:
-    _check_weights(graph, weight)
+def _check_nonnegative(graph: Digraph, weight: Sequence[Number]) -> float:
+    """As :func:`_check_weights`, for non-negative weights."""
+    total = _check_weights(graph, weight)
     for a, w in enumerate(weight):
         if w < 0:
             raise ValueError(
                 f"the weight of arc {a} is negative ({w}): use bellman_ford"
             )
+    return total
 
 
 def _skip(graph: Digraph, excluded: Collection[int]) -> list[bool]:
@@ -292,13 +330,20 @@ def _vectors(graph: Digraph, weight: Sequence[Sequence[Number]]) -> tuple[Vector
         raise ValueError(f"expected {graph.m} weight vectors, got {len(weight)}")
     vectors = tuple(tuple(w) for w in weight)
     size = len(vectors[0]) if vectors else 1
+    totals = [0.0] * size
     for a, w in enumerate(vectors):
         if len(w) != size or size == 0:
             raise ValueError(
                 f"the weight of arc {a} has {len(w)} components, not {size}"
             )
-        if not all(math.isfinite(x) and x >= 0 for x in w):
+        what = f"a component of the weight of arc {a}"
+        if not all(_finite(x, what) and x >= 0 for x in w):
             raise ValueError(f"the weight of arc {a} is negative or not finite: {w}")
+        for i, x in enumerate(w):
+            totals[i] += float(x)
+    for total in totals:
+        if not math.isfinite(total):
+            raise _overflows()
     return vectors
 
 
@@ -552,8 +597,10 @@ def dijkstra(
     Raises
     ------
     ValueError
-        If a weight is negative or not finite, or a source, the target or
-        an excluded arc does not exist.
+        If a weight is negative or not finite (an int beyond the float
+        range included), the absolute weights sum beyond the float range
+        (a sum along a path could overflow), or a source, the target or an
+        excluded arc does not exist.
 
     Notes
     -----
@@ -613,7 +660,10 @@ def lexicographic_dijkstra(
     ------
     ValueError
         If a vector has another length, a component is negative or not
-        finite, or a source, the target or an excluded arc does not exist.
+        finite (an int beyond the float range included), the components of
+        one rank sum beyond the float range (a sum along a path could
+        overflow), or a source, the target or an excluded arc does not
+        exist.
 
     Notes
     -----
@@ -660,8 +710,9 @@ def bellman_ford(
         if a virtual source reached each of them: any negative cycle of the
         graph is then found.
     tolerance : float, optional
-        A distance improves only by more than ``tolerance``; for float
-        weights, it keeps rounding errors from showing a false cycle.
+        Finite and non-negative. A distance improves only by more than
+        ``tolerance``; for float weights, it keeps rounding errors from
+        showing a false cycle.
 
     Returns
     -------
@@ -677,14 +728,30 @@ def bellman_ford(
     Raises
     ------
     ValueError
-        If a weight is not finite, or a source does not exist.
+        If a weight is not finite (an int beyond the float range
+        included), the absolute weights sum beyond the float range, ``n``
+        times ``m`` times the largest absolute weight is beyond it (on the
+        way to a negative cycle, a distance is the sum of a walk of up to
+        ``n m`` arcs, which could overflow), the tolerance is negative or
+        not finite, or a source does not exist.
 
     Notes
     -----
     Complexity :math:`O(nm)`.
     """
     _check_weights(graph, weight)
+    largest = max((abs(float(w)) for w in weight), default=0.0)
+    if not math.isfinite(graph.n * graph.m * largest):
+        raise ValueError(
+            f"the weights are too large for bellman_ford: {graph.n} nodes times "
+            f"{graph.m} arcs times the largest absolute weight {largest} is "
+            "beyond the float range"
+        )
     tolerance = float(tolerance)
+    if not (math.isfinite(tolerance) and tolerance >= 0):
+        raise ValueError(
+            f"the tolerance must be finite and non-negative, got {tolerance}"
+        )
     if source is None:
         sources = tuple(range(graph.n))
         run = _bellman_ford(graph, weight, None, tolerance)

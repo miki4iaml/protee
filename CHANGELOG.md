@@ -18,7 +18,15 @@ and this project adheres to
   certificate it calls for, the guarantee of the method, a bound and its
   gap, the parameters, the counters, the version and the fingerprint of
   the inputs (`inputs`); `Guarantee` and `MethodInfo` describe the methods
-  of a registry. Conventions in [docs/results.md](docs/results.md).
+  of a registry. A result is a value: it compares, hashes, pickles (a
+  worker process can return it, its fingerprint kept) and copies; its
+  `parameters` and `counters` are immutable mappings. A method reports the
+  same counters whatever the outcome, at zero for the work it did not do.
+  Equal fingerprints mean the same question on the same inputs (same
+  status and, for an exact method, the same optimal value), not always the
+  same solution: a warm-started problem may return another optimum, and
+  the callables of conflicts and relaxations are not fingerprinted.
+  Conventions in [docs/results.md](docs/results.md).
 - `FlowResult` is built on `ResultCore`: it gains `guarantee`,
   `parameters` (the effective options, defaults included) and `inputs`.
   `MethodInfo` gains `problem` and `guarantee`.
@@ -63,7 +71,8 @@ and this project adheres to
 - `protee.results.InfeasibleSubset`: when no tier is feasible,
   `relax_by_tiers` returns the status `infeasible` with, as certificate,
   the requirements that no tier allows to relax, tested infeasible
-  together; `level` stays `None`.
+  together; `level` stays `None`. `FlowSearch.solve` gives it too (see
+  Changed).
 - `RouteSearchResult`, returned by `RouteSearch.solve`: status `optimal`
   with the route, or `infeasible` with the `SeparatingCut` of the arcs the
   active requirements bar; the method, guarantee and counters of the
@@ -83,21 +92,36 @@ and this project adheres to
 - The diagnostics are named after themselves: `FlowRanges.method` is
   `"flow_ranges"` (`"unattainable_bounds"`, `"optimum_uniqueness"` for the
   others), and the minimum cost flow method they run is the parameter
-  `flow_method`: read `result.parameters["flow_method"]` instead of
-  `result.method`.
+  `method`, the keyword argument of the call (which
+  `flow_ranges(problem, **result.parameters)` replays): read
+  `result.parameters["method"]` instead of `result.method`. The registry
+  lists `method` (and `at_optimum`) as their options.
 - Counters: `DisjointPaths` adds `max_flow_augmentations` and
-  `max_flow_phases`; `FlowRanges` adds `solves` and, over the feasible
-  flows, `feasibility_augmentations` and `feasibility_phases`;
-  `UnattainableBounds` (those of its ranges) and `Uniqueness`
-  (`residual_edges`, `components`) gain counters.
+  `max_flow_phases`; `FlowRanges` adds `solves`, `feasibility_augmentations`
+  and `feasibility_phases` (zero at the optimum); `UnattainableBounds`
+  (those of its ranges) and `Uniqueness` (`residual_edges`, `components`)
+  gain counters. A minimum cost flow found unbounded, or infeasible before
+  its method runs, reports the counters of the method at zero instead of
+  none.
+- `check_feasibility` takes its `method` without default (objective 2 of
+  AGENTS.md). Migration: `check_feasibility(p)` becomes
+  `check_feasibility(p, method="dinic")`. `Prepared.feasibility()` keeps
+  its signature and runs Dinic.
+- `FlowSearch.solve` returns a `FlowResult` instead of `None` when the
+  bounds of the active requirements conflict on an arc: status
+  `infeasible`, the counters of the method at zero, and as certificate an
+  `InfeasibleSubset` of the active requirements that bound or bar those
+  arcs, which conflict on their own. Migration: replace `result is None`
+  with `result.status is Status.INFEASIBLE`. `problem_for` still returns
+  `None` in that case.
 - `disjoint_paths`, `flow_ranges` and `unattainable_bounds` refuse an
   unknown flow method before any computation.
 - The fingerprint of the inputs of a result also covers its type: a method
   name may serve several problems.
-- A sequence of floats only, or of 64-bit integers only, is fingerprinted
-  by its bytes in little-endian order: the first fingerprint of a Dijkstra
-  on 577 019 arcs costs about 13 % of the computation, instead of more than
-  the computation itself.
+- A sequence of floats only (NumPy's `float64` included), or of 64-bit
+  integers only, is fingerprinted by its bytes in little-endian order: the
+  first fingerprint of a Dijkstra on 577 019 arcs costs about 13 % of the
+  computation, instead of more than the computation itself.
 - `bellman_ford` always returns `ShortestPaths`: when a negative cycle is
   reachable from the sources, the status is `unbounded`, the certificate is
   the cycle, the nodes that negative cycles reach are at `-inf` and the
@@ -147,6 +171,39 @@ and this project adheres to
 - `protee.constraints.fingerprint` hashes a graph by the fingerprint of
   its structure, computed once per graph: fingerprints differ from those of
   0.2.0.
+
+### Fixed
+
+- The shortest path and route functions refuse, with a `ValueError`,
+  weights whose absolute sum is beyond the float range, so that no sum
+  along a path overflows; `waypoint_route` also refuses them when `k + 1`
+  times that sum is beyond it, and `bellman_ford` when `n m` times the
+  largest absolute weight is (the walks it sums on the way to a negative
+  cycle). Such sums used to overflow to `inf`: a reachable node was
+  reported out of reach, with a false `SeparatingCut`, free-order
+  waypoints raised `StopIteration`, and `bellman_ford` could return
+  `optimal` with a negative cycle.
+- An int weight or cost beyond the float range raises a `ValueError`
+  instead of an `OverflowError` (shortest paths, routes, `FlowProblem`);
+  `FlowProblem` also refuses costs whose absolute sum is beyond the float
+  range.
+- `bellman_ford` refuses a negative or non-finite `tolerance`, which gave
+  a false negative cycle (an arc `-1`, of weight zero) or lost reachable
+  nodes.
+- The fingerprint of a NumPy `float64` no longer depends on NumPy's print
+  options, and NumPy weights fingerprint like the list of the same
+  floats; fractions and decimals have exact forms; `numpy.longdouble`
+  raises a `TypeError` instead of a `RecursionError`, and every input
+  without a canonical form (a `bytes` key of `replacement_paths`, for
+  instance) gets a `TypeError` that names its type.
+- Docstrings: the tie rules of `k_shortest_paths` and of `waypoint_route`
+  in free order are stated as implemented (the order of the routes does
+  not change); `ShortestPaths` says that with `bellman_ford` a source can
+  get a negative distance and a predecessor.
+- The registry complexities of successive shortest paths (minimum cost
+  flow and disjoint paths) and of Yen's k shortest paths state the bounds
+  of the binary heap the implementation uses, `O((n + m) log n)` per
+  Dijkstra run, instead of those of a Fibonacci heap.
 
 ## [0.2.0] - 2026-11-28
 

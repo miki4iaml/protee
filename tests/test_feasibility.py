@@ -86,7 +86,7 @@ def test_feasibility_matches_enumeration(problem: FlowProblem) -> None:
 def test_infeasibility_certificates_are_violated_inequalities(
     problem: FlowProblem,
 ) -> None:
-    found = check_feasibility(problem)
+    found = check_feasibility(problem, method="dinic")
     if found.cut is not None:
         recomputed = cut_of(problem, found.cut.nodes)
         assert recomputed == found.cut
@@ -97,7 +97,7 @@ def test_hoffman_circulation() -> None:
     # A cycle whose lower bound on one arc exceeds the upper bound on another.
     g = Digraph.from_arcs(2, [(0, 1), (1, 0)])
     p = FlowProblem(g, lower=(3, 0), upper=(5, 2))
-    found = check_feasibility(p)
+    found = check_feasibility(p, method="edmonds_karp")
     assert not found.feasible
     assert found.cut is not None
     assert found.cut.excess == 1

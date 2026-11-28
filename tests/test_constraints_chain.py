@@ -6,9 +6,11 @@ declared objective and provenance."""
 
 from __future__ import annotations
 
+import copy
 import enum
 import json
 import math
+import pickle
 import random
 import re
 from collections.abc import Mapping
@@ -515,6 +517,10 @@ def test_provenance_of_a_result_on_the_common_model() -> None:
     again = record(minimal_conflict(ids, feasible, method="deletion_filter"))
     assert p == again
     assert p.replays(again)
+    # A provenance is a value, as a result is: it pickles, copies, hashes.
+    assert pickle.loads(pickle.dumps(p)) == p == copy.deepcopy(p)
+    assert hash(p) == hash(again)
+    assert {p, again} == {p}
     exact = record(minimal_conflict(ids, feasible, method="enumeration"))
     assert not p.replays(exact)
     assert set(p.differences(exact)) == {"method", "inputs", "result"}

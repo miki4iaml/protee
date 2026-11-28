@@ -679,6 +679,15 @@ def flow_search(
 def test_overconstrained_profile_gives_its_conflict() -> None:
     s = flow_search(OC_ALL, OC_L03, MIN_L03, RETURN)
     assert s.problem_for() is None
+    # No problem can be built, yet the answer carries its status and its
+    # certificate: the requirements that bound L03 (OC-ALL bounds every arc).
+    conflict = s.solve()
+    assert conflict.status is Status.INFEASIBLE
+    assert conflict.certificate == InfeasibleSubset(("OC-ALL", "OC-L03", "MIN-L03"))
+    assert (conflict.method, dict(conflict.parameters)) == (
+        "network_simplex",
+        {"pivot_rule": "block_search"},
+    )
     assert not s.feasible(s.ids)
     for method in ("enumeration", "deletion_filter"):
         assert minimal_conflict(s.ids, s.feasible, method=method).requirements == (

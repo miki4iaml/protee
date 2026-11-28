@@ -350,3 +350,63 @@ def test_most_reliable_path_checks_its_input() -> None:
         "settled_nodes": 2,
         "scanned_arcs": 1,
     }
+
+
+def test_k_shortest_paths_tie_rule() -> None:
+    # Pinned: a known client relies on this order. The first route is the
+    # path of the Dijkstra tree, even when a path of equal cost has fewer
+    # arcs.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 2), (2, 3), (0, 4), (4, 3)])
+    w = [0, 0, 2, 1, 1]
+    found = k_shortest_paths(g, w, 0, 3, 2)
+    assert [(r.arcs, r.cost) for r in found] == [((0, 1, 2), 2), ((3, 4), 2)]
+    assert [r.arcs for r in k_shortest_paths(g, w, 0, 3, 1)] == [(0, 1, 2)]
+    # Each next route is the least candidate found so far by cost, then
+    # number of arcs: the deviation at node 1 (two arcs) comes before the
+    # one at node 0 (three arcs), found first.
+    h = Digraph.from_arcs(5, [(0, 1), (1, 4), (0, 2), (2, 3), (3, 4), (1, 4)])
+    found = k_shortest_paths(h, [1, 1, 1, 1, 1, 2], 0, 4, 3)
+    assert [(r.arcs, r.cost) for r in found] == [
+        ((0, 1), 2),
+        ((0, 5), 3),
+        ((2, 3, 4), 3),
+    ]
+
+
+def test_waypoint_route_tie_rule() -> None:
+    # Pinned: among orders of equal cost, the last waypoint visited has the
+    # lowest index possible, then the one before it, and so on.
+    complete = Digraph.from_arcs(3, [(0, 1), (1, 0), (0, 2), (2, 0), (1, 2), (2, 1)])
+    zero = [0] * complete.m
+    assert waypoint_route(complete, zero, 0, 0, [1, 2], order="free").order == (1, 0)
+    every = waypoint_route(complete, zero, 0, 0, [1, 2, 1], order="free")
+    assert every.order == (2, 1, 0)
+    # Waypoint 0 (node 1) costs more as the last one: waypoint 1 is last.
+    arcs = [(u, v) for u in range(4) for v in range(4) if u != v]
+    four = Digraph.from_arcs(4, arcs)
+    unit = [1] * four.m
+    assert waypoint_route(four, unit, 0, 0, [1, 2, 3], order="free").order == (2, 1, 0)
+    late = [5 if arc == (1, 0) else 1 for arc in arcs]
+    assert waypoint_route(four, late, 0, 0, [1, 2, 3], order="free").order == (2, 0, 1)
+
+
+def test_route_weights_that_could_overflow_are_refused() -> None:
+    # Before, the sum overflowed to inf: a reachable target was reported
+    # out of reach with a false cut, or the free order crashed.
+    line = Digraph.from_arcs(3, [(0, 1), (1, 2)])
+    for run in (
+        lambda w: k_shortest_paths(line, w, 0, 2, 1),
+        lambda w: replacement_paths(line, w, 0, 2, (0, 1)),
+        lambda w: waypoint_route(line, w, 0, 2, [], order="fixed"),
+    ):
+        with pytest.raises(ValueError, match="beyond the float range"):
+            run([1e308, 1e308])
+        with pytest.raises(ValueError, match="arc 0 is beyond the float range"):
+            run([10**400, 1])
+    # A route of k + 1 legs, each a path: k + 1 times the total must fit.
+    cycle = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
+    with pytest.raises(ValueError, match="3 legs times the sum"):
+        waypoint_route(cycle, [6e307, 0.0, 6e307], 0, 0, [1, 2], order="free")
+    fits = waypoint_route(cycle, [2e307, 0.0, 2e307], 0, 0, [1, 2], order="free")
+    assert fits.status is Status.OPTIMAL
+    assert fits.cost == 4e307

@@ -12,11 +12,12 @@
 
 Each diagnostic returns a result built on the common result model of
 :mod:`protee.results`. A diagnostic is a method of its own, listed by
-``protee.flow.methods`` under its name: ``method`` is the name of the
-diagnostic, and the minimum cost flow method it runs, the ``method``
-argument, is the parameter ``flow_method``. The counters add up the
-work of every inner solve, under the names of the flow method, and count
-the solves.
+``protee.flow.methods`` under its name: the field ``method`` of its result
+is the name of the diagnostic, and the minimum cost flow method it runs,
+the ``method`` argument, is the parameter ``method``, so that
+``flow_ranges(problem, **result.parameters)`` replays the call. The
+counters add up the work of every inner solve, under the names of the
+flow method, and count the solves.
 
 Provisional API (until version 1.0).
 """
@@ -28,7 +29,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from protee.flow._feasibility import _feasible_flow
-from protee.flow._methods import prepare, solve
+from protee.flow._methods import _zero_counters, prepare, solve
 from protee.flow._normal import signed_costs, tolerance_for
 from protee.flow._problem import FlowProblem
 from protee.flow._registry import (
@@ -78,8 +79,9 @@ class FlowRanges(ResultCore):
     is ``optimal`` when the ranges were computed; otherwise that of the
     problem, with its certificate: ``infeasible`` with a violated cut, or,
     for ranges at the optimum, ``unbounded`` with an improving cycle.
-    ``method`` is ``"flow_ranges"``; ``parameters`` hold ``flow_method``
-    and ``at_optimum``.
+    ``method`` is ``"flow_ranges"``; ``parameters`` hold the keyword
+    arguments of the call: ``method`` (the minimum cost flow method) and
+    ``at_optimum``.
 
     Attributes
     ----------
@@ -91,10 +93,15 @@ class FlowRanges(ResultCore):
 
     Notes
     -----
-    ``counters``: ``solves``, the number of minimum cost flow solves (two
-    per arc, one more at the optimum), and the counters of the flow method
-    summed over them; over the feasible flows, ``feasibility_augmentations``
-    and ``feasibility_phases`` of the feasibility check (Dinic).
+    ``counters``, the same names whatever the outcome: ``solves``, the
+    number of minimum cost flow solves (two per arc, one more at the
+    optimum); the counters of the flow method summed over them (see
+    :class:`~protee.flow.FlowResult`: ``pivots``, ``degenerate_pivots``
+    and ``bound_flips``, or ``cycles_canceled`` and ``bellman_ford_runs``,
+    or ``augmentations`` and ``dijkstra_runs``); and
+    ``feasibility_augmentations`` and ``feasibility_phases`` of the
+    feasibility check (Dinic) that comes first over the feasible flows,
+    zero at the optimum. ``inputs`` covers the problem.
     """
 
     minimum: tuple[int, ...] | None = None
@@ -131,7 +138,7 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
     method : str
         A minimum cost flow method, from
         ``protee.flow.methods("min_cost_flow")``; the result records it as
-        the parameter ``flow_method``.
+        the parameter ``method``.
     at_optimum : bool
         ``False``: over all feasible flows (the maximum is then the
         greatest number of occurrences an arc can reach).
@@ -147,7 +154,12 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
         If the method is unknown.
     """
     min_cost_flow_method(method)
-    counters: dict[str, int] = {"solves": 0}
+    counters: dict[str, int] = {
+        "solves": 0,
+        **_zero_counters(method),
+        "feasibility_augmentations": 0,
+        "feasibility_phases": 0,
+    }
 
     def add(result: FlowResult) -> None:
         counters["solves"] += 1
@@ -164,7 +176,7 @@ def flow_ranges(problem: FlowProblem, *, method: str, at_optimum: bool) -> FlowR
             status=status,
             method=FLOW_RANGES.name,
             guarantee=FLOW_RANGES.guarantee,
-            parameters={"flow_method": method, "at_optimum": at_optimum},
+            parameters={"method": method, "at_optimum": at_optimum},
             counters=counters,
             certificate=certificate,
             minimum=minimum,
@@ -207,8 +219,9 @@ class UnattainableBounds(ResultCore):
 
     On top of the fields of :class:`~protee.results.ResultCore`: the status
     is ``optimal`` when computed, ``infeasible`` otherwise, with a violated
-    cut; ``method`` is ``"unattainable_bounds"``; ``parameters`` hold
-    ``flow_method``; ``counters`` are those of ``ranges``.
+    cut; ``method`` is ``"unattainable_bounds"``; ``parameters`` hold the
+    keyword argument of the call, ``method`` (the minimum cost flow
+    method).
 
     Attributes
     ----------
@@ -218,6 +231,15 @@ class UnattainableBounds(ResultCore):
         Arcs whose lower bound no feasible flow reaches.
     ranges : FlowRanges
         The ranges over the feasible flows.
+
+    Notes
+    -----
+    ``counters`` are those of ``ranges`` (see :class:`FlowRanges`):
+    ``solves``, the counters of the flow method (``pivots``,
+    ``degenerate_pivots`` and ``bound_flips``, or ``cycles_canceled`` and
+    ``bellman_ford_runs``, or ``augmentations`` and ``dijkstra_runs``),
+    ``feasibility_augmentations`` and ``feasibility_phases``. ``inputs``
+    covers the problem.
     """
 
     upper: tuple[int, ...] = ()
@@ -238,7 +260,7 @@ def unattainable_bounds(problem: FlowProblem, *, method: str) -> UnattainableBou
     method : str
         A minimum cost flow method, from
         ``protee.flow.methods("min_cost_flow")``; the result records it as
-        the parameter ``flow_method``.
+        the parameter ``method``.
 
     Returns
     -------
@@ -271,7 +293,7 @@ def unattainable_bounds(problem: FlowProblem, *, method: str) -> UnattainableBou
         status=ranges.status,
         method=UNATTAINABLE_BOUNDS.name,
         guarantee=UNATTAINABLE_BOUNDS.guarantee,
-        parameters={"flow_method": method},
+        parameters={"method": method},
         counters=ranges.counters,
         certificate=ranges.certificate,
         upper=upper,
@@ -301,6 +323,8 @@ class Uniqueness(ResultCore):
     -----
     ``counters``: ``residual_edges``, the residual directions of zero
     reduced cost, and ``components``, their strongly connected components.
+    ``inputs`` covers the problem, and the flow and potentials of the
+    result tested.
     """
 
     direction: tuple[tuple[int, int], ...] | None = None

@@ -33,7 +33,7 @@ class Feasibility(ResultCore):
     Notes
     -----
     ``counters``: ``augmentations`` and ``phases`` of the maximum flow (see
-    :class:`~protee.flow.MaxFlowResult`).
+    :class:`~protee.flow.MaxFlowResult`). ``inputs`` covers the problem.
     """
 
     flow: tuple[int, ...] | None = None
@@ -103,9 +103,7 @@ def _feasible_flow(
     return None, cut_of(problem, nodes), counters
 
 
-def check_feasibility(
-    problem: FlowProblem, *, method: MaxFlowMethod = "dinic"
-) -> Feasibility:
+def check_feasibility(problem: FlowProblem, *, method: MaxFlowMethod) -> Feasibility:
     """Find a feasible flow, or prove that none exists.
 
     The lower bounds are removed (``x = lower + y``) and the supplies are
@@ -118,9 +116,9 @@ def check_feasibility(
     Parameters
     ----------
     problem : FlowProblem
-    method : {"dinic", "edmonds_karp"}, optional
-        Maximum flow method (see ``protee.flow.methods("feasibility")``),
-        Dinic by default (a support computation of the other methods).
+    method : {"dinic", "edmonds_karp"}
+        Maximum flow method (see ``protee.flow.methods("feasibility")``);
+        there is no default: the choice of the method stays the caller's.
 
     Returns
     -------

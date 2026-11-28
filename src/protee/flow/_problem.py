@@ -20,8 +20,17 @@ def _is_int(x: object) -> bool:
     return isinstance(x, int) and not isinstance(x, bool)
 
 
-def _is_number(x: object) -> bool:
-    return isinstance(x, int | float) and not isinstance(x, bool) and math.isfinite(x)
+def _magnitude(i: int, x: object) -> float:
+    """``abs(x)`` as a float, for a cost: a finite int or float."""
+    if not isinstance(x, int | float) or isinstance(x, bool):
+        raise TypeError(f"cost[{i}] must be a finite number, got {x!r}")
+    try:
+        size = abs(float(x))
+    except OverflowError:
+        raise ValueError(f"cost[{i}] is an int beyond the float range") from None
+    if not math.isfinite(size):
+        raise TypeError(f"cost[{i}] must be a finite number, got {x!r}")
+    return size
 
 
 def _integers(name: str, values: Sequence[int], size: int) -> tuple[int, ...]:
@@ -52,9 +61,12 @@ def _uppers(values: Sequence[int | float | None], size: int) -> tuple[int | None
 def _costs(values: Sequence[Number], size: int) -> tuple[Number, ...]:
     if len(values) != size:
         raise ValueError(f"cost: expected {size} values, got {len(values)}")
-    for i, x in enumerate(values):
-        if not _is_number(x):
-            raise TypeError(f"cost[{i}] must be a finite number, got {x!r}")
+    total = sum(_magnitude(i, x) for i, x in enumerate(values))
+    if not math.isfinite(total):
+        raise ValueError(
+            "the absolute costs sum beyond the float range: "
+            "the cost of a path or a cycle could overflow"
+        )
     return tuple(values)
 
 
@@ -88,8 +100,10 @@ class FlowProblem:
     Raises
     ------
     ValueError
-        If a size is wrong, a lower bound exceeds its upper bound, or the
-        supplies do not sum to zero.
+        If a size is wrong, a lower bound exceeds its upper bound, the
+        supplies do not sum to zero, a cost is an int beyond the float
+        range, or the absolute costs sum beyond the float range (the cost
+        of a path or a cycle could overflow).
     TypeError
         If a bound or a supply is not an integer, or a cost not a finite
         number.

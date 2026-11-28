@@ -177,7 +177,8 @@ class MaxFlowResult(ResultCore):
     Notes
     -----
     ``counters``: ``augmentations`` (augmenting paths) and ``phases``
-    (level graphs of Dinic, zero for Edmonds-Karp).
+    (level graphs of Dinic, zero for Edmonds-Karp). ``inputs`` covers the
+    graph, the capacities, the source and the target.
     """
 
     value: int

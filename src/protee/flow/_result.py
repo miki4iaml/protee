@@ -39,7 +39,21 @@ class FlowResult(ResultCore):
     -----
     ``certificate`` is a violated cut (:class:`InfeasibleCut`) when the
     problem is infeasible, a cycle of improving cost and unbounded capacity
-    (:class:`~protee.results.NegativeCycle`) when it is unbounded.
+    (:class:`~protee.results.NegativeCycle`) when it is unbounded. A
+    :class:`~protee.constraints.FlowSearch` whose active requirements give
+    an arc a lower bound above its upper bound builds no problem: its
+    result is infeasible, with the requirements that bound or bar those
+    arcs (:class:`~protee.results.InfeasibleSubset`).
+
+    ``counters``, the same names whatever the outcome (zero for the work
+    a method did not do): ``pivots``, ``degenerate_pivots`` and
+    ``bound_flips`` for ``network_simplex``; ``cycles_canceled`` and
+    ``bellman_ford_runs`` for ``cycle_canceling``; ``augmentations`` and
+    ``dijkstra_runs`` for ``successive_shortest_paths``.
+
+    ``inputs`` covers the problem (graph, bounds, costs, supplies and
+    sense); for a :class:`~protee.constraints.FlowSearch` whose bounds
+    conflict, the base problem and the bounds the requirements give.
     """
 
     objective: Number | None = None

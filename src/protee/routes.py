@@ -112,7 +112,8 @@ _METHODS: Mapping[str, MethodInfo] = MappingProxyType(
                 "the k shortest loopless paths by increasing cost, all of them "
                 "when fewer exist",
             ),
-            complexity="O(k n (m + n log n))",
+            complexity="O(k n (n + m) log n): at most k n Dijkstra runs with a "
+            "binary heap",
             reference="Yen (1971)",
             options=("k",),
         ),
@@ -222,6 +223,11 @@ class WaypointRoute(ResultCore):
     ``infeasible``: the certificate is a :class:`SeparatingCut` (a leg
     whose end is out of reach), or :class:`CrossedCuts` in free order (two
     waypoints, neither reaching the other).
+
+    ``counters``: ``dijkstra_runs``, ``settled_nodes`` and ``scanned_arcs``
+    (summed over the runs), and ``states`` of the dynamic programming over
+    the waypoints (0 without it). ``inputs`` covers the graph, the weights,
+    the start, the end, the waypoints and the excluded arcs.
     """
 
     order: tuple[int, ...] | None = None
@@ -261,6 +267,10 @@ class ReliableRoute(ResultCore):
     -----
     ``infeasible``: the certificate is a :class:`SeparatingCut`, whose
     arcs are excluded or of zero reliability.
+
+    ``counters``: ``dijkstra_runs``, ``settled_nodes`` and
+    ``scanned_arcs``. ``inputs`` covers the graph, the reliabilities, the
+    source, the target and the excluded arcs.
     """
 
     arcs: tuple[int, ...] | None = None
@@ -277,9 +287,16 @@ class KShortestPaths(ResultCore):
     Attributes
     ----------
     routes : tuple of Route
-        At most ``k`` distinct paths, by increasing cost; fewer when fewer
-        exist (the status stays ``optimal``), none when the target is out
-        of reach (``infeasible``, with a :class:`SeparatingCut`).
+        At most ``k`` distinct paths, by non-decreasing cost (ties as
+        :func:`k_shortest_paths` states); fewer when fewer exist (the status
+        stays ``optimal``), none when the target is out of reach
+        (``infeasible``, with a :class:`SeparatingCut`).
+
+    Notes
+    -----
+    ``counters``: ``dijkstra_runs``, ``settled_nodes``, ``scanned_arcs``
+    and ``candidates`` (distinct candidate paths). ``inputs`` covers the
+    graph, the weights, the source, the target and the excluded arcs.
     """
 
     routes: tuple[Route, ...] = ()
@@ -313,6 +330,13 @@ class ReplacementPaths(ResultCore):
         One per distinct arc of the path, in path order; the route of a
         replacement is ``None`` when the removal disconnects the target.
         The status is ``optimal``: each replacement is exact.
+
+    Notes
+    -----
+    ``counters``: ``dijkstra_runs``, ``settled_nodes`` and
+    ``scanned_arcs``. ``inputs`` covers the graph, the weights, the
+    source, the target, the arcs of the path, the keys and the excluded
+    arcs.
     """
 
     replacements: tuple[Replacement, ...] = ()
@@ -492,21 +516,32 @@ def waypoint_route(
     ValueError
         If ``order`` is unknown, more than ``MAX_FREE_WAYPOINTS``
         waypoints are given in free order, a weight is negative or not
-        finite, or a terminal or an excluded arc does not exist.
+        finite (an int beyond the float range included), ``k + 1`` times
+        the sum of the absolute weights is beyond the float range (the
+        cost of a route of ``k + 1`` legs could overflow), or a terminal
+        or an excluded arc does not exist.
 
     Notes
     -----
     One Dijkstra run from the start and from each distinct waypoint; the
     free order then costs :math:`O(2^k k^2)`. A route may pass through a
     node or an arc several times: the legs are independent shortest
-    paths. Ties are broken towards the lowest waypoint indices.
+    paths. In free order, ties between orders of equal cost are broken
+    from the end of the order: the last waypoint visited has the lowest
+    index possible, then the one before it, and so on. When every order
+    costs the same, the order is therefore the reverse of the given one.
     """
     if order not in ("free", "fixed"):
         raise ValueError(f"unknown order {order!r}: use 'free' or 'fixed'")
     k = len(waypoints)
     if order == "free" and k > MAX_FREE_WAYPOINTS:
         raise ValueError(f"{k} waypoints in free order: at most {MAX_FREE_WAYPOINTS}")
-    _check_nonnegative(graph, weight)
+    total = _check_nonnegative(graph, weight)
+    if not math.isfinite((k + 1) * total):
+        raise ValueError(
+            f"{k + 1} legs times the sum of the absolute weights is beyond the "
+            "float range: the cost of a route could overflow"
+        )
     stops = tuple(waypoints)
     _node(graph, start, "start")
     _node(graph, end, "end")
@@ -626,18 +661,20 @@ def k_shortest_paths(
     Returns
     -------
     KShortestPaths
-        At most ``k`` distinct paths, by increasing cost (ties: fewer
-        arcs, then smaller arc indices); fewer when fewer exist, with the
-        status ``optimal`` (the enumeration is exhaustive); none when the
-        target is out of reach, with the status ``infeasible`` and a
-        :class:`SeparatingCut`. It iterates like the tuple of its routes.
-        Parameters: ``k``. Counters: ``dijkstra_runs``, ``settled_nodes``,
-        ``scanned_arcs`` and ``candidates`` (distinct candidate paths).
+        At most ``k`` distinct paths, by non-decreasing cost; fewer when
+        fewer exist, with the status ``optimal`` (the enumeration is
+        exhaustive); none when the target is out of reach, with the status
+        ``infeasible`` and a :class:`SeparatingCut`. It iterates like the
+        tuple of its routes. Parameters: ``k``. Counters:
+        ``dijkstra_runs``, ``settled_nodes``, ``scanned_arcs`` and
+        ``candidates`` (distinct candidate paths).
 
     Raises
     ------
     ValueError
-        If ``k`` is less than 1, a weight is negative or not finite, or a
+        If ``k`` is less than 1, a weight is negative or not finite (an
+        int beyond the float range included), the absolute weights sum
+        beyond the float range (a sum along a path could overflow), or a
         node or an excluded arc does not exist.
 
     Notes
@@ -646,6 +683,13 @@ def k_shortest_paths(
     node, the root before it being kept. At most :math:`k \\cdot L`
     Dijkstra runs, with :math:`L` the number of arcs of the longest
     path found. Parallel arcs give distinct paths.
+
+    Ties are broken deterministically, but not by the number of arcs
+    across the whole list. The first route is the path to the target in
+    the tree of :func:`protee.paths.dijkstra`. Each next route is, among
+    the candidate deviations found so far, the least by cost, then number
+    of arcs, then arc indices (compared as tuples). Since candidates are
+    found lazily, a route of equal cost and fewer arcs may come later.
     """
     if k < 1:
         raise ValueError(f"k must be at least 1, got {k}")
@@ -725,7 +769,11 @@ def replacement_paths(
     key : sequence of hashable, optional
         One key per arc of the graph; removing an arc removes every arc
         with the same key (for example the two directions of one road
-        section).
+        section). The keys are inputs of the result: with a key of a type
+        that the fingerprint does not support (``bytes``, an instance of an
+        ordinary class...), the computation succeeds but reading
+        ``inputs`` raises ``TypeError``. Integers, strings, and tuples of
+        them are supported (see ``protee.constraints.fingerprint``).
     excluded : collection of int, optional
         Arcs to ignore in every computation.
 
@@ -741,8 +789,10 @@ def replacement_paths(
     ------
     ValueError
         If the keys do not match the arcs, a weight is negative or not
-        finite, or a node, an arc of the path or an excluded arc does not
-        exist.
+        finite (an int beyond the float range included), the absolute
+        weights sum beyond the float range (a sum along a path could
+        overflow), or a node, an arc of the path or an excluded arc does
+        not exist.
 
     Notes
     -----

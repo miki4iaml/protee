@@ -8,9 +8,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import version
-from types import MappingProxyType
 
 from protee._fingerprint import fingerprint, freeze
+from protee._frozen import FrozenMap
 from protee.constraints._model import RequirementSet, ResolvedValues
 from protee.results import ResultCore
 
@@ -21,11 +21,14 @@ __all__ = ["Provenance", "fingerprint", "provenance"]
 class Provenance:
     """How a result was produced, so that it can be replayed.
 
+    A value, like a result: it compares by its fields, hashes, pickles and
+    copies.
+
     Attributes
     ----------
     method : str
     parameters : mapping of str to object
-        A frozen copy: lists become tuples, mappings read-only.
+        A frozen copy: lists become tuples, mappings immutable.
     version : str
         Version of protee that produced the result.
     requirements : tuple of str
@@ -53,14 +56,32 @@ class Provenance:
     result: str
     counters: Mapping[str, int]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameters", freeze(dict(self.parameters)))
+        object.__setattr__(self, "counters", FrozenMap(self.counters))
+
     def replays(self, other: Provenance) -> bool:
-        """Whether ``other`` comes from the same inputs, method, parameters
-        and version: its result can be reused instead of recomputed."""
+        """Whether ``other`` has the same inputs, method, parameters and
+        version: it answers the same question on the same inputs (the same
+        status and, for an exact method, the same optimal value), so its
+        result can be reused instead of recomputed.
+
+        Its solution and counters may differ from a recomputation: after a
+        warm start, when several optima exist, or when an input that
+        decides the result is left out of the fingerprint (the feasibility
+        test of a conflict or a relaxation, a callable). See
+        :attr:`protee.results.ResultCore.inputs`.
+        """
         return (self.inputs, self.version) == (other.inputs, other.version)
 
     def differences(self, other: Provenance) -> tuple[str, ...]:
-        """The fields that differ; ``result`` alone means a recomputation
-        from the same inputs gave another result, which must be reported."""
+        """The fields that differ.
+
+        ``result`` alone means a recomputation from the same inputs gave
+        another result. It is expected after a warm start that found
+        another optimum, or when a callable input (a feasibility test) has
+        changed; otherwise it must be reported.
+        """
         names = ("method", "parameters", "version", "inputs", "result")
         return tuple(n for n in names if getattr(self, n) != getattr(other, n))
 
@@ -145,5 +166,5 @@ def provenance(
         values=tuple(recorded),
         inputs=fingerprint(method, params, inputs, requirements, values, *own),
         result=fingerprint(result),
-        counters=MappingProxyType(dict(counters or {})),
+        counters=FrozenMap(counters or {}),
     )
