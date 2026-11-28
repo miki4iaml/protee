@@ -9,6 +9,7 @@
 [![CodeQL](https://github.com/miki4iaml/protee/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/miki4iaml/protee/actions/workflows/github-code-scanning/codeql)
 [![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fmiki4iaml%2Fprotee%2Fdevelop%2Fpyproject.toml)](pyproject.toml)
 [![Licence](https://img.shields.io/github/license/miki4iaml/protee)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24619907.svg)](https://doi.org/10.5281/zenodo.24619907)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)

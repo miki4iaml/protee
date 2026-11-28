@@ -10,6 +10,7 @@ authors:
   - alias: Miki
 version: 0.2.0
 date-released: "2026-11-28"
+doi: 10.5281/zenodo.24619907
 license: BSD-3-Clause
 repository-code: "https://github.com/miki4iaml/protee"
 keywords:

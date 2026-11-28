@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- The concept DOI of protee on Zenodo, `10.5281/zenodo.24619907`, which
+  stands for all its versions: in `CITATION.cff`, and as a badge in the
+  README.
+
 ## [0.2.0] - 2026-11-28
 
 Rendering for the producers of node-link documents. The format
