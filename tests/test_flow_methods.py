@@ -30,7 +30,8 @@ from protee.flow import (
 from protee.flow.diagnostics import reduced_costs
 from protee.graph import Digraph
 
-METHODS = [info.name for info in methods()]
+METHODS = [info.name for info in methods("min_cost_flow")]
+OPTIMAL = Status.OPTIMAL
 SIMPLEX_RULES = [
     ("network_simplex", {"pivot_rule": rule}) for rule in ("block_search", "dantzig")
 ]
@@ -170,6 +171,30 @@ def test_documented_example() -> None:
         )
 
 
+@pytest.mark.parametrize(("method", "options"), VARIANTS)
+def test_int_costs_are_exact_whatever_their_size(
+    method: str, options: dict[str, str]
+) -> None:
+    # Python ints sum exactly: costs whose float sum would overflow, or
+    # beyond the float range, give the exact optimum, with or without
+    # upper bounds (the improving cycles are then sought first).
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    for big in (10**308, 10**400):
+        for upper in ((1, 1, 1), (None, None, None)):
+            p = FlowProblem(g, upper=upper, cost=(big, big, 1), supply=(1, 0, -1))
+            low = solve(p, method=method, **options)
+            assert (low.status, low.flow, low.objective) == (OPTIMAL, (0, 0, 1), 1)
+            high = solve(p.with_cost(p.cost, "max"), method=method, **options)
+            assert (high.flow, high.objective) == ((1, 1, 0), 2 * big)
+    # Beyond 2**53, where floats round: a cycle that improves by 1, whose
+    # cost would round to 0 in floats.
+    ring = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
+    k = 2**53
+    p = FlowProblem(ring, upper=(1, 1, 1), cost=(k, k, -1 - 2 * k))
+    best = solve(p, method=method, **options)
+    assert (best.flow, best.objective) == ((1, 1, 1), -1)
+
+
 def test_infeasible_cut_names_the_bottleneck() -> None:
     g = Digraph.from_arcs(3, [(0, 1), (1, 2)])
     p = FlowProblem(g, upper=(5, 2), supply=(4, 0, -4))
@@ -205,9 +230,12 @@ def test_method_choice_is_explicit() -> None:
     with pytest.raises(ValueError, match="pivot rule"):
         solve(p, method="network_simplex", pivot_rule="bland")
     assert solve(p, method="network_simplex").objective == 0
-    assert [m.name for m in methods()] == [
+    with pytest.raises(ValueError, match="unknown flow method"):
+        solve(p, method="dinic")  # a maximum flow method
+    assert [m.name for m in methods("min_cost_flow")] == [
         "network_simplex",
         "cycle_canceling",
         "successive_shortest_paths",
     ]
-    assert methods()[0].warm_start
+    assert methods()[:3] == methods("min_cost_flow")
+    assert methods("min_cost_flow")[0].warm_start

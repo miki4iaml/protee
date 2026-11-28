@@ -6,6 +6,7 @@
 [![CodeQL](https://github.com/miki4iaml/protee/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/miki4iaml/protee/actions/workflows/github-code-scanning/codeql)
 [![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fmiki4iaml%2Fprotee%2Fdevelop%2Fpyproject.toml)](pyproject.toml)
 [![License](https://img.shields.io/github/license/miki4iaml/protee)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24619907.svg)](https://doi.org/10.5281/zenodo.24619907)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
@@ -25,6 +26,12 @@ online solver, service or engine).
 > requirements turned into traceable constraints on graphs
 > (`protee.constraints`); their API is provisional until version 1.0,
 > and the model of life-cycle profiles is being designed.
+
+Every method returns the same [result model](docs/results.md)
+(`protee.results`): a status, the certificate it calls for (a violated
+cut, an improving cycle, the nodes a search reached), the guarantee of
+the method, deterministic work counters, the version and a fingerprint
+of the inputs. Each module lists its methods with `methods()`.
 
 Typed graphs are exchanged with other projects in the node-link format
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`), and

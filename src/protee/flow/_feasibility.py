@@ -6,36 +6,48 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
 
 from protee.flow import _maxflow
 from protee.flow._maxflow import MaxFlowMethod, Residual
 from protee.flow._normal import normalize
 from protee.flow._problem import FlowProblem
-from protee.flow._result import InfeasibleCut
+from protee.flow._registry import FEASIBILITY
+from protee.results import InfeasibleCut, ResultCore, Status
 
 
-@dataclass(frozen=True, slots=True)
-class Feasibility:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Feasibility(ResultCore):
     """Outcome of :func:`check_feasibility`.
+
+    On top of the fields of :class:`~protee.results.ResultCore`: the status
+    is ``optimal`` when a feasible flow exists (the question is answered
+    exactly), ``infeasible`` otherwise, with a violated cut
+    (:class:`~protee.results.InfeasibleCut`) as ``certificate``; ``method``
+    is the maximum flow method used.
 
     Attributes
     ----------
-    feasible : bool
     flow : tuple of int or None
         A feasible flow, when there is one.
-    cut : InfeasibleCut or None
-        A violated cut, when there is no feasible flow.
-    method : str
-        The maximum flow method used.
-    counters : mapping of str to int
+
+    Notes
+    -----
+    ``counters``: ``augmentations`` and ``phases`` of the maximum flow (see
+    :class:`~protee.flow.MaxFlowResult`). ``inputs`` covers the problem.
     """
 
-    feasible: bool
-    flow: tuple[int, ...] | None
-    cut: InfeasibleCut | None
-    method: str
-    counters: MappingProxyType[str, int]
+    flow: tuple[int, ...] | None = None
+
+    @property
+    def feasible(self) -> bool:
+        """True when a feasible flow exists (status ``optimal``)."""
+        return self.status is Status.OPTIMAL
+
+    @property
+    def cut(self) -> InfeasibleCut | None:
+        """The violated cut, when there is no feasible flow."""
+        found = self.certificate
+        return found if isinstance(found, InfeasibleCut) else None
 
 
 def cut_of(problem: FlowProblem, nodes: frozenset[int]) -> InfeasibleCut:
@@ -61,29 +73,12 @@ def cut_of(problem: FlowProblem, nodes: frozenset[int]) -> InfeasibleCut:
     )
 
 
-def check_feasibility(
-    problem: FlowProblem, *, method: MaxFlowMethod = "dinic"
-) -> Feasibility:
-    """Find a feasible flow, or prove that none exists.
-
-    The lower bounds are removed (``x = lower + y``) and the supplies are
-    routed from a super-source to a super-sink by a maximum flow. The flow
-    saturates the super-source exactly when the problem is feasible;
-    otherwise the source side of the minimum cut gives a node set whose
-    supply cannot leave it (Gale's theorem; Hoffman's circulation theorem
-    when all supplies are zero).
-
-    Parameters
-    ----------
-    problem : FlowProblem
-    method : {"dinic", "edmonds_karp"}, optional
-        Maximum flow method, Dinic by default (a support computation, not a
-        compared method).
-
-    Returns
-    -------
-    Feasibility
-    """
+def _feasible_flow(
+    problem: FlowProblem, method: str
+) -> tuple[tuple[int, ...] | None, InfeasibleCut | None, dict[str, int]]:
+    """A feasible flow or a violated cut, and the counters of the maximum
+    flow: the kernel of :func:`check_feasibility`, for the callers of the
+    package."""
     normal = normalize(problem)
     n = normal.n
     s, t = n, n + 1
@@ -102,11 +97,47 @@ def check_feasibility(
     value, counters = _maxflow.run(net, s, t, method)
     if value == total:
         y = [net.cap[e ^ 1] for e in edges]
-        return Feasibility(
-            True, normal.flow(y), None, method, MappingProxyType(counters)
-        )
+        return normal.flow(y), None, counters
     side = net.reachable(s)
     nodes = frozenset(v for v in range(n) if side[v])
+    return None, cut_of(problem, nodes), counters
+
+
+def check_feasibility(problem: FlowProblem, *, method: MaxFlowMethod) -> Feasibility:
+    """Find a feasible flow, or prove that none exists.
+
+    The lower bounds are removed (``x = lower + y``) and the supplies are
+    routed from a super-source to a super-sink by a maximum flow. The flow
+    saturates the super-source exactly when the problem is feasible;
+    otherwise the source side of the minimum cut gives a node set whose
+    supply cannot leave it (Gale's theorem; Hoffman's circulation theorem
+    when all supplies are zero).
+
+    Parameters
+    ----------
+    problem : FlowProblem
+    method : {"dinic", "edmonds_karp"}
+        Maximum flow method (see ``protee.flow.methods("feasibility")``);
+        there is no default: the choice of the method stays the caller's.
+
+    Returns
+    -------
+    Feasibility
+        Status ``optimal`` with a feasible flow, or ``infeasible`` with a
+        violated cut.
+
+    Raises
+    ------
+    ValueError
+        If the method is unknown.
+    """
+    flow, cut, counters = _feasible_flow(problem, method)
     return Feasibility(
-        False, None, cut_of(problem, nodes), method, MappingProxyType(counters)
+        status=Status.OPTIMAL if cut is None else Status.INFEASIBLE,
+        method=method,
+        guarantee=FEASIBILITY[method].guarantee,
+        counters=counters,
+        certificate=cut,
+        flow=flow,
+        _sources=(problem,),
     )

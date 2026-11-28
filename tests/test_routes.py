@@ -6,16 +6,20 @@ from __future__ import annotations
 
 import itertools
 import math
+import sys
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from oracles import graphs
+from test_conformity_paths import check_crossed_cuts, check_separating_cut
 
 from protee.graph import Digraph
 from protee.paths import dijkstra
+from protee.results import CrossedCuts, SeparatingCut, Status
 from protee.routes import (
     MAX_FREE_WAYPOINTS,
+    Route,
     k_shortest_paths,
     most_reliable_path,
     overlap,
@@ -101,6 +105,9 @@ def test_k_shortest_paths_are_the_k_cheapest_loopless_paths(case: Case, k: int) 
     routes = k_shortest_paths(g, w, s, t, k)
     every = sorted(cost(w, p) for p in simple_paths(g, s, t))
     assert [r.cost for r in routes] == every[:k]
+    assert (routes.status is Status.OPTIMAL) == bool(every)
+    if not every:
+        check_separating_cut(g, routes.certificate, ())
     assert len({r.arcs for r in routes}) == len(routes)
     for r in routes:
         assert is_path(g, s, t, r.arcs)
@@ -116,9 +123,37 @@ def test_k_shortest_paths_small_case_and_errors() -> None:
     routes = k_shortest_paths(g, w, 0, 3, 10)
     assert [r.cost for r in routes] == [2, 3, 4, 5]
     assert routes[0].arcs == (0, 1)
-    assert k_shortest_paths(g, w, 3, 0, 2) == []
+    assert routes[1:3] == routes.routes[1:3]
+    assert len(routes) == 4
+    # The first run, two spurs from (0, 1), two from (2, 3), one from each
+    # direct arc; the candidates (2, 3), (4,) and (5,).
+    assert dict(routes.counters) == {
+        "dijkstra_runs": 7,
+        "settled_nodes": 14,
+        "scanned_arcs": 25,
+        "candidates": 3,
+    }
+    none = k_shortest_paths(g, w, 3, 0, 2)
+    assert none.status is Status.INFEASIBLE
+    assert (list(none), len(none), bool(none)) == ([], 0, False)
+    assert none.certificate == SeparatingCut(frozenset({3}), (3,), 0, ())
+    cut_off = k_shortest_paths(g, w, 0, 3, 2, excluded=[1, 3, 4, 5])
+    assert cut_off.certificate == SeparatingCut(
+        frozenset({0, 1, 2}), (0,), 3, (1, 3, 4, 5)
+    )
     with pytest.raises(ValueError, match="at least 1"):
         k_shortest_paths(g, w, 0, 3, 0)
+    with pytest.raises(ValueError, match="target 7 is not a node"):
+        k_shortest_paths(g, w, 0, 7, 1)
+
+
+def test_k_shortest_paths_meet_a_candidate_twice() -> None:
+    # 0 -> 1 -> 2 -> 3, a shortcut 1 -> 3 and a direct arc 0 -> 3: the
+    # direct arc is found again from the second path, and counted once.
+    g = Digraph.from_arcs(4, [(0, 1), (1, 2), (2, 3), (1, 3), (0, 3)])
+    routes = k_shortest_paths(g, [1, 1, 1, 5, 10], 0, 3, 3)
+    assert [r.arcs for r in routes] == [(0, 1, 2), (0, 3), (4,)]
+    assert routes.counters["candidates"] == 2
 
 
 # --- waypoints -------------------------------------------------------------
@@ -139,9 +174,16 @@ def test_waypoint_route_free_order_is_the_best_permutation(
         best = min(best, total)
     r = waypoint_route(g, w, s, t, wps, order="free")
     if best == math.inf:
-        assert r is None
+        assert r.status is Status.INFEASIBLE
+        assert (r.order, r.legs, r.arcs, r.cost) == (None, None, None, None)
+        if isinstance(r.certificate, CrossedCuts):
+            check_crossed_cuts(g, r.certificate, ())
+        else:
+            check_separating_cut(g, r.certificate, ())
         return
-    assert r is not None
+    assert r.status is Status.OPTIMAL
+    assert r.order is not None
+    assert r.arcs is not None
     assert r.cost == best
     assert sorted(r.order) == list(range(k))
     assert is_path(g, s, t, r.arcs)
@@ -159,13 +201,47 @@ def test_waypoint_route_fixed_order_follows_the_given_order(
     expected = sum(dijkstra(g, w, a).distance[b] for a, b in itertools.pairwise(stops))
     r = waypoint_route(g, w, s, t, wps, order="fixed")
     if expected == math.inf:
-        assert r is None
+        assert r.status is Status.INFEASIBLE
+        cut = check_separating_cut(g, r.certificate, ())
+        assert (*cut.sources, cut.target) in set(itertools.pairwise(stops))
         return
-    assert r is not None
+    assert r.status is Status.OPTIMAL
     assert r.order == tuple(range(len(wps)))
     assert r.cost == expected
+    assert r.legs is not None
+    assert r.arcs is not None
     assert len(r.legs) == len(wps) + 1
     assert is_path(g, s, t, r.arcs)
+
+
+def test_waypoint_route_certificates() -> None:
+    # 0 -> 1 -> 3 and 0 -> 2 -> 3: waypoints 1 and 2 never reach each other.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 3), (0, 2), (2, 3), (3, 4)])
+    w = [1] * 5
+    crossed = waypoint_route(g, w, 0, 3, [1, 2], order="free")
+    assert crossed.status is Status.INFEASIBLE
+    assert crossed.certificate == CrossedCuts(
+        SeparatingCut(frozenset({1, 3, 4}), (1,), 2, ()),
+        SeparatingCut(frozenset({2, 3, 4}), (2,), 1, ()),
+    )
+    assert check_crossed_cuts(g, crossed.certificate, ()) == (1, 2)
+    assert dict(crossed.counters) == {
+        "dijkstra_runs": 3,
+        "settled_nodes": 11,
+        "scanned_arcs": 9,
+        "states": 4,
+    }
+    with pytest.raises(TypeError):
+        tuple(crossed.arcs)  # type: ignore[arg-type]
+    # The start misses a waypoint, a waypoint misses the end.
+    missed = waypoint_route(g, w, 1, 4, [3, 0], order="free")
+    assert missed.certificate == SeparatingCut(frozenset({1, 3, 4}), (1,), 0, ())
+    late = waypoint_route(g, w, 0, 1, [3, 2], order="free")
+    assert late.certificate == SeparatingCut(frozenset({3, 4}), (3,), 1, ())
+    # In a fixed order, the first leg out of reach.
+    fixed = waypoint_route(g, w, 0, 4, [2, 1], order="fixed", excluded=[3])
+    assert fixed.certificate == SeparatingCut(frozenset({2}), (2,), 1, (3,))
+    assert dict(fixed.counters)["states"] == 0
 
 
 def test_waypoint_route_errors() -> None:
@@ -174,6 +250,10 @@ def test_waypoint_route_errors() -> None:
         waypoint_route(g, [1], 0, 1, [], order="any")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="at most"):
         waypoint_route(g, [1], 0, 1, [0] * (MAX_FREE_WAYPOINTS + 1), order="free")
+    with pytest.raises(ValueError, match="waypoint 5 is not a node"):
+        waypoint_route(g, [1], 0, 1, [5], order="free")
+    with pytest.raises(ValueError, match="end 2 is not a node"):
+        waypoint_route(g, [1], 0, 2, [], order="fixed")
 
 
 # --- replacement paths -----------------------------------------------------
@@ -204,8 +284,18 @@ def test_replacement_paths_remove_whole_groups() -> None:
     reps = replacement_paths(g, w, 0, 2, [0, 2], key=key)
     found = [(r.arc, r.route.cost if r.route else None) for r in reps]
     assert found == [(0, 5), (2, 5)]
+    assert reps.status is Status.OPTIMAL
+    assert (len(reps), reps[0].arc, reps[:1]) == (2, 0, reps.replacements[:1])
+    # Without group a: 0 and 2 settle; without group b: 0, 1 and 2.
+    assert dict(reps.counters) == {
+        "dijkstra_runs": 2,
+        "settled_nodes": 5,
+        "scanned_arcs": 6,
+    }
     with pytest.raises(ValueError, match="keys"):
         replacement_paths(g, w, 0, 2, [0], key=["a"])
+    with pytest.raises(ValueError, match="arc 9 of the path does not exist"):
+        replacement_paths(g, w, 0, 2, [9])
 
 
 # --- overlap ---------------------------------------------------------------
@@ -234,9 +324,13 @@ def test_most_reliable_path_maximizes_the_product(
     products = [math.prod(p[a] for a in path) for path in simple_paths(g, s, t)]
     best = max(products, default=0.0)
     if best == 0.0:
-        assert r is None
+        assert r.status is Status.INFEASIBLE
+        assert (r.arcs, r.probability) == (None, None)
+        zero = {a for a in range(g.m) if p[a] == 0}
+        check_separating_cut(g, r.certificate, zero)
         return
-    assert r is not None
+    assert r.status is Status.OPTIMAL
+    assert r.arcs is not None
     assert r.probability == pytest.approx(best)
     assert is_path(g, s, t, r.arcs)
 
@@ -247,7 +341,139 @@ def test_most_reliable_path_checks_its_input() -> None:
         most_reliable_path(g, [], 0, 1)
     with pytest.raises(ValueError, match="not in"):
         most_reliable_path(g, [1.5], 0, 1)
-    assert most_reliable_path(g, [0.0], 0, 1) is None
+    unusable = most_reliable_path(g, [0.0], 0, 1)
+    assert unusable.status is Status.INFEASIBLE
+    assert unusable.certificate == SeparatingCut(frozenset({0}), (0,), 1, (0,))
     r = most_reliable_path(g, [0.7], 0, 1)
-    assert r is not None
+    assert r.status is Status.OPTIMAL
     assert r.probability == pytest.approx(0.7)
+    assert dict(r.counters) == {
+        "dijkstra_runs": 1,
+        "settled_nodes": 2,
+        "scanned_arcs": 1,
+    }
+
+
+def test_k_shortest_paths_tie_rule() -> None:
+    # Pinned: a known client relies on this order. The first route is the
+    # path of the Dijkstra tree, even when a path of equal cost has fewer
+    # arcs.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 2), (2, 3), (0, 4), (4, 3)])
+    w = [0, 0, 2, 1, 1]
+    found = k_shortest_paths(g, w, 0, 3, 2)
+    assert [(r.arcs, r.cost) for r in found] == [((0, 1, 2), 2), ((3, 4), 2)]
+    assert [r.arcs for r in k_shortest_paths(g, w, 0, 3, 1)] == [(0, 1, 2)]
+    # Each next route is the least candidate found so far by cost, then
+    # number of arcs: the deviation at node 1 (two arcs) comes before the
+    # one at node 0 (three arcs), found first.
+    h = Digraph.from_arcs(5, [(0, 1), (1, 4), (0, 2), (2, 3), (3, 4), (1, 4)])
+    found = k_shortest_paths(h, [1, 1, 1, 1, 1, 2], 0, 4, 3)
+    assert [(r.arcs, r.cost) for r in found] == [
+        ((0, 1), 2),
+        ((0, 5), 3),
+        ((2, 3, 4), 3),
+    ]
+
+
+def test_waypoint_route_tie_rule() -> None:
+    # Pinned: among orders of equal cost, the last waypoint visited has the
+    # lowest index possible, then the one before it, and so on.
+    complete = Digraph.from_arcs(3, [(0, 1), (1, 0), (0, 2), (2, 0), (1, 2), (2, 1)])
+    zero = [0] * complete.m
+    assert waypoint_route(complete, zero, 0, 0, [1, 2], order="free").order == (1, 0)
+    every = waypoint_route(complete, zero, 0, 0, [1, 2, 1], order="free")
+    assert every.order == (2, 1, 0)
+    # Waypoint 0 (node 1) costs more as the last one: waypoint 1 is last.
+    arcs = [(u, v) for u in range(4) for v in range(4) if u != v]
+    four = Digraph.from_arcs(4, arcs)
+    unit = [1] * four.m
+    assert waypoint_route(four, unit, 0, 0, [1, 2, 3], order="free").order == (2, 1, 0)
+    late = [5 if arc == (1, 0) else 1 for arc in arcs]
+    assert waypoint_route(four, late, 0, 0, [1, 2, 3], order="free").order == (2, 0, 1)
+
+
+def test_route_weights_that_could_overflow_are_refused() -> None:
+    # A float sum that overflows to inf would report a reachable target
+    # out of reach, or crash the free order.
+    line = Digraph.from_arcs(3, [(0, 1), (1, 2)])
+    for run in (
+        lambda w: k_shortest_paths(line, w, 0, 2, 1),
+        lambda w: replacement_paths(line, w, 0, 2, (0, 1)),
+        lambda w: waypoint_route(line, w, 0, 2, [], order="fixed"),
+    ):
+        with pytest.raises(ValueError, match="beyond the float range"):
+            run([1e308, 1e308])
+        with pytest.raises(ValueError, match="beyond the float range"):
+            run([10**400, 1.0])
+    # A route of k + 1 legs, each a path: k + 1 times the total must fit.
+    cycle = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
+    with pytest.raises(ValueError, match="3 legs times the sum"):
+        waypoint_route(cycle, [6e307, 0.0, 6e307], 0, 0, [1, 2], order="free")
+    fits = waypoint_route(cycle, [2e307, 0.0, 2e307], 0, 0, [1, 2], order="free")
+    assert fits.status is Status.OPTIMAL
+    assert fits.cost == 4e307
+
+
+def test_route_int_weights_are_exact_and_excluded_arcs_do_not_count() -> None:
+    # Python ints sum exactly, whatever their size: no sum overflows.
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    w = [10**308, 10**308, 3]
+    found = k_shortest_paths(g, w, 0, 2, 2)
+    assert [(r.arcs, r.cost) for r in found] == [((2,), 3), ((0, 1), 2 * 10**308)]
+    (instead,) = replacement_paths(g, w, 0, 2, (2,))
+    assert instead.route == Route((0, 1), 2 * 10**308)
+    assert waypoint_route(g, w, 0, 2, [1], order="fixed").cost == 2 * 10**308
+    huge = 10**400
+    cycle = Digraph.from_arcs(3, [(0, 1), (1, 2), (2, 0)])
+    around = waypoint_route(cycle, [huge, 0, huge], 0, 0, [1, 2], order="free")
+    assert (around.order, around.cost) == ((0, 1), 2 * huge)
+    # An excluded arc never enters a sum along a path.
+    top = sys.float_info.max
+    barred = [top, top, 1.0]
+    only = k_shortest_paths(g, barred, 0, 2, 2, excluded={0, 1})
+    assert [r.arcs for r in only] == [(2,)]
+    lost = replacement_paths(g, barred, 0, 2, (2,), excluded={0, 1})
+    assert lost[0].route is None
+    assert (
+        waypoint_route(g, barred, 0, 2, [], order="fixed", excluded={0, 1}).cost == 1.0
+    )
+
+
+def test_route_costs_sum_from_left_to_right_like_dijkstra() -> None:
+    # Two paths of equal cost in exact arithmetic: Dijkstra sums 0.7, 0.59
+    # and 0.1 from left to right, sum() compensates and gives 1.39. Every
+    # route cost is the left-to-right sum, so the costs do not decrease.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 4), (0, 2), (2, 3), (3, 4)])
+    w = [0.59, 0.8, 0.7, 0.59, 0.1]
+    found = k_shortest_paths(g, w, 0, 4, 2)
+    assert [(r.arcs, r.cost) for r in found] == [
+        ((0, 1), 1.3900000000000001),
+        ((2, 3, 4), 1.3900000000000001),
+    ]
+    assert k_shortest_paths(g, w, 0, 4, 1, excluded={0})[0] == found[1]
+    # A waypoint route sums its legs from left to right too: on a shortest
+    # path, it costs the distance of its end.
+    line = Digraph.from_arcs(4, [(0, 1), (1, 2), (2, 3)])
+    tenths = [0.1, 0.2, 0.3]
+    distance = dijkstra(line, tenths, 0).distance[3]
+    assert distance == 0.1 + 0.2 + 0.3 != sum(tenths)
+    fixed = waypoint_route(line, tenths, 0, 3, [1, 2], order="fixed")
+    free = waypoint_route(line, tenths, 0, 3, [1, 2], order="free")
+    assert fixed.cost == free.cost == distance
+
+
+@given(st.lists(st.integers(1, 99), min_size=7, max_size=7), st.integers(1, 6))
+def test_k_shortest_path_costs_never_decrease(cents: list[int], k: int) -> None:
+    # Weights with two decimals, which floats round: each cost is the
+    # left-to-right sum of its arcs, and no route costs less than the one
+    # before it.
+    g = Digraph.from_arcs(5, [(0, 1), (1, 4), (0, 2), (2, 3), (3, 4), (1, 2), (2, 4)])
+    w = [c / 100 for c in cents]
+    found = k_shortest_paths(g, w, 0, 4, k)
+    for route in found:
+        total = 0.0
+        for a in route.arcs:
+            total += w[a]
+        assert route.cost == total
+    costs = [route.cost for route in found]
+    assert costs == sorted(costs)

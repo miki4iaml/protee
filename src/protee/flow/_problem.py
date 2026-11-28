@@ -20,8 +20,14 @@ def _is_int(x: object) -> bool:
     return isinstance(x, int) and not isinstance(x, bool)
 
 
-def _is_number(x: object) -> bool:
-    return isinstance(x, int | float) and not isinstance(x, bool) and math.isfinite(x)
+def _check_cost(i: int, x: object) -> None:
+    """A cost is an int or a finite float."""
+    if (
+        not isinstance(x, int | float)
+        or isinstance(x, bool)
+        or (isinstance(x, float) and not math.isfinite(x))
+    ):
+        raise TypeError(f"cost[{i}] must be a finite number, got {x!r}")
 
 
 def _integers(name: str, values: Sequence[int], size: int) -> tuple[int, ...]:
@@ -50,11 +56,28 @@ def _uppers(values: Sequence[int | float | None], size: int) -> tuple[int | None
 
 
 def _costs(values: Sequence[Number], size: int) -> tuple[Number, ...]:
+    """Check the costs. Ints alone sum exactly, whatever their size; with a
+    float among them, the costs sum as floats, and their absolute sum must
+    stay in the float range, so that the cost of no path or cycle
+    overflows."""
     if len(values) != size:
         raise ValueError(f"cost: expected {size} values, got {len(values)}")
     for i, x in enumerate(values):
-        if not _is_number(x):
-            raise TypeError(f"cost[{i}] must be a finite number, got {x!r}")
+        _check_cost(i, x)
+    if any(isinstance(x, float) for x in values):
+        total = 0.0
+        for i, x in enumerate(values):
+            try:
+                total += abs(float(x))
+            except OverflowError:
+                raise ValueError(
+                    f"cost[{i}] is an int beyond the float range, among float costs"
+                ) from None
+        if not math.isfinite(total):
+            raise ValueError(
+                "the absolute costs sum beyond the float range: "
+                "the cost of a path or a cycle could overflow"
+            )
     return tuple(values)
 
 
@@ -77,8 +100,8 @@ class FlowProblem:
         Upper bounds; ``None`` (or ``math.inf``) means no bound, the
         default.
     cost : sequence of int or float, optional
-        Arc costs, 0 by default. Integer costs give exact computations;
-        float costs are compared with a tolerance.
+        Arc costs, 0 by default. Integer costs give exact computations,
+        whatever their size; float costs are compared with a tolerance.
     supply : sequence of int, optional
         Net supply of each node (positive: source, negative: demand), 0 by
         default. Supplies must sum to zero.
@@ -88,8 +111,10 @@ class FlowProblem:
     Raises
     ------
     ValueError
-        If a size is wrong, a lower bound exceeds its upper bound, or the
-        supplies do not sum to zero.
+        If a size is wrong, a lower bound exceeds its upper bound, the
+        supplies do not sum to zero, or, when a cost is a float, an int
+        cost is beyond the float range or the absolute costs sum beyond
+        it (the float cost of a path or a cycle could overflow).
     TypeError
         If a bound or a supply is not an integer, or a cost not a finite
         number.

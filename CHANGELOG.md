@@ -8,6 +8,250 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-28
+
+A common result model. Every method of protee returns a result built on
+`protee.results.ResultCore`: a status (`optimal`, `feasible`,
+`infeasible`, `unbounded`, `limit`), the certificate the status calls
+for, the guarantee of the method, deterministic work counters, the
+version and a fingerprint of the inputs. Each module lists its methods,
+with their problem and guarantee, through `methods()`, and a conformity
+suite runs every method of every registry. Conventions in
+[docs/results.md](docs/results.md).
+
+The API of 0.2 changes where a negative answer had no status: a missing
+route is a result of status `infeasible` with its certificate instead of
+`None`, `bellman_ford` always returns `ShortestPaths`, `k_shortest_paths`
+and `replacement_paths` return iterable results, `check_feasibility`
+takes its method explicitly, and the result types take keyword arguments
+only. Each change comes with its migration below.
+
+### Added
+
+- The concept DOI of protee on Zenodo, `10.5281/zenodo.24619907`, which
+  stands for all its versions: in `CITATION.cff`, and as a badge in the
+  README.
+- `protee.results`, the result model shared by every method: `Status`
+  gains `feasible` and `limit`; `ResultCore` carries the status, the
+  certificate it calls for, the guarantee of the method, a bound and its
+  gap, the parameters, the counters, the version and the fingerprint of
+  the inputs (`inputs`); `Guarantee` and `MethodInfo` describe the methods
+  of a registry. A result is a value: it compares, hashes, pickles (a
+  worker process can return it, its fingerprint kept) and copies; its
+  `parameters` and `counters` are immutable mappings. A method reports the
+  same counters whatever the outcome, at zero for the work it did not do.
+  Equal fingerprints mean the same question on the same inputs (same
+  status and, for an exact method, the same optimal value), not always the
+  same solution: a warm-started problem may return another optimum, and
+  neither the callables of conflicts and relaxations nor the decimal
+  context of decimal weights are fingerprinted.
+  Conventions in [docs/results.md](docs/results.md).
+- `protee.constraints.fingerprint` reads fractions and decimals, each
+  exactly: a decimal by its sign, digits and exponent, whatever the
+  decimal context of the thread.
+- `FlowResult` is built on `ResultCore`: it gains `guarantee`,
+  `parameters` (the effective options, defaults included) and `inputs`.
+  `MethodInfo` gains `problem` and `guarantee`.
+- `protee.flow.methods(problem=None)` lists every method of `protee.flow`
+  with its problem and guarantee: `min_cost_flow` (`network_simplex`,
+  `cycle_canceling`, `successive_shortest_paths`), `max_flow` and
+  `feasibility` (`dinic`, `edmonds_karp`), `disjoint_paths` (the three
+  minimum cost flow methods), and the diagnostics `flow_ranges`,
+  `unattainable_bounds` and `optimum_uniqueness`, each a method of its own;
+  all are exact.
+- `MaxFlowResult`, `Feasibility`, `DisjointPaths`, `FlowRanges`,
+  `UnattainableBounds` and `Uniqueness` are built on `ResultCore`. An
+  infeasible feasibility check, disjoint paths problem or flow range
+  carries its violated cut; flow ranges at an unbounded optimum carry the
+  improving cycle.
+- `protee.results.SeparatingCut`, the certificate that no path leads from
+  the sources to a target: the nodes reached through admitted arcs and the
+  arcs that leave them, all barred; and `CrossedCuts`, two nodes neither of
+  which reaches the other, for waypoints that no order can visit.
+- `protee.paths.methods()` and `protee.routes.methods()`, the registries of
+  the shortest path and route methods with their problem, guarantee,
+  complexity and reference; `methods(problem)` selects one problem.
+- The results of `protee.paths` and `protee.routes` are built on
+  `ResultCore`, with deterministic counters (settled nodes and scanned arcs
+  for Dijkstra, passes for Bellman-Ford, Dijkstra runs, candidate paths for
+  Yen, states of the dynamic programming over waypoints).
+- `KShortestPaths` and `ReplacementPaths`, returned by `k_shortest_paths`
+  and `replacement_paths`; they iterate, index and measure like the
+  sequences they replace.
+- `protee.constraints.verify_route` accepts a route result
+  (`WaypointRoute`, `ReliableRoute`, `RouteSearchResult`).
+- `protee.constraints.methods(problem=None)`: the methods of
+  `minimal_conflict`, `minimal_relaxation` and `relaxation_by_tiers`, each
+  with its guarantee (`enumeration` exact, minimum cardinality;
+  `deletion_filter` irreducible; `greedy` no relaxed requirement can be
+  restored), its complexity in feasibility tests and its reference.
+- `Conflict`, `Relaxation` and `TieredRelaxation` are built on
+  `ResultCore`: status `optimal` with `enumeration`, `feasible` with
+  `deletion_filter` or `greedy`; their fingerprint covers the problem, the
+  method, the identifiers in their order and the tiers (the feasibility
+  test and the cost function, callables, are not part of it).
+- `protee.results.InfeasibleSubset`: when no tier is feasible,
+  `relax_by_tiers` returns the status `infeasible` with, as certificate,
+  the requirements that no tier allows to relax, tested infeasible
+  together; `level` stays `None`. `FlowSearch.solve` gives it too (see
+  Changed).
+- `RouteSearchResult`, returned by `RouteSearch.solve`: status `optimal`
+  with the route, or `infeasible` with the `SeparatingCut` of the arcs the
+  active requirements bar; the method, guarantee and counters of the
+  shortest path method run, and the active requirements.
+
+### Changed
+
+- `FlowResult` and `MethodInfo` take keyword arguments only.
+- `protee.flow.methods()` lists the methods of every problem of the
+  module: list the minimum cost flow methods with
+  `methods("min_cost_flow")` (they still come first).
+- `MaxFlowResult`, `Feasibility`, `DisjointPaths`, `FlowRanges`,
+  `UnattainableBounds` and `Uniqueness` take keyword arguments only.
+- `Feasibility.feasible` and `Feasibility.cut` are read-only properties
+  derived from `status` and `certificate`; `Uniqueness.unique` is a
+  read-only property, true when `direction` is `None`.
+- The diagnostics are named after themselves: `FlowRanges.method` is
+  `"flow_ranges"` (`"unattainable_bounds"`, `"optimum_uniqueness"` for the
+  others), and the minimum cost flow method they run is the parameter
+  `method`, the keyword argument of the call (which
+  `flow_ranges(problem, **result.parameters)` replays): read
+  `result.parameters["method"]` instead of `result.method`. The registry
+  lists `method` (and `at_optimum`) as their options.
+- Counters: `DisjointPaths` adds `max_flow_augmentations` and
+  `max_flow_phases`; `FlowRanges` adds `solves`, `feasibility_augmentations`
+  and `feasibility_phases` (zero at the optimum); `UnattainableBounds`
+  (those of its ranges) and `Uniqueness` (`residual_edges`, `components`)
+  gain counters. A minimum cost flow found unbounded, or infeasible before
+  its method runs, reports the counters of the method at zero instead of
+  none.
+- `check_feasibility` takes its `method` without default (objective 2 of
+  AGENTS.md). Migration: `check_feasibility(p)` becomes
+  `check_feasibility(p, method="dinic")`. `Prepared.feasibility()` keeps
+  its signature and runs Dinic.
+- `FlowSearch.solve` returns a `FlowResult` instead of `None` when the
+  bounds of the active requirements conflict on an arc: status
+  `infeasible`, the counters of the method at zero, and as certificate an
+  `InfeasibleSubset` of the active requirements that bound or bar those
+  arcs, which conflict on their own. Migration: replace `result is None`
+  with `result.status is Status.INFEASIBLE`. `problem_for` still returns
+  `None` in that case.
+- `disjoint_paths`, `flow_ranges` and `unattainable_bounds` refuse an
+  unknown flow method before any computation.
+- The fingerprint of the inputs of a result also covers its type: a method
+  name may serve several problems.
+- A list or tuple of floats only, or of 64-bit integers only, NumPy's
+  included, is fingerprinted by its bytes in little-endian order: the first
+  fingerprint of a Dijkstra on 577 019 arcs costs about 13 % of the
+  computation, instead of more than the computation itself. The
+  `TypeError` of an input without a canonical form lists the supported
+  types (lists and tuples, not other sequences).
+- The shortest path and route functions refuse, with a `ValueError`,
+  weights whose absolute sum over the arcs not excluded is beyond the float
+  range when one of them is not an int: a float sum along a path could
+  overflow. `waypoint_route` refuses them when `k + 1` times that sum is
+  beyond it, and `bellman_ford` when `n m` times the largest absolute
+  weight is (the walks it sums on the way to a negative cycle), also for
+  int weights with a positive `tolerance`, which compares the distances as
+  floats. Python int weights otherwise sum and compare exactly, whatever
+  their size.
+- `FlowProblem` refuses, with a `ValueError`, float costs whose absolute
+  sum is beyond the float range, and an int cost beyond it among float
+  costs. Int costs alone are exact, whatever their size, in every method
+  and in `verify_flow`.
+- The cost of the route of `RouteSearch.solve` adds the weights of its
+  arcs from left to right, as the search does, instead of their
+  `math.fsum`: it is the distance of the target.
+- `bellman_ford` always returns `ShortestPaths`: when a negative cycle is
+  reachable from the sources, the status is `unbounded`, the certificate is
+  the cycle, the nodes that negative cycles reach are at `-inf` and the
+  others keep their exact distance. Migration: replace
+  `isinstance(r, NegativeCycle)` with `r.status is Status.UNBOUNDED`, and
+  read the cycle from `r.certificate`.
+- `waypoint_route` returns a result of status `infeasible` instead of
+  `None` when no route exists, with a `SeparatingCut` (or `CrossedCuts` in
+  free order); its `order`, `legs`, `arcs` and `cost` are then `None`.
+  Migration: replace `route is None` with
+  `route.status is Status.INFEASIBLE`.
+- `most_reliable_path` returns a result of status `infeasible` instead of
+  `None` when the target cannot be reached, with a `SeparatingCut`; its
+  `arcs` and `probability` are then `None`. Migration: replace
+  `route is None` with `route.status is Status.INFEASIBLE`.
+- `k_shortest_paths` returns `KShortestPaths` instead of a list; without
+  any path, its status is `infeasible`, with a `SeparatingCut`. Migration:
+  loops and indexing are unchanged; compare `len(r)` instead of `r == []`,
+  and use `r.routes` or `list(r)` for a sequence.
+- `replacement_paths` returns `ReplacementPaths` instead of a tuple.
+  Migration: loops and indexing are unchanged; use `r.replacements` for the
+  tuple.
+- `ShortestPaths`, `LexicographicPaths`, `WaypointRoute` and
+  `ReliableRoute` take keyword arguments only, with the fields of
+  `ResultCore`.
+- The shortest path and route functions refuse a target, start, end,
+  waypoint or path arc that is not in the graph (`ValueError`), where they
+  used to run on or fail later with an `IndexError`.
+- `Conflict`, `Relaxation` and `TieredRelaxation` take keyword arguments
+  only; their `evaluations` becomes the counter
+  `counters["feasibility_tests"]`, and stays as a read-only property.
+- `RouteSearch.solve` returns a `RouteSearchResult` instead of
+  `Route | None`. Migration: replace `route is None` with
+  `route.status is Status.INFEASIBLE`; `arcs` and `cost` read as before.
+  `RouteSearch.methods()` returns the `MethodInfo` of its two methods
+  instead of their names.
+- `provenance()` takes the method, parameters, counters and version from a
+  result built on `ResultCore`; `method` and `parameters` become optional
+  for such a result, and the call style of 0.2 keeps working. Its `inputs`
+  now also covers the fingerprint of the result's own inputs. A `method`
+  other than the result's raises `ValueError`.
+- An unknown method of `minimal_conflict`, `minimal_relaxation` and
+  `relax_by_tiers` raises `ValueError` naming the problem and its methods.
+- `Status`, `InfeasibleCut`, `NegativeCycle` and `MethodInfo` live in
+  `protee.results`; `protee.flow` and `protee.paths` still export them
+  (the same objects).
+- `protee.constraints.fingerprint` hashes a graph by the fingerprint of
+  its structure, computed once per graph: fingerprints differ from those of
+  0.2.0.
+
+### Fixed
+
+- Finite float weights whose sum along a path overflowed to `inf`:
+  `dijkstra` reported a reachable node out of reach, `k_shortest_paths`,
+  `replacement_paths` and `waypoint_route` missed routes that exist, and
+  `bellman_ford` could miss a negative cycle. Such weights are refused
+  (see Changed).
+- An int weight or cost beyond the float range raised an `OverflowError`
+  (shortest paths, routes, `FlowProblem`): ints now sum exactly, whatever
+  their size, and a `ValueError` refuses one only where floats are summed
+  or compared (see Changed).
+- `bellman_ford` compared int distances as floats, rounded beyond `2**53`,
+  and could miss a shorter path; `verify_flow` converted int costs to
+  floats, and could declare optimal a flow that a cycle improves. Both
+  are exact on ints.
+- `bellman_ford` refuses a negative or non-finite `tolerance`, which gave
+  a false negative cycle (an arc `-1`, of weight zero) or lost reachable
+  nodes.
+- `k_shortest_paths` could list a route before a cheaper one: the first
+  cost added the weights from left to right, as Dijkstra does, the next
+  ones with `sum()`, which compensates the rounding of floats since Python
+  3.12. Every route cost now adds its weights from left to right, and the
+  costs do not decrease. `WaypointRoute.cost` adds its legs from left to
+  right too, as the free order compares them.
+- Fingerprints: a NumPy `float64` depended on NumPy's print options, and
+  a list of them did not fingerprint like the list of the same floats;
+  `numpy.longdouble` raised a `RecursionError` instead of a `TypeError`;
+  a NumPy `datetime64` or `timedelta64` in nanoseconds fingerprinted like
+  the int of its count, and in other units raised a `TypeError`. Dates and
+  durations now count by their dtype, unit included, and their count of
+  units.
+- Docstrings: the tie rules of `k_shortest_paths` and of `waypoint_route`
+  in free order are stated as implemented (the order of the routes does
+  not change); `ShortestPaths` says that with `bellman_ford` a source can
+  get a negative distance and a predecessor.
+- The registry complexity of successive shortest paths (minimum cost
+  flow) states the bound of the binary heap the implementation uses,
+  `O((n + m) log n)` per Dijkstra run, instead of that of a Fibonacci
+  heap.
+
 ## [0.2.0] - 2026-11-28
 
 Rendering for the producers of node-link documents. The format

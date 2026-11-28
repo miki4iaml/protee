@@ -8,8 +8,11 @@
 - :func:`highs_oracle`: the linear program solved by HiGHS;
 - :func:`problems`: a Hypothesis strategy of small flow problems, with
   parallel arcs, loops, lower bounds, missing upper bounds and supplies;
-- :func:`check_certificate`: the content of a certificate of infeasibility
-  or unboundedness.
+  :func:`networks` and :func:`disjoint_cases`, instances of maximum flow
+  and of disjoint paths;
+- :func:`check_certificate`: a certificate of infeasibility or
+  unboundedness, recomputed from the problem (:func:`check_cut`,
+  :func:`check_cycle`), independently of the method that found it.
 """
 
 from __future__ import annotations
@@ -24,14 +27,13 @@ from hypothesis import strategies as st
 
 from protee.flow import (
     FlowProblem,
-    FlowResult,
     InfeasibleCut,
     NegativeCycle,
     Status,
-    check_feasibility,
 )
 from protee.flow._problem import Sense
 from protee.graph import Digraph
+from protee.results import ResultCore
 
 type Number = int | float
 type Outcome = tuple[str, Number | None]
@@ -193,19 +195,76 @@ def problems(
     )
 
 
-def check_certificate(problem: FlowProblem, result: FlowResult) -> None:
+@st.composite
+def networks(draw: st.DrawFn) -> tuple[Digraph, list[int | None], int, int]:
+    """A maximum flow instance: graph, capacities, source, target (equal
+    when the graph has a single node)."""
+    g = draw(graphs(max_nodes=7, max_arcs=14))
+    cap: list[int | None] = [draw(st.integers(0, 6)) for _ in range(g.m)]
+    s = draw(st.integers(0, g.n - 1))
+    t = draw(st.integers(0, g.n - 1).filter(lambda v: v != s)) if g.n > 1 else s
+    return g, cap, s, t
+
+
+@st.composite
+def disjoint_cases(draw: st.DrawFn) -> tuple[Digraph, list[int], int, int, int]:
+    """A disjoint paths instance: graph, costs, source, target (equal when
+    the graph has a single node), k."""
+    g = draw(graphs(max_nodes=5, max_arcs=8))
+    cost = [draw(st.integers(0, 5)) for _ in range(g.m)]
+    s = draw(st.integers(0, g.n - 1))
+    t = draw(st.integers(0, g.n - 1).filter(lambda v: v != s)) if g.n > 1 else s
+    return g, cost, s, t, draw(st.integers(1, 3))
+
+
+def check_cut(problem: FlowProblem, cut: InfeasibleCut) -> None:
+    """``cut`` is the Gale-Hoffman inequality of its node set, recomputed
+    from ``problem``, and it is violated."""
+    g = problem.graph
+    nodes = cut.nodes
+    assert all(0 <= v < g.n for v in nodes)
+    leaving = tuple(
+        a for a, (t, h) in enumerate(g.arcs()) if t in nodes and h not in nodes
+    )
+    entering = tuple(
+        a for a, (t, h) in enumerate(g.arcs()) if h in nodes and t not in nodes
+    )
+    assert (cut.out_arcs, cut.in_arcs) == (leaving, entering)
+    upper = [problem.upper[a] for a in leaving]
+    assert all(hi is not None for hi in upper)
+    capacity = sum(hi or 0 for hi in upper) - sum(problem.lower[a] for a in entering)
+    supply = sum(problem.supply[v] for v in nodes)
+    assert (cut.supply, cut.capacity) == (supply, capacity)
+    assert supply > capacity
+    assert cut.excess == supply - capacity
+
+
+def check_cycle(problem: FlowProblem, cycle: NegativeCycle) -> None:
+    """``cycle`` is a cycle of arcs without upper bound whose cost improves
+    the objective, walked again on ``problem``."""
+    g = problem.graph
+    assert cycle.arcs
+    for a, b in zip(cycle.arcs, (*cycle.arcs[1:], cycle.arcs[0]), strict=True):
+        assert problem.upper[a] is None
+        assert g.heads[a] == g.tails[b]
+    sign = 1 if problem.sense == "min" else -1
+    weight = math.fsum(sign * problem.cost[a] for a in cycle.arcs)
+    assert same_value(weight, cycle.weight)
+    assert cycle.weight < 0
+
+
+def check_certificate(problem: FlowProblem, result: ResultCore) -> None:
+    """The certificate of an infeasible or unbounded result of ``problem``,
+    verified without the method that produced it."""
     if result.status is Status.INFEASIBLE:
         cut = result.certificate
         assert isinstance(cut, InfeasibleCut)
-        assert cut.excess > 0
-        assert not check_feasibility(problem).feasible
+        check_cut(problem, cut)
     else:
         assert result.status is Status.UNBOUNDED
         cycle = result.certificate
         assert isinstance(cycle, NegativeCycle)
-        assert cycle.weight < 0
-        g = problem.graph
-        for a, b in zip(cycle.arcs, (*cycle.arcs[1:], cycle.arcs[0]), strict=True):
-            assert problem.upper[a] is None
-            assert g.heads[a] == g.tails[b]
-        assert check_feasibility(problem).feasible
+        check_cycle(problem, cycle)
+        # The problem is feasible: NetworkX finds a flow for zero costs.
+        zero = problem.with_cost((0,) * problem.graph.m, "min")
+        assert networkx_oracle(zero)[0] == "optimal"

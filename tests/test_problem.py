@@ -13,6 +13,9 @@ from protee.flow import FlowProblem, FlowResult, Status
 from protee.flow._disjoint import _walks
 from protee.flow.diagnostics import optimum_uniqueness
 from protee.graph import Digraph
+from protee.results import Guarantee, GuaranteeKind
+
+BY_HAND = Guarantee(GuaranteeKind.NONE, "built by hand for a test")
 
 G = Digraph.from_arcs(2, [(0, 1), (1, 0)])
 
@@ -51,6 +54,11 @@ def test_defaults_and_helpers() -> None:
         ({"upper": (1.5, None)}, TypeError, "integer, None or math.inf"),
         ({"cost": (math.nan, 0)}, TypeError, "finite number"),
         ({"cost": ("1", 0)}, TypeError, "finite number"),
+        # Among float costs, an int beyond the float range is refused, not
+        # an OverflowError, and so are costs whose float sum overflows.
+        ({"cost": (10**400, 0.0)}, ValueError, r"cost\[0\] is an int beyond"),
+        ({"cost": (1e308, -1e308)}, ValueError, "costs sum beyond the float"),
+        ({"cost": (10**308, 1e308)}, ValueError, "costs sum beyond the float"),
         ({"lower": (2, 0), "upper": (1, None)}, ValueError, "exceeds"),
         ({"supply": (1, 0)}, ValueError, "sum to zero"),
         ({"sense": "maximize"}, ValueError, "sense"),
@@ -75,12 +83,25 @@ def test_uniqueness_on_an_interior_optimum() -> None:
     g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
     p = FlowProblem(g, upper=(2, 2, 2), supply=(2, 0, -2))
     result = FlowResult(
-        Status.OPTIMAL, "by hand", 0, (1, 1, 1), (0, 0, 0), None, {}, "0"
+        status=Status.OPTIMAL,
+        method="by hand",
+        guarantee=BY_HAND,
+        objective=0,
+        flow=(1, 1, 1),
+        potentials=(0, 0, 0),
     )
     found = optimum_uniqueness(p, result)
+    assert (found.status, found.method) == (Status.OPTIMAL, "optimum_uniqueness")
     assert not found.unique
     assert found.direction is not None
     assert sorted(a for a, _ in found.direction) == [0, 1, 2]
     tree = FlowProblem(Digraph.from_arcs(2, [(0, 1)]), upper=(2,), supply=(1, -1))
-    single = FlowResult(Status.OPTIMAL, "by hand", 0, (1,), (0, 0), None, {}, "0")
+    single = FlowResult(
+        status=Status.OPTIMAL,
+        method="by hand",
+        guarantee=BY_HAND,
+        objective=0,
+        flow=(1,),
+        potentials=(0, 0),
+    )
     assert optimum_uniqueness(tree, single).unique

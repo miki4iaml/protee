@@ -128,7 +128,7 @@ CLIENT = Rulebook(
 )
 SPEC = Source("Specification of use", rulebook="client", edition="1")
 S = RequirementStatus
-METHODS = [info.name for info in methods()]
+METHODS = [info.name for info in methods("min_cost_flow")]
 
 
 def closed(name: str) -> tuple[Digraph, list[str], list[int]]:
@@ -275,7 +275,7 @@ def test_nonzero_minimum_and_zero_maximum() -> None:
         is S.APPLIED
     )
     closed_loop = occurrences("case-01", {"L06": 0})
-    assert closed_loop.solve().objective == 5  # type: ignore[union-attr]
+    assert closed_loop.solve().objective == 5
 
 
 def test_unattainable_and_non_binding_maxima() -> None:
@@ -296,9 +296,27 @@ def test_overconstrained_profile_and_its_minimal_conflict() -> None:
     # L01 leaves the factory: its occurrences equal the single return.
     search = occurrences("case-01", {"L06": 2}, minima={"L01": 2})
     assert not search.feasible(search.ids)
-    for method in ("enumeration", "deletion_filter"):
+    for method, status in (
+        ("enumeration", Status.OPTIMAL),
+        ("deletion_filter", Status.FEASIBLE),
+    ):
         conflict = minimal_conflict(search.ids, search.feasible, method=method)
         assert conflict.requirements == ("OC-L01", "OC-return")
+        assert (conflict.method, conflict.status) == (method, status)
+        # Tested again: infeasible together, feasible without either.
+        found = frozenset(conflict.requirements)
+        assert not search.feasible(found)
+        assert all(search.feasible(found - {r}) for r in found)
+        record = provenance(
+            inputs={"problem": search.problem, "data": search.data},
+            requirements=search.requirements,
+            values=search.values,
+            result=conflict,
+        )
+        assert (record.method, dict(record.counters)) == (
+            method,
+            dict(conflict.counters),
+        )
 
 
 def test_multiple_optima_are_detected() -> None:
@@ -359,3 +377,16 @@ def test_profile_chain_to_the_table_and_the_provenance() -> None:
     assert ("max_L06", "client", "1", True) in first.values
     changed = record(occurrences("case-01", {"*": 4, "L06": 1}))
     assert set(first.differences(changed)) == {"inputs", "result"}
+    # A flow result carries its method, parameters, counters and version.
+    carried = provenance(
+        inputs={"problem": problem, "data": search.data},
+        requirements=search.requirements,
+        values=search.values,
+        result=result,
+    )
+    assert carried.method == result.method == search.method
+    assert dict(carried.parameters) == dict(result.parameters)
+    assert dict(carried.counters) == dict(result.counters)
+    assert carried.version == result.version
+    assert carried.result == first.result
+    assert not carried.replays(first)

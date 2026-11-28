@@ -8,21 +8,11 @@ from __future__ import annotations
 import networkx as nx
 import pytest
 from hypothesis import given, settings
-from hypothesis import strategies as st
-from oracles import all_flows, graphs, problems
+from oracles import all_flows, networks, problems
 
-from protee.flow import FlowProblem, check_feasibility, max_flow
+from protee.flow import FlowProblem, Status, check_feasibility, max_flow
 from protee.flow._feasibility import cut_of
 from protee.graph import Digraph
-
-
-@st.composite
-def networks(draw: st.DrawFn) -> tuple[Digraph, list[int | None], int, int]:
-    g = draw(graphs(max_nodes=7, max_arcs=14))
-    cap: list[int | None] = [draw(st.integers(0, 6)) for _ in range(g.m)]
-    s = draw(st.integers(0, g.n - 1))
-    t = draw(st.integers(0, g.n - 1).filter(lambda v: v != s)) if g.n > 1 else s
-    return g, cap, s, t
 
 
 @given(case=networks())
@@ -70,6 +60,8 @@ def test_max_flow_errors() -> None:
         max_flow(g, [], 0, 1, method="dinic")
     with pytest.raises(ValueError, match="unknown maximum flow method"):
         max_flow(g, [1], 0, 1, method="push_relabel")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unknown maximum flow method"):
+        check_feasibility(FlowProblem(g), method="push_relabel")  # type: ignore[arg-type]
     assert max_flow(g, [None], 1, 0, method="edmonds_karp").value == 0
 
 
@@ -80,6 +72,9 @@ def test_feasibility_matches_enumeration(problem: FlowProblem) -> None:
     for method in ("dinic", "edmonds_karp"):
         found = check_feasibility(problem, method=method)
         assert found.feasible == exists
+        assert found.status is (Status.OPTIMAL if exists else Status.INFEASIBLE)
+        assert found.method == method
+        assert found.cut is found.certificate
         if found.flow is not None:
             assert not problem.violations(found.flow)
         else:
@@ -91,7 +86,7 @@ def test_feasibility_matches_enumeration(problem: FlowProblem) -> None:
 def test_infeasibility_certificates_are_violated_inequalities(
     problem: FlowProblem,
 ) -> None:
-    found = check_feasibility(problem)
+    found = check_feasibility(problem, method="dinic")
     if found.cut is not None:
         recomputed = cut_of(problem, found.cut.nodes)
         assert recomputed == found.cut
@@ -102,7 +97,7 @@ def test_hoffman_circulation() -> None:
     # A cycle whose lower bound on one arc exceeds the upper bound on another.
     g = Digraph.from_arcs(2, [(0, 1), (1, 0)])
     p = FlowProblem(g, lower=(3, 0), upper=(5, 2))
-    found = check_feasibility(p)
+    found = check_feasibility(p, method="edmonds_karp")
     assert not found.feasible
     assert found.cut is not None
     assert found.cut.excess == 1

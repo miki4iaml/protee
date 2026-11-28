@@ -1,16 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Miki
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Named minimum (or maximum) cost flow methods: registry, solve, prepare."""
+"""Named minimum (or maximum) cost flow methods: solve, prepare.
+
+The methods are those of the problem ``"min_cost_flow"`` in the registry
+(:mod:`protee.flow._registry`).
+"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from types import MappingProxyType
 
-from protee import __version__
 from protee.flow._augmenting import cycle_canceling, successive_shortest_paths
 from protee.flow._feasibility import Feasibility, check_feasibility
 from protee.flow._normal import (
@@ -21,38 +24,51 @@ from protee.flow._normal import (
     tolerance_for,
 )
 from protee.flow._problem import FlowProblem, Sense
+from protee.flow._registry import MIN_COST_FLOW as METHODS
 from protee.flow._result import Certificate, FlowResult, Status
 from protee.flow._simplex import NetworkSimplex, PivotRule
+from protee.results import MethodInfo
 
 type Number = int | float
 
+#: The counters of each method, reported by every result of the method:
+#: at zero for the work it did not do.
+_COUNTERS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "network_simplex": ("pivots", "degenerate_pivots", "bound_flips"),
+        "cycle_canceling": ("cycles_canceled", "bellman_ford_runs"),
+        "successive_shortest_paths": ("augmentations", "dijkstra_runs"),
+    }
+)
 
-@dataclass(frozen=True, slots=True)
-class MethodInfo:
-    """Description of a flow method of the registry.
+_DEFAULT_PIVOT_RULE: PivotRule = "block_search"
 
-    Attributes
-    ----------
-    name : str
-        The name to pass as ``method``.
-    summary : str
-    warm_start : bool
-        Whether :meth:`Prepared.solve` reuses the previous solution after a
-        change of costs.
-    complexity : str
-        Worst-case bound, with ``n`` nodes, ``m`` arcs, ``U`` the largest
-        capacity and ``C`` the largest absolute cost.
-    reference : str
-    options : tuple of str
-        Keyword options accepted by :func:`solve` and :func:`prepare`.
-    """
+#: The parameters of each method called without options.
+_DEFAULTS: Mapping[str, Mapping[str, object]] = MappingProxyType(
+    {"network_simplex": {"pivot_rule": _DEFAULT_PIVOT_RULE}}
+)
 
-    name: str
-    summary: str
-    warm_start: bool
-    complexity: str
-    reference: str
-    options: tuple[str, ...]
+
+def _zero_counters(method: str) -> dict[str, int]:
+    """The counters of ``method``, all at zero."""
+    return dict.fromkeys(_COUNTERS[method], 0)
+
+
+def _unsolved(
+    method: str, certificate: Certificate, sources: tuple[object, ...]
+) -> FlowResult:
+    """An infeasible result of ``method`` called without options, which did
+    not run: no flow problem could be built (the bounds conflict)."""
+    info = METHODS[method]
+    return FlowResult(
+        status=Status.INFEASIBLE,
+        method=info.name,
+        guarantee=info.guarantee,
+        parameters=_DEFAULTS.get(method, {}),
+        counters=_zero_counters(method),
+        certificate=certificate,
+        _sources=sources,
+    )
 
 
 class Prepared(ABC):
@@ -61,20 +77,36 @@ class Prepared(ABC):
     The structure (graph, bounds, supplies) is fixed; :meth:`solve` takes
     new costs. Methods with ``warm_start`` resume from the previous
     solution; the others start again.
+
+    A warm start does not change the status nor the optimal value, but
+    when several optima exist, the flow, the potentials and the counters
+    may depend on the costs solved before, which the fingerprint of the
+    result (``inputs``) does not cover.
     """
 
-    def __init__(self, problem: FlowProblem, method: MethodInfo) -> None:
+    def __init__(
+        self,
+        problem: FlowProblem,
+        method: MethodInfo,
+        parameters: Mapping[str, object] | None = None,
+    ) -> None:
         self.problem = problem
         self.method = method
+        self.parameters: Mapping[str, object] = MappingProxyType(dict(parameters or {}))
         self._normal = normalize(problem)
         self._unbounded = UnboundedCheck(problem)
         self._feasibility: Feasibility | None = None
 
     def feasibility(self) -> Feasibility:
         """Feasibility of the prepared structure, computed once: it does not
-        depend on the costs."""
+        depend on the costs.
+
+        It runs :func:`~protee.flow.check_feasibility` with
+        ``method="dinic"``, the support computation of the minimum cost
+        flow methods.
+        """
         if self._feasibility is None:
-            self._feasibility = check_feasibility(self.problem)
+            self._feasibility = check_feasibility(self.problem, method="dinic")
         return self._feasibility
 
     def solve(
@@ -85,7 +117,9 @@ class Prepared(ABC):
         Returns
         -------
         FlowResult
-            ``counters`` count the work of this call only.
+            ``counters`` count the work of this call only, under the names
+            of the method, whatever the outcome: at zero when the problem
+            is found unbounded, or infeasible, before the method runs.
         """
         problem = (
             self.problem
@@ -94,15 +128,17 @@ class Prepared(ABC):
                 self.problem.cost if cost is None else cost, sense
             )
         )
+        counters = _zero_counters(self.method.name)
         cycle = self._unbounded.cycle(signed_costs(problem))
         if cycle is not None:
             feasibility = self.feasibility()
             if feasibility.feasible:
-                return self._result(problem, Status.UNBOUNDED, None, None, cycle, {})
+                return self._result(
+                    problem, Status.UNBOUNDED, None, None, cycle, counters
+                )
             return self._result(
-                problem, Status.INFEASIBLE, None, None, feasibility.cut, {}
+                problem, Status.INFEASIBLE, None, None, feasibility.cut, counters
             )
-        counters: dict[str, int] = {}
         found = self._run(problem, counters)
         if found is None:
             cut = self.feasibility().cut
@@ -130,12 +166,14 @@ class Prepared(ABC):
         return FlowResult(
             status=status,
             method=self.method.name,
+            guarantee=self.method.guarantee,
+            parameters=self.parameters,
+            counters=counters,
+            certificate=certificate,
             objective=None if flow is None else problem.objective(flow),
             flow=flow,
             potentials=None if potentials is None else tuple(potentials),
-            certificate=certificate,
-            counters=MappingProxyType(dict(counters)),
-            version=__version__,
+            _sources=(problem,),
         )
 
 
@@ -144,9 +182,9 @@ class _PreparedSimplex(Prepared):
         self,
         problem: FlowProblem,
         method: MethodInfo,
-        pivot_rule: PivotRule = "block_search",
+        pivot_rule: PivotRule = _DEFAULT_PIVOT_RULE,
     ) -> None:
-        super().__init__(problem, method)
+        super().__init__(problem, method, {"pivot_rule": pivot_rule})
         self._simplex = NetworkSimplex(self._normal, pivot_rule)
 
     def _run(
@@ -171,7 +209,6 @@ class _PreparedCycleCanceling(Prepared):
             return None
         normal = self._with_cost(signed_costs(problem))
         y = [x - lo for x, lo in zip(feasibility.flow, normal.lower, strict=True)]
-        counters.update(cycles_canceled=0, bellman_ford_runs=0)
         return y, cycle_canceling(normal, y, counters)
 
     def _with_cost(self, cost: list[Number]) -> Normal:
@@ -182,7 +219,6 @@ class _PreparedSuccessiveShortestPaths(_PreparedCycleCanceling):
     def _run(
         self, problem: FlowProblem, counters: dict[str, int]
     ) -> tuple[list[int], list[Number]] | None:
-        counters.update(augmentations=0, dijkstra_runs=0)
         return successive_shortest_paths(
             self._with_cost(signed_costs(problem)), counters
         )
@@ -194,40 +230,6 @@ _FACTORIES: dict[str, Callable[..., Prepared]] = {
     "successive_shortest_paths": _PreparedSuccessiveShortestPaths,
 }
 
-METHODS: Mapping[str, MethodInfo] = MappingProxyType(
-    {
-        "network_simplex": MethodInfo(
-            "network_simplex",
-            "Primal network simplex, strongly feasible trees (Cunningham), big-M start.",
-            True,
-            "finite (anti-cycling); pseudo-polynomial bounds in practice",
-            "Ahuja, Magnanti, Orlin, Network Flows (1993), ch. 11; Cunningham (1976)",
-            ("pivot_rule",),
-        ),
-        "cycle_canceling": MethodInfo(
-            "cycle_canceling",
-            "Feasible flow by maximum flow, then cancel negative residual cycles (Bellman-Ford).",
-            False,
-            "O(n m^2 C U)",
-            "Klein (1967); Ahuja, Magnanti, Orlin (1993), section 9.6",
-            (),
-        ),
-        "successive_shortest_paths": MethodInfo(
-            "successive_shortest_paths",
-            "Augment along shortest paths with node potentials (Dijkstra on reduced costs).",
-            False,
-            "O(n U (m + n log n)), U the total supply after saturation",
-            "Edmonds, Karp (1972); Tomizawa (1971); Ahuja, Magnanti, Orlin (1993), section 9.7",
-            (),
-        ),
-    }
-)
-
-
-def methods() -> tuple[MethodInfo, ...]:
-    """The flow methods of the registry, in a fixed order."""
-    return tuple(METHODS.values())
-
 
 def prepare(problem: FlowProblem, *, method: str, **options: object) -> Prepared:
     """Prepare ``problem`` for a named method (see :func:`methods`).
@@ -236,8 +238,8 @@ def prepare(problem: FlowProblem, *, method: str, **options: object) -> Prepared
     ----------
     problem : FlowProblem
     method : str
-        A name from :func:`methods`; there is no default: the choice of the
-        method stays the caller's.
+        A name from ``methods("min_cost_flow")``; there is no default: the
+        choice of the method stays the caller's.
     **options
         Options of the method, such as ``pivot_rule`` (``"block_search"``
         or ``"dantzig"``) for ``network_simplex``.
@@ -272,7 +274,7 @@ def solve(problem: FlowProblem, *, method: str, **options: object) -> FlowResult
     problem : FlowProblem
     method : str
         ``"network_simplex"``, ``"cycle_canceling"`` or
-        ``"successive_shortest_paths"`` (see :func:`methods`).
+        ``"successive_shortest_paths"`` (see ``methods("min_cost_flow")``).
     **options
         Options of the method (see :func:`prepare`).
 
