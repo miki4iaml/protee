@@ -41,6 +41,7 @@ from protee.constraints import (
     Attribute,
     FlowSearch,
     Impact,
+    InfeasibleSubset,
     Origin,
     Parameter,
     Requirement,
@@ -53,6 +54,7 @@ from protee.constraints import (
     ValueSet,
     minimal_conflict,
     minimal_relaxation,
+    provenance,
     relax_by_tiers,
     requirement_table,
     resolve_values,
@@ -61,6 +63,7 @@ from protee.constraints import (
 )
 from protee.flow import FlowProblem, solve
 from protee.graph import Digraph
+from protee.results import GuaranteeKind, Status
 
 S = RequirementStatus
 
@@ -91,9 +94,14 @@ def test_conflicts_and_relaxations_against_enumeration(seed: int) -> None:
     exact = minimal_conflict(ids, feasible, method="enumeration")
     assert len(exact.requirements) == smallest
     assert not feasible(frozenset(exact.requirements))
+    assert exact.status is Status.OPTIMAL
+    assert exact.guarantee.kind is GuaranteeKind.EXACT
     irreducible = minimal_conflict(ids, feasible, method="deletion_filter")
     assert frozenset(irreducible.requirements) in conflicts
     assert irreducible.method == "deletion_filter"
+    assert irreducible.status is Status.FEASIBLE
+    assert irreducible.guarantee.kind is GuaranteeKind.PROPERTY
+    assert irreducible.evaluations == irreducible.counters["feasibility_tests"]
     assert irreducible.evaluations <= len(ids) + 1
     hitting = [
         k
@@ -103,7 +111,9 @@ def test_conflicts_and_relaxations_against_enumeration(seed: int) -> None:
     ]
     fewest = minimal_relaxation(ids, feasible, method="enumeration")
     assert len(fewest.requirements) == hitting[0]
+    assert fewest.status is Status.OPTIMAL
     greedy = minimal_relaxation(ids, feasible, method="greedy")
+    assert greedy.status is Status.FEASIBLE
     kept = frozenset(ids) - set(greedy.requirements)
     assert feasible(kept)
     for r in greedy.requirements:
@@ -121,14 +131,29 @@ def test_generic_methods_edge_cases() -> None:
 
     with pytest.raises(ValueError, match="no conflict"):
         minimal_conflict(ids, always, method="enumeration")
-    assert minimal_conflict(ids, never, method="enumeration").requirements == ()
-    assert minimal_relaxation(ids, always, method="greedy").requirements == ()
+    # Infeasible without any requirement: the empty conflict, found by
+    # either method, with the status of the method.
+    for method, status in (
+        ("enumeration", Status.OPTIMAL),
+        ("deletion_filter", Status.FEASIBLE),
+    ):
+        empty = minimal_conflict(ids, never, method=method)
+        assert (empty.requirements, empty.status) == ((), status)
+    # Already holding: the empty relaxation.
+    for method, status in (
+        ("enumeration", Status.OPTIMAL),
+        ("greedy", Status.FEASIBLE),
+    ):
+        none = minimal_relaxation(ids, always, method=method)
+        assert (none.requirements, none.status, none.evaluations) == ((), status, 1)
     with pytest.raises(ValueError, match="without any requirement"):
         minimal_relaxation(ids, never, method="greedy")
-    with pytest.raises(ValueError, match="unknown method"):
+    with pytest.raises(ValueError, match="unknown method 'iis' for minimal_conflict"):
         minimal_conflict(ids, never, method="iis")
-    with pytest.raises(ValueError, match="unknown method"):
+    with pytest.raises(ValueError, match="unknown method 'best'"):
         minimal_relaxation(ids, always, method="best")
+    with pytest.raises(ValueError, match="unknown method 'greedy'"):
+        minimal_conflict(ids, never, method="greedy")
     with pytest.raises(TypeError, match="expected requirement identifiers"):
         minimal_conflict(requirement_set(), never, method="enumeration")  # type: ignore[arg-type]
 
@@ -146,12 +171,26 @@ def test_tier_is_computed_from_the_conditions() -> None:
     assert result.relaxed == ("WORKS",)
     assert result.tried == ((1, False), (3, True))
     assert (result.method, result.cost) == ("greedy", None)
+    assert (result.status, result.certificate) == (Status.FEASIBLE, None)
+    exact = relax_by_tiers(["DETOUR", "WORKS"], feasible, tiers, method="enumeration")
+    assert (exact.level, exact.relaxed, exact.status) == (3, ("WORKS",), Status.OPTIMAL)
     none_needed = relax_by_tiers(["DETOUR", "WORKS"], holds([]), tiers, method="greedy")
     assert (none_needed.level, none_needed.relaxed, none_needed.tried) == (0, (), ())
+    assert none_needed.status is Status.FEASIBLE
+    # No tier is feasible: infeasible, and the requirements that no tier
+    # relaxes, infeasible together, are the certificate.
     hopeless = relax_by_tiers(
         ["DETOUR", "WORKS", "X"], holds([frozenset({"X"})]), tiers, method="greedy"
     )
     assert hopeless.level is None
+    assert hopeless.status is Status.INFEASIBLE
+    assert hopeless.tried == ((1, False), (3, False))
+    assert hopeless.certificate == InfeasibleSubset(("X",))
+    untiered = relax_by_tiers(
+        ["A"], holds([frozenset({"A"})]), [], method="enumeration"
+    )
+    assert (untiered.status, untiered.tried) == (Status.INFEASIBLE, ())
+    assert untiered.certificate == InfeasibleSubset(("A",))
     with pytest.raises(ValueError, match="share a level"):
         relax_by_tiers(
             ["DETOUR", "WORKS"], feasible, [tiers[0], tiers[0]], method="greedy"
@@ -212,7 +251,7 @@ def test_useful_failure_on_a_route() -> None:
     # requirements, and the relaxations are proposed, never a silent
     # penalty.
     s = search(UnknownPolicy.EXCLUDE)
-    assert s.solve() is None
+    assert s.solve().status is Status.INFEASIBLE
     assert s.ids == tuple(r.id for r in ROUTING)
     conflict = minimal_conflict(s.ids, s.feasible, method="deletion_filter")
     assert conflict.requirements == ("ADM-MASS", "ADM-HEIGHT", "ADM-ZONE")
@@ -230,6 +269,28 @@ def test_useful_failure_on_a_route() -> None:
     route = s.solve(set(s.ids) - {"ADM-ZONE"})
     assert route is not None
     assert route.arcs == (4,)
+    # The conflict carries its provenance, which a new search replays.
+    p = provenance(
+        inputs={"graph": ROADS, "data": DATA},
+        requirements=s.requirements,
+        values=s.values,
+        result=conflict,
+    )
+    assert (p.method, dict(p.parameters), p.version) == (
+        "deletion_filter",
+        {},
+        conflict.version,
+    )
+    assert dict(p.counters) == {"feasibility_tests": conflict.evaluations}
+    again = search(UnknownPolicy.EXCLUDE)
+    replay = provenance(
+        inputs={"graph": ROADS, "data": DATA},
+        requirements=again.requirements,
+        values=again.values,
+        result=minimal_conflict(again.ids, again.feasible, method="deletion_filter"),
+    )
+    assert p == replay
+    assert p.replays(replay)
 
 
 def test_impact_with_and_without() -> None:
@@ -325,10 +386,10 @@ def test_lexicographic_search_minimizes_unknowns_first() -> None:
         policy=UnknownPolicy.ADMIT_AND_COUNT,
         base=base,
     )
-    assert plain.solve() is not None
-    assert plain.solve().arcs == (0, 1)  # type: ignore[union-attr]
-    assert lex.solve().arcs == (2, 3)  # type: ignore[union-attr]
-    assert lex.solve().cost == 3.0  # type: ignore[union-attr]
+    assert plain.solve().status is Status.OPTIMAL
+    assert plain.solve().arcs == (0, 1)
+    assert lex.solve().arcs == (2, 3)
+    assert lex.solve().cost == 3.0
     assert lex.view().unknown_count == 1
     assert lex.view().lexicographic_weights(base)[1] == (1, 1.0)
     assert lex.weights()[1] == (1, 1.0)
@@ -337,7 +398,10 @@ def test_lexicographic_search_minimizes_unknowns_first() -> None:
 
 
 def test_route_search_checks_its_arguments() -> None:
-    assert RouteSearch.methods() == ("dijkstra", "lexicographic_dijkstra")
+    assert [i.name for i in RouteSearch.methods()] == [
+        "dijkstra",
+        "lexicographic_dijkstra",
+    ]
     with pytest.raises(ValueError, match="unknown method"):
         search(UnknownPolicy.EXCLUDE, method="astar")
     with pytest.raises(ValueError, match="unknown requirements"):
@@ -701,9 +765,16 @@ def check_tiers(
             break
     if first is None:
         assert result.level is None
+        assert result.status is Status.INFEASIBLE
+        # The certificate is tested again.
+        certificate = result.certificate
+        assert isinstance(certificate, InfeasibleSubset)
+        assert not feasible(frozenset(certificate.requirements))
         return None
     level, permitted = first
     assert result.level == level
+    exact = method == "enumeration"
+    assert result.status is (Status.OPTIMAL if exact else Status.FEASIBLE)
     relaxed = set(result.relaxed)
     assert relaxed <= permitted
     kept = frozenset(ids) - relaxed

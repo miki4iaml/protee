@@ -31,6 +31,13 @@ poste hors ligne (aucun solveur, service ou moteur en ligne).
 > version 1.0, et le modèle des profils de cycle de vie est en cours de
 > conception.
 
+Toutes les méthodes rendent le même [modèle de résultat](docs/results.md)
+(`protee.results`) : un statut, le certificat qu'il appelle (une coupe
+violée, un cycle améliorant, les nœuds atteints par une recherche), la
+garantie de la méthode, des compteurs de travail déterministes, la
+version et une empreinte des entrées. Chaque module liste ses méthodes
+par `methods()`.
+
 Les graphes typés s'échangent avec d'autres projets au format node-link
 [`protee-node-link/0`](docs/node-link-format.md) (`protee.io`, page en
 anglais), et se dessinent par `protee.viz` : sélection, groupes,

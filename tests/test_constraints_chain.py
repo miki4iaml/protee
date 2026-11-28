@@ -11,6 +11,7 @@ import json
 import math
 import random
 import re
+from collections.abc import Mapping
 
 import numpy as np
 import pytest
@@ -46,6 +47,8 @@ from protee.constraints import (
     compose,
     evaluate,
     fingerprint,
+    minimal_conflict,
+    minimal_relaxation,
     provenance,
     requirement_table,
     resolve_values,
@@ -55,6 +58,7 @@ from protee.constraints import (
 from protee.flow import FlowProblem
 from protee.graph import Digraph
 from protee.paths import dijkstra
+from protee.results import Status
 
 S = RequirementStatus
 
@@ -198,9 +202,12 @@ def test_full_chain_from_the_text_to_a_verified_route(seed: int) -> None:
         random_case(seed, n=7, m=18, unknown=0.0), s, t, [True] * graph.m, oracle
     )
     route = search.solve()
-    if route is None:
+    if route.status is Status.INFEASIBLE:
         assert best == math.inf
+        assert route.route is None
         return
+    assert route.cost is not None
+    assert route.arcs is not None
     assert math.isclose(route.cost, best)
     check = search.verify(route)
     on_route = {kinds[a] for a in route.arcs}
@@ -468,6 +475,64 @@ def test_provenance_keeps_both_values_and_reports_a_different_replay() -> None:
     assert not p.replays(r)
     assert set(p.differences(r)) == {"method", "inputs"}
     assert isinstance(p, Provenance)
+
+
+def test_provenance_of_a_result_on_the_common_model() -> None:
+    # A result built on ResultCore gives its method, parameters, counters
+    # and version; the fingerprint of its own inputs tells apart two
+    # problems whose methods share a name.
+    _, reqs, values = chain_inputs()
+    ids = tuple(r.id for r in reqs)
+    blocked = frozenset({"OVERSIZE-SPEED-ROAD", "OBJ"})
+
+    def feasible(active: frozenset[str]) -> bool:
+        return not blocked <= active
+
+    def record(
+        result: object,
+        method: str | None = None,
+        parameters: Mapping[str, object] | None = None,
+        counters: Mapping[str, int] | None = None,
+    ) -> Provenance:
+        return provenance(
+            method,
+            parameters,
+            inputs={"ids": ids},
+            requirements=reqs,
+            values=values,
+            result=result,
+            counters=counters,
+        )
+
+    conflict = minimal_conflict(ids, feasible, method="deletion_filter")
+    p = record(conflict)
+    assert (p.method, dict(p.parameters), p.version) == (
+        "deletion_filter",
+        {},
+        conflict.version,
+    )
+    assert dict(p.counters) == dict(conflict.counters)
+    again = record(minimal_conflict(ids, feasible, method="deletion_filter"))
+    assert p == again
+    assert p.replays(again)
+    exact = record(minimal_conflict(ids, feasible, method="enumeration"))
+    assert not p.replays(exact)
+    assert set(p.differences(exact)) == {"method", "inputs", "result"}
+    relaxation = record(minimal_relaxation(ids, feasible, method="enumeration"))
+    assert relaxation.method == exact.method
+    assert not relaxation.replays(exact)
+    # Given explicitly, the parameters and counters are recorded as given;
+    # another method than the result's is refused.
+    explicit = record(conflict, method="deletion_filter", parameters={"note": 1})
+    assert dict(explicit.parameters) == {"note": 1}
+    assert not explicit.replays(p)
+    assert dict(record(conflict, counters={}).counters) == {}
+    with pytest.raises(ValueError, match="produced by 'deletion_filter'"):
+        record(conflict, method="enumeration")
+    with pytest.raises(TypeError, match="needs its method and parameters"):
+        record((1, 2))
+    with pytest.raises(TypeError, match="needs its method and parameters"):
+        record((1, 2), method="dijkstra")
 
 
 def test_provenance_keeps_the_edition_and_freezes_its_parameters() -> None:

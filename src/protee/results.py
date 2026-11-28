@@ -39,6 +39,7 @@ __all__ = [
     "Guarantee",
     "GuaranteeKind",
     "InfeasibleCut",
+    "InfeasibleSubset",
     "MethodInfo",
     "NegativeCycle",
     "ResultCore",
@@ -165,7 +166,26 @@ class CrossedCuts:
     backward: SeparatingCut
 
 
-type Certificate = InfeasibleCut | NegativeCycle | SeparatingCut | CrossedCuts
+@dataclass(frozen=True, slots=True)
+class InfeasibleSubset:
+    """Requirements that cannot hold together, as the feasibility test
+    answered: the certificate that requirements cannot be relaxed enough.
+
+    Attributes
+    ----------
+    requirements : tuple of str
+        In the order of the identifiers given; empty when the problem is
+        infeasible without any requirement. Not always a minimal conflict:
+        ``protee.constraints.minimal_conflict`` on these requirements finds
+        one.
+    """
+
+    requirements: tuple[str, ...]
+
+
+type Certificate = (
+    InfeasibleCut | NegativeCycle | SeparatingCut | CrossedCuts | InfeasibleSubset
+)
 
 
 class GuaranteeKind(StrEnum):
