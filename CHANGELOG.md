@@ -8,7 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-27
+## [0.2.0] - 2026-11-28
 
 Rendering for the producers of node-link documents. The format
 `protee-node-link/0` gains two optional keys, `mappings` and `locator`.
