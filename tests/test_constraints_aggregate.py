@@ -56,14 +56,17 @@ from protee.constraints import (
     OnUnknown,
     Origin,
     Parameter,
+    Reason,
     Requirement,
     RequirementSet,
+    RequirementStatus,
     Source,
     Tally,
     UnknownRule,
     Value,
     ValueSet,
     ValueState,
+    Verdict,
     ZeroCount,
     aggregate,
     check_inputs,
@@ -928,10 +931,25 @@ def test_a_derived_value_to_be_set_names_the_members_without_a_value() -> None:
     graph, data = arcs([3.0, 4.0, None])
     d = derive(MIXED, {"width": MAX("width")})
     resolved = resolve_values([d.values], WIDTH_REQS)
-    reason = "value of 'width' to be set: no value for U"
-    assert evaluate(WIDTH_REQ, graph, data, resolved).not_applicable == reason
+    # A1: the bound of the known members, 3.5 m by B, fails the first arc
+    # already; the others stay unknown.
+    effect = evaluate(WIDTH_REQ, graph, data, resolved)
+    assert effect.not_applicable is None
+    assert effect.verdict is not None
+    assert effect.reasons is not None
+    assert effect.verdict.tolist() == [Verdict.FAIL, Verdict.UNKNOWN, Verdict.UNKNOWN]
+    assert effect.reasons.tolist() == [
+        Reason.VIOLATED,
+        Reason.VALUE_TO_BE_SET,
+        Reason.MISSING_DATA,
+    ]
+    reason = "value of 'width' to be set: no value for U; at least 3.5 m (B)"
     check = check_inputs(WIDTH_REQS, graph, data, resolved)["ADM-WIDTH"]
-    assert (check.reason, check.missing_values) == (reason, ("width",))
+    assert (check.reason, check.missing_values) == (
+        f"{reason}; data on 2 of the 3 arcs in scope, 1 fail at the bound",
+        ("width",),
+    )
+    assert (check.expected, check.provable) == (RequirementStatus.PARTIAL, False)
     na = Group("N", ((member("K", width=NA("carried")), 1),))
     resolved = resolve_values([derive(na, {"width": MAX("width")}).values], WIDTH_REQS)
     reason = (
@@ -1281,21 +1299,27 @@ def test_the_envelope_is_exact_for_a_threshold(
         each = [_verdicts(w, graph, data) for w in values]
         return [min(column) for column in zip(*each, strict=True)]
 
-    def verdicts(policy: OnUnknown) -> list[int] | str | None:
+    def verdicts(policy: OnUnknown) -> list[int]:
         d = derive(group, {"width": MAX("width")}, policy)
         effect = evaluate(
             WIDTH_REQ, graph, data, resolve_values([d.values], WIDTH_REQS)
         )
-        if effect.verdict is None:
-            return effect.not_applicable
+        assert effect.verdict is not None
         return [int(v) for v in effect.verdict]
 
     if len(known) == len(widths):
         assert verdicts(PROPAGATE) == conjunction(known)
         return
-    # R1: under propagate, the requirement is not applicable.
-    missing = ", ".join(f"m{k}" for k, w in enumerate(widths) if w is None)
-    assert verdicts(PROPAGATE) == f"value of 'width' to be set: no value for {missing}"
+    # A1: under propagate, the bound of the known members fails an arc for
+    # certain where a known member fails it; every other arc is unknown,
+    # and every arc is unknown without a known member.
+    partial = [Verdict.UNKNOWN] * len(limits)
+    if known:
+        partial = [
+            Verdict.FAIL if v == Verdict.FAIL else Verdict.UNKNOWN
+            for v in conjunction(known)
+        ]
+    assert verdicts(PROPAGATE) == partial
     policy = OnUnknown.assume({"width": chosen(3.6, "m")})
     assert verdicts(policy) == conjunction([3.6 if w is None else w for w in widths])
     if known:

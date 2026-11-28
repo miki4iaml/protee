@@ -254,9 +254,17 @@ def aggregate(
         policy; if every member is, the value is not applicable too. Under
         ``propagate``, an unknown input leaves the value to be set; its
         derivation keeps, for ``max``, ``min`` and ``strictest``, the
-        extreme of the known inputs as ``bound``. Only ``strictest`` is
-        decided despite unknown inputs, when a known value reaches the
-        last label of the order.
+        extreme of the known inputs as ``bound``, which an admissibility
+        requirement reads: an arc a known member fails fails for certain
+        (see :func:`evaluate`). Only ``strictest`` is decided despite
+        unknown inputs, when a known value reaches the last label of the
+        order.
+
+        The envelope follows the direction of the requirement it feeds: a
+        quantity at most a limit (``threshold_admissibility``) by its
+        maximum, a capacity at least a demand (``capacity_admissibility``)
+        by its minimum, a required class (``class_admissibility``) by
+        ``strictest``; the code does not check it.
 
         An input in another unit than the parameter it reads (a value of a
         member, the value assumed, the threshold) is converted into it,

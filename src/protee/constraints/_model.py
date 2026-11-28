@@ -63,6 +63,19 @@ def _sorted_names(what: str, names: Iterable[str]) -> tuple[str, ...]:
     return out
 
 
+def _datum_text(x: Datum, unit: str | None = None) -> str:
+    """A value as messages and summaries write it: a label quoted; a
+    number exactly, an integral float without its decimals, any other as
+    its shortest form (``repr``); then its unit."""
+    if isinstance(x, str):
+        return repr(x)
+    if isinstance(x, float) and x.is_integer() and abs(x) < 2**53:
+        shown = str(int(x))
+    else:
+        shown = repr(x)
+    return shown if unit is None else f"{shown} {unit}"
+
+
 def _count(what: str, x: object, *, least: int) -> int:
     if isinstance(x, bool) or not isinstance(x, int):
         raise TypeError(f"{what} must be an integer, got {x!r}")
@@ -201,7 +214,9 @@ class Value:
     value : int, float, str or None
         ``None`` means *to be set* (or *not applicable*, when
         ``not_applicable`` gives the reason): a requirement that needs it is
-        then not applicable, with this reason, and never decided silently.
+        then not applicable, with this reason, and never decided silently;
+        an admissibility requirement whose value is to be set by an envelope
+        reads instead the bound of its derivation (see :func:`evaluate`).
         ``math.inf`` stands for no limit.
     source : Source
     origin : Origin
@@ -966,7 +981,9 @@ class Derivation:
         inputs are known: the extreme of the known inputs, which the
         unknown value reaches at least (``max``: the value is at least the
         bound; ``min``: at most; ``strictest`` and a classification: at
-        least as strict).
+        least as strict, in the order of its labels). The admissibility
+        patterns read it: an arc the bound fails fails for certain (see
+        :func:`evaluate`).
     bound_fixed_by : tuple of str
         The inputs that fix the bound.
 

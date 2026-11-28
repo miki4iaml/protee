@@ -74,6 +74,7 @@ from protee.constraints import (
     select_by_class,
     verify_route,
 )
+from protee.constraints._table import _summary
 from protee.graph import Digraph
 
 
@@ -385,6 +386,14 @@ def test_a_threshold_is_converted_into_the_unit_of_its_characteristic(
         i for i in trace.inputs if i.parameter == "oversize_mass_category_2_max"
     )
     assert read.value == RV.values.values["oversize_mass_category_2_max"]
+    # The table says it: values as read, then the conversions.
+    if expected == "2" and mass == 72.0:
+        assert _summary(value) == (
+            "highest rank of length, mass, width: '2', fixed by 'mass' (72 t above "
+            "48000 kg, art. 3); converted: 'oversize_mass_category_1_max' 48000 kg "
+            "to 48 t (x1/1000), 'oversize_mass_category_2_max' 72000 kg to 72 t "
+            "(x1/1000)"
+        )
 
 
 def test_a_characteristic_is_converted_into_the_unit_of_its_parameter() -> None:

@@ -9,6 +9,7 @@ it derives carries a complete trace, whatever the policy for the unknown.
 from __future__ import annotations
 
 import copy
+import json
 import pickle
 import re
 from collections.abc import Callable, Iterable
@@ -54,6 +55,7 @@ from protee.constraints import (
     fingerprint,
 )
 from protee.constraints._derivations import DERIVATIONS
+from protee.constraints._table import _summary, _value
 
 #: Members known, unknown and not applicable, nested; a member whose
 #: values are not applicable.
@@ -212,6 +214,15 @@ REFUSE_KNOWN_ONLY = {
 }
 
 
+#: How the summary of each derivation begins.
+_HEADS = {
+    "aggregate": ("max", "min", "strictest", "sum", "count", "mean", "threshold"),
+    "classify_by_thresholds": ("highest rank of",),
+    "select_by_class": ("selected by",),
+    "column_length": ("column_length",),
+}
+
+
 def test_registry_is_closed_and_ordered() -> None:
     infos = derivations()
     assert [d.name for d in infos] == [
@@ -292,6 +303,11 @@ def test_every_derived_value_carries_its_trace(name: str, policy: str) -> None:
             # A value to be set is fixed by no input.
             if value.to_be_set:
                 assert trace.fixed_by == ()
+            # The table shows every trace, as plain data and in words.
+            shown = _value(value)
+            json.dumps(shown)
+            assert shown["derivation"]["summary"] == _summary(value)
+            assert _summary(value).startswith(_HEADS[name])
     if results:
         assert ValueState.KNOWN in states
         assert ValueState.NOT_APPLICABLE in states

@@ -84,6 +84,13 @@ class Pattern:
     -----
     The registry is closed until version 1.0: a new pattern comes with its
     definition, its composition rule and its tests.
+
+    Two admissibility patterns compare a value of the subject with an arc
+    attribute in opposite directions: ``threshold_admissibility`` wants the
+    quantity of the subject at most the limit of the arc,
+    ``capacity_admissibility`` the demand of the arc at most the capacity
+    of the subject. The envelope of a group follows: a quantity aggregates
+    by its maximum, a capacity by its minimum (see :func:`aggregate`).
     """
 
     name: str
@@ -128,6 +135,20 @@ PATTERNS: Mapping[str, Pattern] = MappingProxyType(
                 subject=Subject.VEHICLE,
                 parameters=("required_class",),
                 attributes=("class",),
+                composition=_KLEENE,
+            ),
+            Pattern(
+                name="capacity_admissibility",
+                summary=(
+                    "An arc is admissible when its demand (the depth of a ford, "
+                    "the grade of an approach) is at most the capacity of the "
+                    "vehicle (the depth it can ford, the grade it can climb)."
+                ),
+                family=Family.ADMISSIBILITY,
+                effect_kind=EffectKind.VERDICT,
+                subject=Subject.VEHICLE,
+                parameters=("capacity",),
+                attributes=("demand",),
                 composition=_KLEENE,
             ),
             Pattern(

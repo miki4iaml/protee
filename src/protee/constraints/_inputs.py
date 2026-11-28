@@ -13,7 +13,12 @@ from types import MappingProxyType
 import numpy as np
 
 from protee.constraints._data import ArcData
-from protee.constraints._effects import Reason, evaluate, unset_reason
+from protee.constraints._effects import (
+    Reason,
+    evaluate,
+    undecided_reason,
+    unset_reason,
+)
 from protee.constraints._model import Requirement, RequirementSet, ResolvedValues
 from protee.constraints._patterns import PATTERNS, EffectKind
 from protee.constraints._verify import RequirementStatus
@@ -35,10 +40,14 @@ class InputCheck:
         ``partial`` when only arcs without data can, ``not_applied`` when
         no arc can (every known value fails), ``no_data`` when an
         attribute is absent, ``not_applicable`` when a value is to be set
-        or not applicable, or no arc is in scope.
+        or not applicable, or no arc is in scope. An admissibility
+        requirement whose value is to be set by an envelope reads the
+        bound of its known inputs (see :func:`evaluate`): ``not_applied``
+        when the bound fails every arc in scope, ``partial`` otherwise.
     reason : str
         For a value to be set or not applicable, the reason
-        :func:`evaluate` gives.
+        :func:`evaluate` gives; for a value to be set by an envelope, with
+        its bound and the arcs that fail already.
     missing_values : tuple of str
         Parameters to be set or without a value (not those declared not
         applicable).
@@ -53,7 +62,8 @@ class InputCheck:
     provable : bool or None
         Whether at least one known arc in scope passes; ``False`` means
         the requirement can be proved on no arc (every known limit is below
-        the threshold). ``None`` when it does not apply.
+        the threshold, or the value is still to be set). ``None`` when it
+        does not apply.
     derived : mapping of str to str or None
         The derived attributes used, with their quality.
     """
@@ -171,9 +181,11 @@ def _check(
         missing_attributes=missing_attributes,
         derived=derived,
     )
-    # A value missing, to be set or not applicable: the reason of evaluate.
+    # A value missing, to be set or not applicable: the reason of evaluate,
+    # unless the bound of an envelope to be set decides some arcs.
     unset = unset_reason(requirement, values)
-    if unset is not None:
+    undecided = undecided_reason(requirement, values)
+    if unset is not None and undecided is None:
         return replace(base, reason=unset)
     scope = data.in_scope(requirement.scope)
     total = int(scope.sum())
@@ -231,7 +243,16 @@ def _check(
         if known == 0
         else f"data on {known} of the {total} arcs in scope"
     )
-    if provable is False:
+    if undecided is not None:
+        assert effect.reasons is not None
+        failed = int((scope & (effect.reasons == Reason.VIOLATED)).sum())
+        expected = (
+            RequirementStatus.NOT_APPLIED
+            if failed == total
+            else RequirementStatus.PARTIAL
+        )
+        reason = f"{undecided}; {reason}, {failed} fail at the bound"
+    elif provable is False:
         reason += "; no known arc passes: the requirement cannot be proved on any arc"
     return replace(
         base,

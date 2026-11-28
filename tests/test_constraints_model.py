@@ -62,6 +62,7 @@ def test_registry_is_closed_and_ordered() -> None:
     assert names == [
         "threshold_admissibility",
         "class_admissibility",
+        "capacity_admissibility",
         "zone_exclusion",
         "speed_cap",
         "occurrence_bounds",
@@ -72,12 +73,21 @@ def test_registry_is_closed_and_ordered() -> None:
     assert by_name["occurrence_bounds"].family is Family.CAPACITY
     assert by_name["occurrence_bounds"].optional == ("minimum",)
     assert all(p.summary and p.composition for p in patterns())
+    capacity = by_name["capacity_admissibility"]
+    assert (capacity.family, capacity.effect_kind) == (
+        Family.ADMISSIBILITY,
+        EffectKind.VERDICT,
+    )
+    assert (capacity.parameters, capacity.attributes) == (("capacity",), ("demand",))
+    assert capacity.composition == by_name["threshold_admissibility"].composition
 
 
 def test_pattern_states_what_its_value_constrains() -> None:
     # A10: the value of a threshold is the vehicle's, a zone is infrastructure.
+    # A capacity is the vehicle's too: the demand is the arc's.
     by_name = {p.name: p for p in patterns()}
     assert by_name["threshold_admissibility"].subject is Subject.VEHICLE
+    assert by_name["capacity_admissibility"].subject is Subject.VEHICLE
     assert by_name["zone_exclusion"].subject is Subject.INFRASTRUCTURE
     assert by_name["occurrence_bounds"].subject is Subject.FLOW
     assert by_name["objective"].subject is Subject.RESULT

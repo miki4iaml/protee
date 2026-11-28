@@ -108,6 +108,48 @@ and this project adheres to
   `RequirementRow.to_dict(readable=True)` adds it to each value as
   `"shown"`, and the default output does not depend on the extras
   installed.
+- `capacity_admissibility`, a pattern of the closed registry: an arc is
+  admissible when its demand (the depth of a ford, the grade of an
+  approach) is at most the capacity of the subject (the depth it can
+  ford, the grade it can climb), the mirror of `threshold_admissibility`:
+  a verdict per arc, a pass at equality, `unknown` and counted without
+  data, out of scope as any verdict; `verify_route`, `verify_flow` and
+  `check_inputs` check it. The envelope of a group follows the direction
+  of its requirement: a quantity by its maximum, a capacity by its
+  minimum.
+- The partial envelope in the admissibility patterns: when the value of
+  a `threshold_admissibility`, `class_admissibility` or
+  `capacity_admissibility` requirement is to be set by an envelope
+  (`max`, `min` or `strictest` of `aggregate`, or
+  `classify_by_thresholds`, under `propagate`), `evaluate` reads the
+  `bound` of its known members: an arc the bound fails whatever the
+  unknown members fails for certain (`Reason.VIOLATED`), every other arc
+  in scope is `unknown` (the new `Reason.VALUE_TO_BE_SET`), counted and
+  handled by the policy for the unknown of the search; without a known
+  member, every arc in scope is `unknown`. This is the Kleene conjunction
+  of the verdicts of the members, a tested property: the unknown is never
+  presumed compatible. `verify_route` and `verify_flow` give
+  `not_applied` or `partial` with the bound in their reason (`"... at
+  least 3.5 m (B)"`), and `check_inputs` the arcs that fail already.
+- The trace of derived values in the requirement table and the
+  provenance. `RequirementRow.to_dict` gives each value, retained or
+  discarded, the reason it is not applicable (`"not_applicable"`) and its
+  `"derivation"`: name, rule, settings, the inputs that fix it, every
+  input with its state and its value (each with its own derivation, so
+  that a speed selected by a category, the category and the envelope it
+  reads show whole), the assumptions, the inputs left out, the
+  conversions, the unknown inputs, the bound of a value to be set, and a
+  `"summary"` in words: the rule, the value and the member that fixes it
+  with its source (`"max of 'width' over G: 3.5 m, fixed by B (Sheet B
+  (2), p. 4)"`), the threshold a characteristic crosses, the bound of a
+  value to be set and its members without a value, a decision despite
+  unknown values, the assumptions, the inputs left out with their
+  reasons, the conversions; `to_dict(readable=True)` adds `"shown"` at
+  every depth. `Provenance.derivations` records, for each derived value
+  used and those it reads in turn, its parameter, subject, derivation,
+  rule and the inputs that fix it; the fingerprint of the inputs covers
+  every input of every derivation, so that a member that fixes no value
+  still changes it.
 
 ### Changed
 
@@ -124,6 +166,25 @@ and this project adheres to
 - `check_inputs`: `missing_values` lists the values missing or to be set,
   not those declared not applicable; the reason of a value without one is
   that of `evaluate`.
+- `evaluate`: an admissibility requirement whose value is to be set by an
+  envelope with a bound, or without any known member, is no longer an
+  effect that does not apply: its arcs fail where the bound fails them,
+  and are `unknown` elsewhere. `verify_route` and `verify_flow` give it
+  `not_applied` or `partial` instead of `not_applicable`, `check_inputs`
+  expects `not_applied` or `partial`, and `RouteSearch` and `FlowSearch`
+  bar the arcs that fail and apply their policy for the unknown to the
+  others, where the requirement was left out. A value to be set that is
+  not derived, or derived by another rule (`sum`, `select_by_class`,
+  `column_length`), still makes its requirement not applicable.
+  Migration: a search that relied on such a requirement being ignored now
+  meets its unknown arcs; choose the policy for the unknown that fits
+  (`exclude`, `penalize`, `admit_and_count`), or set the value (a sheet
+  for the members without one, or `OnUnknown.assume`).
+- `RequirementRow.to_dict` gives each value two more keys,
+  `"not_applicable"` and `"derivation"` (`None` for a value that is not
+  derived), and `Provenance` a last field, `derivations`, empty by
+  default. Migration: a comparison of a whole entry of the table, or of a
+  provenance built field by field, takes them into account.
 - The tables of the requirement model (`ValueSet.values`, `Rulebook.title`,
   `Parameter.aliases`, the mappings of `Requirement`, `ResolvedValues`) are
   frozen mappings (`FrozenMap`) instead of `types.MappingProxyType`: still

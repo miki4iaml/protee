@@ -17,7 +17,13 @@ import numpy.typing as npt
 
 from protee.constraints._compose import ComputationView
 from protee.constraints._data import ArcData
-from protee.constraints._effects import Effect, Reason, Verdict, evaluate
+from protee.constraints._effects import (
+    Effect,
+    Reason,
+    Verdict,
+    evaluate,
+    undecided_reason,
+)
 from protee.constraints._model import (
     Origin,
     Requirement,
@@ -44,8 +50,8 @@ class RequirementStatus(StrEnum):
     """Status of a requirement in a result, computed by verification only.
 
     - ``applied``: verified on every element in scope;
-    - ``partial``: no violation, but elements without data, admitted and
-      counted;
+    - ``partial``: no violation, but elements without data (or undecided
+      by the bound of a value to be set), admitted and counted;
     - ``not_applied``: violated, or not verifiable as applied, with the
       reason;
     - ``no_data``: the data cannot support the requirement (an attribute is
@@ -54,6 +60,11 @@ class RequirementStatus(StrEnum):
       no element of the result is in scope, or the pattern does not apply
       to this kind of result (flow bounds on a route, a speed cap on a
       flow).
+
+    An admissibility requirement whose value is to be set by an envelope
+    reads the bound of its known inputs (see :func:`evaluate`): it is
+    ``not_applied`` on an element the bound fails, ``partial`` otherwise,
+    never ``applied`` before its value is set.
     """
 
     APPLIED = "applied"
@@ -74,11 +85,12 @@ class RequirementCheck:
     reason : str
     passed, failed, unknown : int
         Number of elements in scope (arcs of a route, arcs with flow) that
-        pass, fail, or lack data.
+        pass, fail, or are unknown: without data, or undecided by the bound
+        of a value to be set.
     failing : tuple of int
         The arcs that fail.
     unknown_arcs : tuple of int
-        The arcs without data.
+        The arcs counted unknown.
     """
 
     requirement: str
@@ -187,7 +199,11 @@ def _verdict_check(
     arcs: npt.NDArray[np.int64],
     data: ArcData,
     what: str,
+    undecided: str | None = None,
 ) -> RequirementCheck:
+    """The check of a verdict on ``arcs``; ``undecided`` is why the value
+    of the requirement leaves arcs unknown (a value to be set by an
+    envelope, with its bound), added to the reason."""
     rid = requirement.id
     if absent := _absent(requirement, data):
         return _no_data(requirement, absent)
@@ -199,12 +215,17 @@ def _verdict_check(
             rid, RequirementStatus.NOT_APPLICABLE, f"no {what} in the scope"
         )
     v = effect.verdict[in_scope]
+    texts = ("{} arcs violate it", "{} arcs without data", "verified on {} arcs")
+    if undecided is not None:
+        # The braces of the value are kept from format.
+        tail = "; " + undecided.replace("{", "{{").replace("}", "}}")
+        texts = ("{} arcs violate it" + tail, "{} arcs unknown" + tail, texts[2])
     return _outcome(
         requirement,
         int((v == Verdict.PASS).sum()),
         tuple(int(a) for a in in_scope[v == Verdict.FAIL]),
         tuple(int(a) for a in in_scope[v == Verdict.UNKNOWN]),
-        ("{} arcs violate it", "{} arcs without data", "verified on {} arcs"),
+        texts,
     )
 
 
@@ -323,7 +344,9 @@ def verify_route(
                 r.id, RequirementStatus.NOT_APPLICABLE, effect.not_applicable
             )
         elif kind is EffectKind.VERDICT:
-            check = _verdict_check(r, effect, arcs, data, "arc of the route")
+            check = _verdict_check(
+                r, effect, arcs, data, "arc of the route", undecided_reason(r, values)
+            )
         elif kind is EffectKind.COST_TERM:
             check = _cost_check(r, effect, arcs, data, used)
         elif kind is EffectKind.OBJECTIVE:
@@ -592,7 +615,9 @@ def verify_flow(
                 r.id, RequirementStatus.NOT_APPLICABLE, effect.not_applicable
             )
         elif kind is EffectKind.VERDICT:
-            check = _verdict_check(r, effect, carried, data, "arc with flow")
+            check = _verdict_check(
+                r, effect, carried, data, "arc with flow", undecided_reason(r, values)
+            )
         elif kind is EffectKind.BOUND:
             check = _bound_check(
                 r, effect, np.asarray(x, dtype=np.float64), data, values
