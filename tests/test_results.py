@@ -5,16 +5,22 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import hashlib
+import pickle
 import struct
 import subprocess
 import sys
-from types import MappingProxyType
+from decimal import Decimal
+from fractions import Fraction
 
+import numpy as np
 import pytest
 
 import protee
-from protee import _fingerprint, flow, paths, results
+from protee import _fingerprint, flow, paths, results, routes
+from protee._frozen import FrozenMap
 from protee.graph import Digraph
 from protee.results import (
     Guarantee,
@@ -83,13 +89,61 @@ def test_core_freezes_its_mappings_and_records_the_version() -> None:
     assert r.status is Status.OPTIMAL
     assert r.version == protee.__version__
     assert r.parameters["weights"] == (1, 2)
-    assert isinstance(r.parameters, MappingProxyType)
-    assert isinstance(r.parameters["options"], MappingProxyType)
-    assert isinstance(r.counters, MappingProxyType)
+    assert isinstance(r.parameters, FrozenMap)
+    assert isinstance(r.parameters["options"], FrozenMap)
+    assert isinstance(r.counters, FrozenMap)
     with pytest.raises(TypeError):
         r.counters["pivots"] = 3  # type: ignore[index]
     with pytest.raises(AttributeError):
         r.method = "other"  # type: ignore[misc]
+
+
+def test_a_result_is_a_value() -> None:
+    # It leaves a worker process (pickle), copies, enters a set, and
+    # converts to a dictionary; a pickled result keeps its fingerprint.
+    g = Digraph.from_arcs(2, [(0, 1)])
+    r = ResultCore(
+        status=Status.OPTIMAL,
+        method="m",
+        guarantee=EXACT,
+        parameters={"weights": [1, 2], "options": {"k": [3]}},
+        counters={"pivots": 2},
+        _sources=(g, (1.0,)),
+    )
+    unread = pickle.loads(pickle.dumps(r))
+    assert unread == r
+    assert unread.inputs == r.inputs
+    assert pickle.loads(pickle.dumps(r)).inputs == r.inputs
+    assert copy.deepcopy(r) == r == copy.copy(r)
+    assert {r, copy.deepcopy(r)} == {r}
+    assert dataclasses.asdict(r)["counters"] == {"pivots": 2}
+    cut = ResultCore(
+        status=Status.INFEASIBLE, method="m", guarantee=EXACT, certificate=CUT
+    )
+    assert hash(pickle.loads(pickle.dumps(cut))) == hash(cut)
+
+
+def test_frozen_map() -> None:
+    m = FrozenMap({"b": 1, "a": (2, 3)})
+    assert m == {"a": (2, 3), "b": 1} == FrozenMap([("a", (2, 3)), ("b", 1)])
+    assert m != {"a": (2, 3)}
+    assert m != [("a", (2, 3)), ("b", 1)]
+    assert (len(m), list(m), m["a"]) == (2, ["b", "a"], (2, 3))
+    assert hash(m) == hash(FrozenMap({"a": (2, 3), "b": 1}))
+    assert repr(m) == "FrozenMap({'b': 1, 'a': (2, 3)})"
+    assert repr(FrozenMap()) == "FrozenMap({})"
+    nested = FrozenMap({"inner": FrozenMap({"k": 1})})
+    for again in (pickle.loads(pickle.dumps(nested)), copy.deepcopy(nested)):
+        assert again == nested
+        assert isinstance(again["inner"], FrozenMap)
+    with pytest.raises(TypeError):
+        m["c"] = 4  # type: ignore[index]
+    with pytest.raises(AttributeError, match="immutable"):
+        m._items = {}
+    with pytest.raises(AttributeError, match="immutable"):
+        del m._items
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(FrozenMap({"a": [1]}))
 
 
 @pytest.mark.parametrize("status", [Status.INFEASIBLE, Status.UNBOUNDED])
@@ -192,3 +246,48 @@ def test_results_and_paths_import_without_numpy() -> None:
         "sorted({'numpy', 'scipy'} & sys.modules.keys())"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_numpy_scalars_and_exact_numbers_have_canonical_forms() -> None:
+    canonical = _fingerprint._canonical
+    fp = _fingerprint.fingerprint
+    # A float64 is a float: its digits, whatever NumPy's print options.
+    assert canonical(np.float64(1.0)) == {"float": "1.0"} == canonical(1.0)
+    before = fp(np.float64(0.1), [np.float64(0.5), np.float64(2.0)])
+    with np.printoptions(legacy="1.25"):
+        assert fp(np.float64(0.1), [np.float64(0.5), np.float64(2.0)]) == before
+    # A sequence of float64, as NumPy weights give, is packed like floats.
+    assert canonical([np.float64(1.0), 2.5]) == canonical([1.0, 2.5])
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    as_list = paths.dijkstra(g, [1.0, 2.0, 5.0], 0)
+    weights = np.array([1.0, 2.0, 5.0])
+    assert paths.dijkstra(g, weights, 0).inputs == as_list.inputs  # type: ignore[arg-type]
+    # Other NumPy scalars count as the Python number of the same value.
+    assert canonical(np.int64(3)) == 3
+    assert canonical(np.float32(1.5)) == {"float": "1.5"}
+    # Fractions and decimals: exact, tagged forms.
+    assert canonical(Fraction(2, 4)) == {"fraction": "1/2"}
+    assert canonical(Decimal("0.10")) == {"decimal": "0.10"}
+    assert len({fp(Fraction(1, 2)), fp(Decimal("0.5")), fp(0.5), fp("1/2")}) == 4
+    halves = [Fraction(1, 2), Fraction(1, 3), Fraction(2)]
+    exact = paths.dijkstra(g, halves, 0)  # type: ignore[arg-type]
+    expected: tuple[object, ...] = (0, Fraction(1, 2), Fraction(5, 6))
+    assert exact.distance == expected
+    assert exact.inputs == paths.dijkstra(g, tuple(halves), 0).inputs  # type: ignore[arg-type]
+    assert exact.inputs != paths.dijkstra(g, [0.5, 1 / 3, 2.0], 0).inputs
+    decimals = [Decimal("0.1"), Decimal("0.2"), Decimal(1)]
+    tenths = paths.dijkstra(g, decimals, 0)  # type: ignore[arg-type]
+    assert tenths.distance[2] == Decimal("0.3")
+    assert len(tenths.inputs) == 64
+
+
+def test_inputs_without_canonical_form_name_their_type() -> None:
+    # The computation accepts any hashable key; its fingerprint cannot.
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2), (0, 2)])
+    r = routes.replacement_paths(g, [1, 1, 5], 0, 2, [0, 1], key=[b"a", b"b", b"c"])
+    assert r.status is Status.OPTIMAL
+    with pytest.raises(TypeError, match="no canonical form for bytes: supported"):
+        assert r.inputs
+    # A NumPy scalar without a Python counterpart: an error, not a recursion.
+    with pytest.raises(TypeError, match="no canonical form for numpy.longdouble"):
+        _fingerprint.fingerprint(np.longdouble(1))

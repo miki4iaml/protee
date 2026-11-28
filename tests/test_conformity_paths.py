@@ -12,7 +12,7 @@ from collections.abc import Callable, Collection, Sequence
 
 import networkx as nx
 import pytest
-from conformity import check_core, check_registry
+from conformity import check_core, check_options, check_registry
 from hypothesis import given
 from hypothesis import strategies as st
 from oracles import graphs
@@ -131,6 +131,9 @@ def test_registries() -> None:
         "most_reliable_path",
     ]
     assert routes.methods("k_shortest_paths") == (INFOS["k_shortest_paths"],)
+    # A method is named after its function: its options are keywords of it.
+    for name, info in INFOS.items():
+        check_options(info, getattr(paths, name, None) or getattr(routes, name))
     with pytest.raises(ValueError, match="unknown problem 'max_flow'"):
         paths.methods("max_flow")
     with pytest.raises(ValueError, match="unknown problem"):
@@ -217,10 +220,13 @@ def test_lexicographic_dijkstra_conforms(case: Case) -> None:
 ROUTE_COUNTERS = {"dijkstra_runs", "settled_nodes", "scanned_arcs"}
 
 
-@given(case=instances(), data=st.data(), order=st.sampled_from(["free", "fixed"]))
-def test_waypoint_route_conforms(case: Case, data: st.DataObject, order: str) -> None:
+def check_waypoint_route(case: Case, wps: tuple[int, ...], order: str) -> str:
+    """Run :func:`routes.waypoint_route` and check it; return the outcome:
+    ``"optimal"``, or the certificate: ``"crossed"`` (two waypoints miss
+    each other), ``"start"`` (the start misses a terminal), ``"end"`` (a
+    waypoint misses the end, in free order) or ``"leg"`` (in the given
+    order, a terminal misses the next one)."""
     g, w, s, t, excluded = case
-    wps = tuple(data.draw(st.lists(st.integers(0, g.n - 1), max_size=3)))
     free = order == "free"
     r = conforms(
         lambda: routes.waypoint_route(
@@ -235,7 +241,7 @@ def test_waypoint_route_conforms(case: Case, data: st.DataObject, order: str) ->
         assert r.certificate is None
         assert r.order is not None
         assert r.legs is not None
-        return
+        return "optimal"
     assert r.status is Status.INFEASIBLE
     assert (r.order, r.legs, r.arcs, r.cost) == (None, None, None, None)
     stops = (s, *wps, t)
@@ -243,15 +249,53 @@ def test_waypoint_route_conforms(case: Case, data: st.DataObject, order: str) ->
         assert free
         pair = check_crossed_cuts(g, r.certificate, excluded)
         assert set(pair) <= set(wps)
-        return
+        return "crossed"
     cut = check_separating_cut(g, r.certificate, excluded)
     (a,) = cut.sources
     if not free or len(wps) <= 1:
         assert (a, cut.target) in set(itertools.pairwise(stops))
-    elif a == s:
+        return "leg"
+    if a == s:
         assert cut.target in (*wps, t)
-    else:
-        assert (a, cut.target) in {(v, t) for v in wps}
+        return "start"
+    assert (a, cut.target) in {(v, t) for v in wps}
+    return "end"
+
+
+@given(case=instances(), data=st.data(), order=st.sampled_from(["free", "fixed"]))
+def test_waypoint_route_conforms(case: Case, data: st.DataObject, order: str) -> None:
+    g = case[0]
+    wps = tuple(data.draw(st.lists(st.integers(0, g.n - 1), max_size=3)))
+    check_waypoint_route(case, wps, order)
+
+
+# 0 -> 1 -> 3 and 0 -> 2 -> 3, then 3 -> 4: the waypoints 1 and 2 never
+# reach each other, and 3 never reaches 1 or 2.
+BRANCHES = Digraph.from_arcs(5, [(0, 1), (1, 3), (0, 2), (2, 3), (3, 4)])
+# 1 and 2 reach each other through arcs 2 and 3 only, which are excluded.
+BARRED = Digraph.from_arcs(4, [(0, 1), (0, 2), (1, 2), (2, 1), (1, 3), (2, 3)])
+NONE: frozenset[int] = frozenset()
+
+
+@pytest.mark.parametrize(
+    ("case", "wps", "order", "outcome"),
+    [
+        ((BRANCHES, [1] * 5, 0, 3, NONE), (1, 2), "free", "crossed"),
+        ((BRANCHES, [1] * 5, 0, 4, NONE), (2, 1, 3), "free", "crossed"),
+        ((BARRED, [1] * 6, 0, 3, frozenset({2, 3})), (2, 1), "free", "crossed"),
+        ((BRANCHES, [1] * 5, 0, 1, NONE), (3, 2), "free", "end"),
+        ((BRANCHES, [1] * 5, 0, 1, NONE), (2, 4), "free", "end"),
+        ((BRANCHES, [1] * 5, 1, 4, NONE), (3, 0), "free", "start"),
+        ((BRANCHES, [1] * 5, 0, 4, frozenset({3})), (2, 1), "fixed", "leg"),
+        ((BARRED, [1] * 6, 0, 3, NONE), (2, 1), "free", "optimal"),
+    ],
+)
+def test_waypoint_route_certificates_conform(
+    case: Case, wps: tuple[int, ...], order: str, outcome: str
+) -> None:
+    # Deterministic cases for the certificates that random instances seldom
+    # reach: each is checked by NetworkX, through check_waypoint_route.
+    assert check_waypoint_route(case, wps, order) == outcome
 
 
 @given(case=instances(), k=st.integers(1, 4))

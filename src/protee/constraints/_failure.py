@@ -19,14 +19,16 @@ from dataclasses import KW_ONLY, dataclass, field
 from types import MappingProxyType
 
 import numpy as np
+import numpy.typing as npt
 
 from protee.constraints._compose import ComputationView, UnknownPolicy, compose
 from protee.constraints._data import ArcData
-from protee.constraints._effects import Effect, evaluate
+from protee.constraints._effects import Effect, Verdict, evaluate
 from protee.constraints._model import RequirementSet, ResolvedValues
 from protee.constraints._registry import FEASIBILITY_TESTS, info
 from protee.constraints._verify import Verification, verify_flow, verify_route
 from protee.flow import FlowProblem, FlowResult, Status, methods, solve
+from protee.flow._methods import _unsolved
 from protee.graph import Digraph
 from protee.paths import (
     LexicographicPaths,
@@ -567,6 +569,15 @@ class RouteSearchResult(ResultCore):
         penalties included; ``None`` when there is none.
     active : tuple of str
         The active requirements, in the order of the search.
+
+    Notes
+    -----
+    ``counters``: ``settled_nodes`` and ``scanned_arcs`` of the shortest
+    path run. ``inputs`` is that of the run: it covers the graph, the
+    weights and the excluded arcs that the active requirements give, the
+    source and the target, not the requirements themselves. Two sets of
+    active requirements with the same effect share it, while their
+    ``active`` differ.
     """
 
     route: Route | None = None
@@ -856,6 +867,22 @@ class RouteSearch:
         )
 
 
+def _bounds_or_bars(effect: Effect, arc: int, policy: UnknownPolicy) -> bool:
+    """Whether ``effect`` sets a flow bound on ``arc``, or bars it under
+    ``policy`` (a failed verdict, or an unknown one excluded)."""
+    if effect.lower is not None and effect.lower[arc] > 0:
+        return True
+    if effect.upper is not None and math.isfinite(effect.upper[arc]):
+        return True
+    if effect.verdict is None:
+        return False
+    verdict = effect.verdict[arc]
+    return bool(
+        verdict == Verdict.FAIL
+        or (verdict == Verdict.UNKNOWN and policy is UnknownPolicy.EXCLUDE)
+    )
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class FlowSearch:
     """Flows of a problem under subsets of the requirements.
@@ -910,10 +937,11 @@ class FlowSearch:
         """Identifiers of the requirements, in the order of the set."""
         return tuple(self._effects)
 
-    def problem_for(self, active: Iterable[str] | None = None) -> FlowProblem | None:
-        """The problem under the active requirements, ``None`` when their
-        bounds conflict on an arc."""
-        chosen = _active(self.ids, active)
+    def _bounds(
+        self, chosen: frozenset[str]
+    ) -> tuple[ComputationView, npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """The view of the active requirements, and the lower and upper
+        bounds they give with those of the problem."""
         p = self.problem
         view = compose(
             p.graph,
@@ -924,8 +952,12 @@ class FlowSearch:
         lower = np.maximum(np.asarray(p.lower, dtype=np.float64), view.lower)
         upper = np.minimum(base_upper, view.upper)
         upper = np.where(view.admitted, upper, 0.0)
-        if (lower > upper).any():
-            return None
+        return view, lower, upper
+
+    def _problem(
+        self, lower: npt.NDArray[np.float64], upper: npt.NDArray[np.float64]
+    ) -> FlowProblem:
+        p = self.problem
         return FlowProblem(
             p.graph,
             lower=[int(x) for x in lower],
@@ -935,24 +967,57 @@ class FlowSearch:
             sense=p.sense,
         )
 
-    def solve(self, active: Iterable[str] | None = None) -> FlowResult | None:
-        """The result under the active requirements, ``None`` when their
-        bounds conflict."""
-        problem = self.problem_for(active)
-        return None if problem is None else solve(problem, method=self.method)
+    def problem_for(self, active: Iterable[str] | None = None) -> FlowProblem | None:
+        """The problem under the active requirements, ``None`` when their
+        bounds conflict on an arc (no flow problem can be built: see
+        :meth:`solve` for the certificate)."""
+        _, lower, upper = self._bounds(_active(self.ids, active))
+        if (lower > upper).any():
+            return None
+        return self._problem(lower, upper)
+
+    def solve(self, active: Iterable[str] | None = None) -> FlowResult:
+        """The result under the active requirements (all by default).
+
+        Returns
+        -------
+        FlowResult
+            That of the named method on :meth:`problem_for`. When the
+            bounds of the active requirements conflict on an arc (a lower
+            bound above the upper one), no problem can be built and the
+            method does not run: the status is ``infeasible``, the counters
+            of the method are zero, and the certificate is an
+            :class:`InfeasibleSubset` of the active requirements that bound
+            or bar those arcs, which conflict on their own.
+        """
+        chosen = _active(self.ids, active)
+        view, lower, upper = self._bounds(chosen)
+        conflicts = np.flatnonzero(lower > upper)
+        if conflicts.size == 0:
+            return solve(self._problem(lower, upper), method=self.method)
+        involved = {
+            e.requirement
+            for e in view.effects
+            for a in conflicts
+            if _bounds_or_bars(e, int(a), self.policy)
+        }
+        return _unsolved(
+            self.method,
+            InfeasibleSubset(tuple(r for r in self.ids if r in involved)),
+            (self.problem, tuple(lower.tolist()), tuple(upper.tolist())),
+        )
 
     def cost(self, active: Iterable[str]) -> float | None:
         """The optimal value under the active requirements, ``None`` when
         there is none (conflicting bounds, infeasible or unbounded)."""
         result = self.solve(active)
-        if result is None or result.objective is None:
+        if result.objective is None:
             return None
         return float(result.objective)
 
     def feasible(self, active: Iterable[str]) -> bool:
         """Whether a feasible flow exists under the active requirements."""
-        result = self.solve(active)
-        return result is not None and result.status is not Status.INFEASIBLE
+        return self.solve(active).status is not Status.INFEASIBLE
 
     def verify(
         self, flow: FlowResult | Sequence[int], active: Iterable[str] | None = None
@@ -988,12 +1053,11 @@ class FlowSearch:
         """
         without = _without(self.ids, requirement)
 
-        def outcome(result: FlowResult | None) -> tuple[bool, float | None]:
-            if result is None or result.status is Status.INFEASIBLE:
+        def outcome(result: FlowResult) -> tuple[bool, float | None]:
+            if result.status is Status.INFEASIBLE:
                 return False, None
-            if result.status is Status.UNBOUNDED or result.objective is None:
-                return True, None
-            return True, float(result.objective)
+            # Unbounded: feasible, without an optimal value.
+            return True, None if result.objective is None else float(result.objective)
 
         ok_with, cost_with = outcome(self.solve())
         ok_without, cost_without = outcome(self.solve(without))

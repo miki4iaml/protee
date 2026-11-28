@@ -54,6 +54,9 @@ def test_defaults_and_helpers() -> None:
         ({"upper": (1.5, None)}, TypeError, "integer, None or math.inf"),
         ({"cost": (math.nan, 0)}, TypeError, "finite number"),
         ({"cost": ("1", 0)}, TypeError, "finite number"),
+        # An int beyond the float range is refused, not an OverflowError.
+        ({"cost": (10**400, 0)}, ValueError, r"cost\[0\] is an int beyond"),
+        ({"cost": (1e308, -1e308)}, ValueError, "costs sum beyond the float"),
         ({"lower": (2, 0), "upper": (1, None)}, ValueError, "exceeds"),
         ({"supply": (1, 0)}, ValueError, "sum to zero"),
         ({"sense": "maximize"}, ValueError, "sense"),

@@ -275,7 +275,7 @@ def test_nonzero_minimum_and_zero_maximum() -> None:
         is S.APPLIED
     )
     closed_loop = occurrences("case-01", {"L06": 0})
-    assert closed_loop.solve().objective == 5  # type: ignore[union-attr]
+    assert closed_loop.solve().objective == 5
 
 
 def test_unattainable_and_non_binding_maxima() -> None:

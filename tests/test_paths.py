@@ -16,7 +16,13 @@ from hypothesis import strategies as st
 from oracles import graphs
 
 from protee.graph import Digraph
-from protee.paths import NegativeCycle, ShortestPaths, bellman_ford, dijkstra
+from protee.paths import (
+    NegativeCycle,
+    ShortestPaths,
+    bellman_ford,
+    dijkstra,
+    lexicographic_dijkstra,
+)
 from protee.results import Status
 
 
@@ -172,3 +178,51 @@ def test_several_sources_target_counters_and_errors() -> None:
         dijkstra(g, [1, 1, 1], 9)
     with pytest.raises(ValueError, match="target 9 is not a node"):
         dijkstra(g, [1, 1, 1], 0, 9)
+
+
+def test_weights_that_could_overflow_are_refused() -> None:
+    # Finite weights whose sums overflow to inf would hide a reachable
+    # node: their absolute sum must be finite, and an int beyond the float
+    # range is refused with a ValueError, not an OverflowError.
+    g = Digraph.from_arcs(3, [(0, 1), (1, 2)])
+    for run in (
+        lambda w: dijkstra(g, w, 0),
+        lambda w: bellman_ford(g, w, 0),
+        lambda w: lexicographic_dijkstra(g, [(0, x) for x in w], 0),
+    ):
+        with pytest.raises(ValueError, match="sum beyond the float range"):
+            run([1e308, 1e308])
+        with pytest.raises(ValueError, match="arc 0 is beyond the float range"):
+            run([10**400, 1])
+    assert dijkstra(g, [10**300, 10**300], 0).distance == (0, 10**300, 2 * 10**300)
+    assert dijkstra(g, [8e307, 8e307], 0).distance[2] == 1.6e308
+    # On its way to a negative cycle, Bellman-Ford sums walks of up to
+    # n m arcs: 20 nodes, 2 arcs, a cycle of weight -1e307 would overflow
+    # and stop the passes before the last one, hiding the cycle.
+    cycle = Digraph.from_arcs(20, [(0, 1), (1, 0)])
+    with pytest.raises(ValueError, match="too large for bellman_ford"):
+        bellman_ford(cycle, [-1e307, 0.0], 0)
+    found = bellman_ford(cycle, [-1e300, 0.0], 0)
+    assert found.status is Status.UNBOUNDED
+    assert found.certificate == NegativeCycle((0, 1), -1e300)
+
+
+@pytest.mark.parametrize("tolerance", [-1.0, -1e-12, math.nan, math.inf])
+def test_bellman_ford_refuses_a_negative_or_infinite_tolerance(
+    tolerance: float,
+) -> None:
+    # A negative tolerance relaxes arcs that improve nothing, and showed a
+    # false cycle; NaN relaxed nothing at all.
+    with pytest.raises(ValueError, match="tolerance must be finite and non-negative"):
+        bellman_ford(Digraph.from_arcs(2, [(0, 1)]), [0], 0, tolerance=tolerance)
+
+
+def test_bellman_ford_sources_can_go_below_zero() -> None:
+    # Every node is a source when none is given: a negative arc from one
+    # source gives another a negative distance and a predecessor.
+    g = Digraph.from_arcs(2, [(0, 1)])
+    for source in (None, [0, 1]):
+        r = bellman_ford(g, [-1], source)
+        assert r.status is Status.OPTIMAL
+        assert (r.sources, r.distance, r.predecessor) == ((0, 1), (0, -1), (-1, 0))
+        assert (r.path(0), r.path(1)) == ((), (0,))

@@ -28,10 +28,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
 
 from protee import __version__
 from protee._fingerprint import freeze, inputs_fingerprint
+from protee._frozen import FrozenMap
 
 __all__ = [
     "Certificate",
@@ -168,14 +168,20 @@ class CrossedCuts:
 
 @dataclass(frozen=True, slots=True)
 class InfeasibleSubset:
-    """Requirements that cannot hold together, as the feasibility test
-    answered: the certificate that requirements cannot be relaxed enough.
+    """Requirements that cannot hold together: the certificate that
+    requirements cannot be relaxed enough, or that their bounds conflict.
 
     Attributes
     ----------
     requirements : tuple of str
-        In the order of the identifiers given; empty when the problem is
-        infeasible without any requirement. Not always a minimal conflict:
+        In the order of the identifiers given; infeasible together on their
+        own. From ``protee.constraints.relax_by_tiers``: the requirements
+        that no tier allows to relax, as the feasibility test answered;
+        empty when the tiers allow every requirement to be relaxed (the
+        problem is then infeasible without any requirement). From
+        ``protee.constraints.FlowSearch.solve``: the active requirements
+        that bound an arc or bar it, on the arcs whose lower bound exceeds
+        the upper one. Not always a minimal conflict:
         ``protee.constraints.minimal_conflict`` on these requirements finds
         one.
     """
@@ -266,7 +272,10 @@ _NEEDS_CERTIFICATE = frozenset({Status.INFEASIBLE, Status.UNBOUNDED})
 class ResultCore:
     """The fields every result of the package carries.
 
-    Each result type inherits from it and adds its solution.
+    Each result type inherits from it and adds its solution; its docstring
+    names its counters. A result is a value: it compares by its fields (not
+    by ``inputs``), hashes, pickles (it can leave a worker process) and
+    copies.
 
     Attributes
     ----------
@@ -277,9 +286,11 @@ class ResultCore:
         The guarantee of the method, as its registry declares it.
     parameters : mapping of str to object
         The options of the method, frozen (lists become tuples, mappings
-        read-only).
+        immutable).
     counters : mapping of str to int
         Deterministic work counters, comparable between runs and machines.
+        A method reports the same counters whatever the outcome: a counter
+        of work the method did not do is zero.
     version : str
         Version of protee that produced the result.
     bound : int or float, optional
@@ -314,7 +325,7 @@ class ResultCore:
         set_ = object.__setattr__
         set_(self, "status", Status(self.status))
         set_(self, "parameters", freeze(dict(self.parameters)))
-        set_(self, "counters", MappingProxyType(dict(self.counters)))
+        set_(self, "counters", FrozenMap(self.counters))
         set_(self, "_sources", tuple(self._sources))
         if self.status in _NEEDS_CERTIFICATE and self.certificate is None:
             raise ValueError(f"an {self.status} result needs a certificate")
@@ -332,9 +343,29 @@ class ResultCore:
         """Fingerprint (SHA-256) of the inputs, the method and its parameters,
         and the type of the result.
 
-        Computed at the first reading and kept; the fingerprint of a graph
-        is computed once per graph. Two results with the same fingerprint
-        and the same version come from the same computation.
+        Computed at the first reading and kept, a pickled result included;
+        the fingerprint of a graph is computed once per graph. The inputs
+        it covers are those the docstring of each result type lists.
+
+        The same call on the same inputs gives the same result, counters
+        included. Two results with the same fingerprint and the same
+        version answer the same question on the same inputs: the same
+        status and, for an exact method, the same optimal value. Their
+        solution and counters may still differ after a warm start of a
+        prepared problem (``protee.flow.prepare``), when several optima
+        exist. Conflicts and relaxations are apart: their feasibility test
+        and cost function, callables, are not part of the fingerprint, so
+        two calls with different tests share it, and their results may
+        differ in anything the test decides.
+
+        Raises
+        ------
+        TypeError
+            If an input has no canonical form (a key of
+            ``protee.routes.replacement_paths`` of an arbitrary type, for
+            instance): the supported types are those of
+            ``protee.constraints.fingerprint``, and the message names the
+            type.
         """
         found = self._inputs
         if not found:

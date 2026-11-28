@@ -3,13 +3,15 @@
 
 """Fingerprints of inputs, and frozen copies of parameters.
 
-NumPy is handled only when it is already imported: an array cannot exist
-otherwise, and the modules that need no NumPy stay light.
+NumPy, fractions and decimals are handled only when their module is
+already imported: their objects cannot exist otherwise, and the modules
+that need none of them stay light.
 
-A sequence of floats only, or of integers only that fit in 64 bits, is
-hashed by its bytes in little-endian order, whatever the machine: the
-weights of a large graph are hashed in a few milliseconds, where one tagged
-JSON item per number took longer than a shortest path computation.
+A sequence of floats only (NumPy's ``float64`` included, a subclass of
+``float``), or of integers only that fit in 64 bits, is hashed by its bytes
+in little-endian order, whatever the machine: the weights of a large graph
+are hashed in a few milliseconds, where one tagged JSON item per number
+took longer than a shortest path computation.
 """
 
 from __future__ import annotations
@@ -22,9 +24,9 @@ import sys
 from array import array
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from types import MappingProxyType
 from typing import Any
 
+from protee._frozen import FrozenMap
 from protee.graph import Digraph
 
 __all__ = ["fingerprint", "freeze", "graph_fingerprint", "inputs_fingerprint"]
@@ -35,18 +37,21 @@ def _key(x: Any) -> str:
 
 
 def _packed(items: Sequence[Any]) -> dict[str, str] | None:
-    """The digest of the bytes of a homogeneous sequence of floats (``f8``)
-    or of 64-bit integers (``i8``), or ``None`` for any other sequence."""
+    """The digest of the bytes of a homogeneous sequence of floats (``f8``,
+    subclasses of ``float`` included) or of 64-bit integers (``i8``, exactly
+    ``int``: neither booleans nor other subclasses), or ``None`` for any
+    other sequence."""
     if not items:
         return None
-    kind = type(items[0])
-    if kind is float:
+    if isinstance(items[0], float):
+        if not all(isinstance(x, float) for x in items):
+            return None
         code, tag = "d", "f8"
-    elif kind is int:
+    elif type(items[0]) is int:
+        if not all(type(x) is int for x in items):
+            return None
         code, tag = "q", "i8"
     else:
-        return None
-    if not all(type(x) is kind for x in items):
         return None
     try:
         packed = array(code, items)
@@ -57,11 +62,33 @@ def _packed(items: Sequence[Any]) -> dict[str, str] | None:
     return {tag: hashlib.sha256(packed.tobytes()).hexdigest()}
 
 
+def _exact_number(x: Any) -> dict[str, str] | None:
+    """The tagged exact form of a fraction or a decimal, ``None`` for any
+    other object: a fraction by its lowest terms, a decimal by its string
+    (trailing zeros included, as the decimal keeps them)."""
+    fractions = sys.modules.get("fractions")
+    if fractions is not None and isinstance(x, fractions.Fraction):
+        return {"fraction": str(x)}
+    decimal = sys.modules.get("decimal")
+    if decimal is not None and isinstance(x, decimal.Decimal):
+        return {"decimal": str(x)}
+    return None
+
+
+_SUPPORTED = (
+    "None, bool, str, int, float, Fraction, Decimal, enums, mappings, "
+    "sequences, sets, dataclasses, Digraph, NumPy arrays and scalars"
+)
+
+
 def _canonical(x: Any) -> Any:
     """A JSON form in which every type that JSON would confuse is tagged:
     a float is not the string of its digits, a set is not a list, and the
     keys of a mapping keep their type. A graph is replaced by the
-    fingerprint of its structure, computed once per graph."""
+    fingerprint of its structure, computed once per graph. A float is
+    written as the ``repr`` of the Python float of the same value, so that
+    NumPy's ``float64``, a subclass, does not depend on NumPy's print
+    options."""
     if x is None or isinstance(x, (bool, str)):
         return x
     if isinstance(x, enum.Enum):
@@ -69,7 +96,7 @@ def _canonical(x: Any) -> Any:
     if isinstance(x, int):
         return x
     if isinstance(x, float):
-        return {"float": repr(x)}
+        return {"float": repr(float(x))}
     if isinstance(x, Digraph):
         return {"digraph": graph_fingerprint(x)}
     np = sys.modules.get("numpy")
@@ -77,7 +104,17 @@ def _canonical(x: Any) -> Any:
         if isinstance(x, np.ndarray):
             return {"ndarray": str(x.dtype), "values": _canonical(x.tolist())}
         if isinstance(x, np.generic):
-            return _canonical(x.item())
+            value = x.item()
+            if isinstance(value, np.generic):
+                # numpy.longdouble, for instance: no Python number holds it.
+                raise TypeError(
+                    f"no canonical form for numpy.{type(x).__name__}: "
+                    f"supported are {_SUPPORTED}"
+                )
+            return _canonical(value)
+    exact = _exact_number(x)
+    if exact is not None:
+        return exact
     if isinstance(x, Mapping):
         pairs = [[_canonical(k), _canonical(v)] for k, v in x.items()]
         return {"map": sorted(pairs, key=lambda kv: _key(kv[0]))}
@@ -95,7 +132,9 @@ def _canonical(x: Any) -> Any:
                 if not f.name.startswith("_")
             },
         }
-    raise TypeError(f"no canonical form for {type(x).__name__}")
+    raise TypeError(
+        f"no canonical form for {type(x).__name__}: supported are {_SUPPORTED}"
+    )
 
 
 def _digest(form: Any) -> str:
@@ -109,15 +148,19 @@ def fingerprint(*objects: object) -> str:
     The same inputs give the same fingerprint on every machine; any change
     of a value, an attribute or the topology changes it, a change of type
     too (``1``, ``1.0`` and ``"1.0"`` differ). Supported: the objects of
-    protee (frozen dataclasses), NumPy arrays, mappings, sequences (a
-    tuple and a list with the same items are the same sequence), sets,
-    numbers, strings and ``None``. A graph enters by the fingerprint of its
-    structure, computed once per graph.
+    protee (frozen dataclasses), NumPy arrays and scalars, mappings,
+    sequences (a tuple and a list with the same items are the same
+    sequence), sets, numbers (``int``, ``float``, ``fractions.Fraction``
+    and ``decimal.Decimal``, each exactly), strings and ``None``. A graph
+    enters by the fingerprint of its structure, computed once per graph. A
+    NumPy scalar counts as the Python number of the same value.
 
     Raises
     ------
     TypeError
-        If an object has no canonical form.
+        If an object has no canonical form (``bytes``, an instance of an
+        ordinary class, ``numpy.longdouble``...); the message names its
+        type.
     """
     return _digest([_canonical(o) for o in objects])
 
@@ -151,9 +194,10 @@ def inputs_fingerprint(
 
 
 def freeze(x: Any) -> Any:
-    """A copy that cannot change: tuples, read-only mappings and arrays."""
+    """A copy that cannot change: tuples, frozen mappings (which pickle,
+    copy and hash) and read-only arrays."""
     if isinstance(x, Mapping):
-        return MappingProxyType({k: freeze(v) for k, v in x.items()})
+        return FrozenMap({k: freeze(v) for k, v in x.items()})
     if isinstance(x, (list, tuple)):
         return tuple(freeze(v) for v in x)
     if isinstance(x, AbstractSet):

@@ -42,12 +42,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from test_conformity_paths import check_separating_cut
 
+from protee import flow
 from protee.constraints import (
     Conflict,
     FlowSearch,
     InfeasibleSubset,
     Relaxation,
     Requirement,
+    RequirementStatus,
     RouteSearch,
     Tier,
     TieredRelaxation,
@@ -572,7 +574,15 @@ def test_route_search_conforms(seed: int, policy: UnknownPolicy) -> None:
                 assert search.feasible(active)
                 if method == "dijkstra":
                     assert math.isclose(result.route.cost, oracle_cost(search, active))
-                search.verify(result, active)
+                # The verification agrees with the search: no active
+                # requirement is violated; an unknown arc is admitted and
+                # counted only under that policy.
+                verification = search.verify(result, active)
+                allowed = {RequirementStatus.APPLIED, RequirementStatus.NOT_APPLICABLE}
+                if policy is UnknownPolicy.ADMIT_AND_COUNT:
+                    allowed.add(RequirementStatus.PARTIAL)
+                for rid in active:
+                    assert verification[rid].status in allowed, verification[rid]
     assert seen <= {Status.OPTIMAL, Status.INFEASIBLE}
 
 
@@ -593,3 +603,61 @@ def test_route_search_meets_both_outcomes() -> None:
         )
         statuses.add(search.solve().status)
     assert statuses == {Status.OPTIMAL, Status.INFEASIBLE}
+
+
+# The flow of a search -------------------------------------------------------
+
+FLOW_INFOS = {info.name: info for info in flow.methods("min_cost_flow")}
+MIN_L04 = occurrence("MIN-L04", "one", ["L04"], minimum="one")
+MIN_L05 = occurrence("MIN-L05", "one", ["L05"], minimum="one")
+PROFILES = {
+    # A maximum and a minimum on L03 that cannot both hold.
+    "bounds": ((OC_ALL, OC_L03, MIN_L03, RETURN), UnknownPolicy.ADMIT_AND_COUNT),
+    # L04 lies in the zone: the zone bars the arc a minimum needs.
+    "bar": ((ZONE, MIN_L04, OC_ALL, RETURN), UnknownPolicy.ADMIT_AND_COUNT),
+    # Whether L05 lies in the zone is unknown: barred under ``exclude``.
+    "unknown": ((ZONE, MIN_L05, RETURN), UnknownPolicy.EXCLUDE),
+}
+
+
+@pytest.mark.parametrize("method", sorted(FLOW_INFOS))
+@pytest.mark.parametrize("name", sorted(PROFILES))
+def test_flow_search_conforms(method: str, name: str) -> None:
+    # Under every subset of the requirements: the result of the flow
+    # method, or, when the bounds conflict, an infeasible result whose
+    # certificate is tested again: its requirements alone conflict.
+    requirements, policy = PROFILES[name]
+    reqs, data, vals = profile(*requirements)
+    search = FlowSearch(
+        reqs,
+        FlowProblem(PROFILE, cost=[1] * 6, sense="max"),
+        data,
+        vals,
+        method=method,
+        policy=policy,
+    )
+    info = FLOW_INFOS[method]
+    conflicts = 0
+    for k in range(len(search.ids) + 1):
+        for active in itertools.combinations(search.ids, k):
+            result = search.solve(active)
+            check_core(result, info, lambda: search.solve(active))  # noqa: B023
+            problem = search.problem_for(active)
+            if problem is not None:
+                assert result == flow.solve(problem, method=method)
+                continue
+            conflicts += 1
+            assert result.status is Status.INFEASIBLE
+            assert (result.flow, result.objective) == (None, None)
+            assert set(result.counters.values()) == {0}
+            assert not search.feasible(active)
+            assert search.cost(active) is None
+            certificate = result.certificate
+            assert isinstance(certificate, InfeasibleSubset)
+            assert set(certificate.requirements) <= set(active)
+            assert certificate.requirements == tuple(
+                r for r in search.ids if r in certificate.requirements
+            )
+            assert search.problem_for(certificate.requirements) is None
+            assert not search.feasible(certificate.requirements)
+    assert conflicts > 0

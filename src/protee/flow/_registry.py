@@ -9,7 +9,10 @@ the minimum cost flow methods, the maximum flow methods, and, for the
 problems that reduce to one of them (feasibility, disjoint paths), the
 methods they run. A diagnostic of :mod:`protee.flow.diagnostics` is a
 method of its own, named after it: the minimum cost flow method it runs is
-one of its parameters, ``flow_method``.
+one of its parameters, ``method``, the keyword argument of the call.
+
+The options of a method are the keyword arguments its function accepts,
+and the names under which its results record them.
 """
 
 from __future__ import annotations
@@ -60,7 +63,10 @@ MIN_COST_FLOW: Mapping[str, MethodInfo] = _by_name(
         problem="min_cost_flow",
         summary="Augment along shortest paths with node potentials (Dijkstra on reduced costs).",
         guarantee=_OPTIMAL_FLOW,
-        complexity="O(n U (m + n log n)), U the total supply after saturation",
+        complexity=(
+            "O(U (n + m) log n), U the total supply after saturation: at "
+            "most U + 1 Dijkstra runs with a binary heap"
+        ),
         reference="Edmonds, Karp (1972); Tomizawa (1971); Ahuja, Magnanti, Orlin (1993), section 9.7",
     ),
 )
@@ -145,7 +151,10 @@ DISJOINT_PATHS: Mapping[str, MethodInfo] = _by_name(
         problem="disjoint_paths",
         summary=_DISJOINT_SUMMARY.format("successive shortest paths"),
         guarantee=_DISJOINT,
-        complexity="O(k (m + n log n)): k augmentations of one unit, plus O(n^2 m)",
+        complexity=(
+            "O(k (n + m) log n): k augmentations of one unit, each a Dijkstra "
+            "run with a binary heap, plus O(n^2 m)"
+        ),
         reference=_SUURBALLE,
         options=("disjoint",),
     ),
@@ -156,19 +165,19 @@ FLOW_RANGES = MethodInfo(
     problem="flow_ranges",
     summary=(
         "Least and greatest flow of each arc: two linear programs per arc on "
-        "one prepared problem, solved by the minimum cost flow method "
-        "flow_method; at the optimum, over the optimal face given by "
+        "one prepared problem, solved by the minimum cost flow method given "
+        "as method; at the optimum, over the optimal face given by "
         "complementary slackness."
     ),
     guarantee=_exact(
         "least and greatest flow of each arc, over the feasible or the optimal flows"
     ),
     complexity=(
-        "2m solves of flow_method (2m + 1 at the optimum), "
+        "2m solves of the minimum cost flow method (2m + 1 at the optimum), "
         "with a warm start for the network simplex"
     ),
     reference=f"{_AMO}, ch. 9 (optimality conditions)",
-    options=("flow_method", "at_optimum"),
+    options=("method", "at_optimum"),
 )
 
 UNATTAINABLE_BOUNDS = MethodInfo(
@@ -179,9 +188,12 @@ UNATTAINABLE_BOUNDS = MethodInfo(
         "the feasible flows."
     ),
     guarantee=_exact("every lower or upper bound that no feasible flow reaches"),
-    complexity="that of flow_ranges over the feasible flows: 2m solves of flow_method",
+    complexity=(
+        "that of flow_ranges over the feasible flows: 2m solves of the "
+        "minimum cost flow method"
+    ),
     reference=f"{_AMO}, ch. 9 (optimality conditions)",
-    options=("flow_method",),
+    options=("method",),
 )
 
 OPTIMUM_UNIQUENESS = MethodInfo(

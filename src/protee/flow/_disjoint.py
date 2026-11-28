@@ -52,9 +52,13 @@ class DisjointPaths(ResultCore):
     the target. A leaving arc ``m + v`` then stands for node ``v``, a
     leaving arc ``a < m`` for arc ``a``.
 
-    ``counters``: those of the flow method, plus ``max_flow_augmentations``
-    and ``max_flow_phases`` of the maximum flow (Dinic) that counts the
-    disjoint paths.
+    ``counters``: those of the flow method, the same names whatever the
+    outcome (``pivots``, ``degenerate_pivots`` and ``bound_flips``, or
+    ``cycles_canceled`` and ``bellman_ford_runs``, or ``augmentations``
+    and ``dijkstra_runs``: see :class:`~protee.flow.FlowResult`), plus
+    ``max_flow_augmentations`` and ``max_flow_phases`` of the maximum flow
+    (Dinic) that counts the disjoint paths. ``inputs`` covers the graph,
+    the costs, the source, the target and ``k``.
     """
 
     paths: tuple[tuple[int, ...], ...] = ()

@@ -31,6 +31,45 @@ from protee.results import MethodInfo
 
 type Number = int | float
 
+#: The counters of each method, reported by every result of the method:
+#: at zero for the work it did not do.
+_COUNTERS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "network_simplex": ("pivots", "degenerate_pivots", "bound_flips"),
+        "cycle_canceling": ("cycles_canceled", "bellman_ford_runs"),
+        "successive_shortest_paths": ("augmentations", "dijkstra_runs"),
+    }
+)
+
+_DEFAULT_PIVOT_RULE: PivotRule = "block_search"
+
+#: The parameters of each method called without options.
+_DEFAULTS: Mapping[str, Mapping[str, object]] = MappingProxyType(
+    {"network_simplex": {"pivot_rule": _DEFAULT_PIVOT_RULE}}
+)
+
+
+def _zero_counters(method: str) -> dict[str, int]:
+    """The counters of ``method``, all at zero."""
+    return dict.fromkeys(_COUNTERS[method], 0)
+
+
+def _unsolved(
+    method: str, certificate: Certificate, sources: tuple[object, ...]
+) -> FlowResult:
+    """An infeasible result of ``method`` called without options, which did
+    not run: no flow problem could be built (the bounds conflict)."""
+    info = METHODS[method]
+    return FlowResult(
+        status=Status.INFEASIBLE,
+        method=info.name,
+        guarantee=info.guarantee,
+        parameters=_DEFAULTS.get(method, {}),
+        counters=_zero_counters(method),
+        certificate=certificate,
+        _sources=sources,
+    )
+
 
 class Prepared(ABC):
     """A flow problem prepared for one method, to be solved for many costs.
@@ -38,6 +77,11 @@ class Prepared(ABC):
     The structure (graph, bounds, supplies) is fixed; :meth:`solve` takes
     new costs. Methods with ``warm_start`` resume from the previous
     solution; the others start again.
+
+    A warm start does not change the status nor the optimal value, but
+    when several optima exist, the flow, the potentials and the counters
+    may depend on the costs solved before, which the fingerprint of the
+    result (``inputs``) does not cover.
     """
 
     def __init__(
@@ -55,9 +99,14 @@ class Prepared(ABC):
 
     def feasibility(self) -> Feasibility:
         """Feasibility of the prepared structure, computed once: it does not
-        depend on the costs."""
+        depend on the costs.
+
+        It runs :func:`~protee.flow.check_feasibility` with
+        ``method="dinic"``, the support computation of the minimum cost
+        flow methods.
+        """
         if self._feasibility is None:
-            self._feasibility = check_feasibility(self.problem)
+            self._feasibility = check_feasibility(self.problem, method="dinic")
         return self._feasibility
 
     def solve(
@@ -68,7 +117,9 @@ class Prepared(ABC):
         Returns
         -------
         FlowResult
-            ``counters`` count the work of this call only.
+            ``counters`` count the work of this call only, under the names
+            of the method, whatever the outcome: at zero when the problem
+            is found unbounded, or infeasible, before the method runs.
         """
         problem = (
             self.problem
@@ -77,15 +128,17 @@ class Prepared(ABC):
                 self.problem.cost if cost is None else cost, sense
             )
         )
+        counters = _zero_counters(self.method.name)
         cycle = self._unbounded.cycle(signed_costs(problem))
         if cycle is not None:
             feasibility = self.feasibility()
             if feasibility.feasible:
-                return self._result(problem, Status.UNBOUNDED, None, None, cycle, {})
+                return self._result(
+                    problem, Status.UNBOUNDED, None, None, cycle, counters
+                )
             return self._result(
-                problem, Status.INFEASIBLE, None, None, feasibility.cut, {}
+                problem, Status.INFEASIBLE, None, None, feasibility.cut, counters
             )
-        counters: dict[str, int] = {}
         found = self._run(problem, counters)
         if found is None:
             cut = self.feasibility().cut
@@ -129,7 +182,7 @@ class _PreparedSimplex(Prepared):
         self,
         problem: FlowProblem,
         method: MethodInfo,
-        pivot_rule: PivotRule = "block_search",
+        pivot_rule: PivotRule = _DEFAULT_PIVOT_RULE,
     ) -> None:
         super().__init__(problem, method, {"pivot_rule": pivot_rule})
         self._simplex = NetworkSimplex(self._normal, pivot_rule)
@@ -156,7 +209,6 @@ class _PreparedCycleCanceling(Prepared):
             return None
         normal = self._with_cost(signed_costs(problem))
         y = [x - lo for x, lo in zip(feasibility.flow, normal.lower, strict=True)]
-        counters.update(cycles_canceled=0, bellman_ford_runs=0)
         return y, cycle_canceling(normal, y, counters)
 
     def _with_cost(self, cost: list[Number]) -> Normal:
@@ -167,7 +219,6 @@ class _PreparedSuccessiveShortestPaths(_PreparedCycleCanceling):
     def _run(
         self, problem: FlowProblem, counters: dict[str, int]
     ) -> tuple[list[int], list[Number]] | None:
-        counters.update(augmentations=0, dijkstra_runs=0)
         return successive_shortest_paths(
             self._with_cost(signed_costs(problem)), counters
         )
