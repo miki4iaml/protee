@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-28
+
+From the description of a subject to the values of the requirements. The requirement
+chain gains a first phase, derive: members described by their sheets and hierarchical
+groups with their counts give, through named derivations of a closed registry
+(`aggregate`, `classify_by_thresholds`, `select_by_class`, `column_length`), the values
+that the requirements compare to the arcs. Each derived value keeps its rule, the member
+or characteristic that fixes it, its assumptions and conversions; an unknown is never
+presumed compatible: with members without a sheet, the bound of the known members bars
+the arcs it already fails, and the others are unknown. The new pattern
+`capacity_admissibility` compares the demand of an arc with the capacity of the subject.
+The optional extra `units` (pint) converts inputs exactly and shows values readably.
+Conventions and worked examples in [docs/derivations.md](docs/derivations.md).
+
 ### Added
 
 - `docs/derivations.md`: the derive phase in the requirement chain (members and groups, the
