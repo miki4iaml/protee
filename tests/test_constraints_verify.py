@@ -64,7 +64,7 @@ from protee.constraints import (
 from protee.flow import FlowProblem, methods, solve
 from protee.graph import Digraph
 from protee.paths import dijkstra
-from protee.routes import Route
+from protee.routes import Route, most_reliable_path, waypoint_route
 
 S = RequirementStatus
 
@@ -274,6 +274,23 @@ def test_verify_route_checks_the_route_and_the_weights() -> None:
             resolved(),
             weights=[1.0, (0, 1.0), 1.0, 1.0, 1.0],  # type: ignore[arg-type]
         )
+
+
+def test_verify_route_accepts_route_results() -> None:
+    # The route through the underpass, as a waypoint route and as the most
+    # reliable path: the same checks as for its arcs.
+    reqs, data, vals = requirement_set(), roads_data(), resolved()
+    expected = verify_route((2, 3), reqs, ROADS, data, vals).statuses
+    through = waypoint_route(ROADS, [1.0] * 5, 0, 3, [2], order="fixed")
+    assert verify_route(through, reqs, ROADS, data, vals).statuses == expected
+    reliable = most_reliable_path(ROADS, [0.5, 0.5, 0.9, 0.9, 0.1], 0, 3)
+    assert reliable.arcs == (2, 3)
+    assert verify_route(reliable, reqs, ROADS, data, vals).statuses == expected
+    cut_off = waypoint_route(ROADS, [1.0] * 5, 3, 0, [], order="fixed")
+    with pytest.raises(ValueError, match=r"no route \(status infeasible\)"):
+        verify_route(cut_off, reqs, ROADS, data, vals)
+    with pytest.raises(TypeError, match="ShortestPaths holds no single route"):
+        verify_route(dijkstra(ROADS, [1.0] * 5, 0), reqs, ROADS, data, vals)
 
 
 def test_unresolved_scope_label_is_refused() -> None:

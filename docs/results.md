@@ -25,8 +25,8 @@ the conventions; the docstrings give the fields of each result type.
 |---|---|---|
 | `optimal` | an optimum is proven, or a problem without objective is answered exactly | dual values when the problem has some (potentials, distances); otherwise the exactness of the method |
 | `feasible` | a feasible solution whose optimality is not proven | a bound and its gap when the method is `bounded`; otherwise the property the method guarantees |
-| `infeasible` | no solution exists | required: a violated cut (`InfeasibleCut`) |
-| `unbounded` | the objective is unbounded | required: an improving cycle (`NegativeCycle`) |
+| `infeasible` | no solution exists | required: for a flow, a violated cut (`InfeasibleCut`); for a path, the nodes reached from the sources and the arcs leaving them, all barred (`SeparatingCut`), or two such cuts when no order visits two waypoints (`CrossedCuts`) |
+| `unbounded` | the objective is unbounded | required: an improving cycle (`NegativeCycle`); the shortest distances of the nodes it reaches are `-inf` |
 | `limit` | a work limit was reached, measured by a counter, never by the clock | the best solution found, if any, with its bound when it is known |
 
 A result that breaks these rules cannot be built: `ResultCore` refuses an
@@ -62,7 +62,24 @@ provenance of a result built from requirements.
 
 ## Counters
 
-Counters count the work of a method in its own units (pivots,
-augmentations, cycles canceled, runs of a shortest path method…). They are
-integers, identical on every run: comparisons between methods use them
-rather than timings.
+Counters count the work of a method in its own units. They are integers,
+identical on every run: comparisons between methods use them rather than
+timings. For instance:
+
+| Methods | Counters |
+|---|---|
+| minimum cost flow | `pivots`, `degenerate_pivots`, `bound_flips` (network simplex); `cycles_canceled`, `bellman_ford_runs`; `augmentations`, `dijkstra_runs` |
+| maximum flow, feasibility | `augmentations`, `phases` (Dinic) |
+| `dijkstra`, `lexicographic_dijkstra` | `settled_nodes`, `scanned_arcs` |
+| `bellman_ford` | `passes` |
+| routes | `dijkstra_runs`, `settled_nodes`, `scanned_arcs`; `states` of the dynamic programming over waypoints, `candidates` of Yen |
+| flow diagnostics | `solves`, and the counters of the flow method they run |
+
+The docstring of each result type names its counters.
+
+The fingerprint itself is cheap: a sequence of floats only, or of integers
+only, is hashed by its bytes in little-endian order. On a graph of 577 019
+arcs, the first reading of `inputs` (the structure included) took about
+13 % of the time of a Dijkstra in pure Python, the next readings on the
+same graph about 5 %; a result that is never asked for its fingerprint
+pays nothing.

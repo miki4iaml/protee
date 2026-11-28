@@ -64,6 +64,8 @@ def check_core(
     assert all(isinstance(v, int) and v >= 0 for v in result.counters.values())
     if result.status in (Status.INFEASIBLE, Status.UNBOUNDED):
         assert result.certificate is not None
+    if result.status is Status.OPTIMAL:
+        assert result.certificate is None
     if (
         result.status is Status.FEASIBLE
         and info.guarantee.kind is GuaranteeKind.BOUNDED

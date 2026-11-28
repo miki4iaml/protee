@@ -5,6 +5,11 @@
 
 NumPy is handled only when it is already imported: an array cannot exist
 otherwise, and the modules that need no NumPy stay light.
+
+A sequence of floats only, or of integers only that fit in 64 bits, is
+hashed by its bytes in little-endian order, whatever the machine: the
+weights of a large graph are hashed in a few milliseconds, where one tagged
+JSON item per number took longer than a shortest path computation.
 """
 
 from __future__ import annotations
@@ -14,7 +19,8 @@ import enum
 import hashlib
 import json
 import sys
-from collections.abc import Mapping
+from array import array
+from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from types import MappingProxyType
 from typing import Any
@@ -26,6 +32,29 @@ __all__ = ["fingerprint", "freeze", "graph_fingerprint", "inputs_fingerprint"]
 
 def _key(x: Any) -> str:
     return json.dumps(x, sort_keys=True, separators=(",", ":"))
+
+
+def _packed(items: Sequence[Any]) -> dict[str, str] | None:
+    """The digest of the bytes of a homogeneous sequence of floats (``f8``)
+    or of 64-bit integers (``i8``), or ``None`` for any other sequence."""
+    if not items:
+        return None
+    kind = type(items[0])
+    if kind is float:
+        code, tag = "d", "f8"
+    elif kind is int:
+        code, tag = "q", "i8"
+    else:
+        return None
+    if not all(type(x) is kind for x in items):
+        return None
+    try:
+        packed = array(code, items)
+    except OverflowError:
+        return None
+    if sys.byteorder == "big":
+        packed.byteswap()
+    return {tag: hashlib.sha256(packed.tobytes()).hexdigest()}
 
 
 def _canonical(x: Any) -> Any:
@@ -53,7 +82,8 @@ def _canonical(x: Any) -> Any:
         pairs = [[_canonical(k), _canonical(v)] for k, v in x.items()]
         return {"map": sorted(pairs, key=lambda kv: _key(kv[0]))}
     if isinstance(x, (list, tuple)):
-        return [_canonical(v) for v in x]
+        packed = _packed(x)
+        return packed if packed is not None else [_canonical(v) for v in x]
     if isinstance(x, AbstractSet):
         return {"set": sorted((_canonical(v) for v in x), key=_key)}
     if dataclasses.is_dataclass(x) and not isinstance(x, type):
@@ -100,9 +130,9 @@ def graph_fingerprint(graph: Digraph) -> str:
         found = _digest(
             {
                 "n": graph.n,
-                "tails": list(graph.tails),
-                "heads": list(graph.heads),
-                "labels": None if graph.labels is None else list(graph.labels),
+                "tails": _canonical(graph.tails),
+                "heads": _canonical(graph.heads),
+                "labels": _canonical(graph.labels),
             }
         )
         object.__setattr__(graph, "_fingerprint", found)

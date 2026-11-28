@@ -11,8 +11,10 @@ parameters, the version of protee and a fingerprint of the inputs.
 
 - :class:`Status`: optimal, feasible, infeasible, unbounded, or a work
   limit reached;
-- certificates: :class:`InfeasibleCut` (Gale, Hoffman) and
-  :class:`NegativeCycle`;
+- certificates: :class:`InfeasibleCut` (Gale, Hoffman),
+  :class:`NegativeCycle`, :class:`SeparatingCut` (no path from the
+  sources to a target) and :class:`CrossedCuts` (two nodes, neither
+  reaching the other);
 - :class:`Guarantee` and :class:`MethodInfo`: what a method of a registry
   promises, and how it is described.
 
@@ -33,12 +35,14 @@ from protee._fingerprint import freeze, inputs_fingerprint
 
 __all__ = [
     "Certificate",
+    "CrossedCuts",
     "Guarantee",
     "GuaranteeKind",
     "InfeasibleCut",
     "MethodInfo",
     "NegativeCycle",
     "ResultCore",
+    "SeparatingCut",
     "Status",
 ]
 
@@ -115,7 +119,53 @@ class InfeasibleCut:
         return self.supply - self.capacity
 
 
-type Certificate = InfeasibleCut | NegativeCycle
+@dataclass(frozen=True, slots=True)
+class SeparatingCut:
+    """Certificate that no path leads from the sources to a target.
+
+    ``nodes`` holds every node reached from the sources through admitted
+    arcs, so no admitted arc leaves it, and ``target`` lies outside it.
+    The arcs that leave ``nodes`` are all barred: excluded by the caller,
+    or by the method (an arc of zero reliability, for instance). Every
+    path from a source to ``target`` uses one of them.
+
+    Attributes
+    ----------
+    nodes : frozenset of int
+        The nodes reached from the sources, the sources included.
+    sources : tuple of int
+    target : int
+        A node outside ``nodes``.
+    arcs : tuple of int
+        The arcs leaving ``nodes``, in increasing order: all barred.
+    """
+
+    nodes: frozenset[int]
+    sources: tuple[int, ...]
+    target: int
+    arcs: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CrossedCuts:
+    """Two nodes, neither of which reaches the other: no route visits both.
+
+    A route that visits two nodes goes from one to the other, in one order
+    or the other: ``forward`` shows that its source does not reach its
+    target, ``backward`` the same for the reverse pair. It certifies that
+    waypoints cannot be visited in any order.
+
+    Attributes
+    ----------
+    forward, backward : SeparatingCut
+        Each from one node of the pair to the other.
+    """
+
+    forward: SeparatingCut
+    backward: SeparatingCut
+
+
+type Certificate = InfeasibleCut | NegativeCycle | SeparatingCut | CrossedCuts
 
 
 class GuaranteeKind(StrEnum):
@@ -216,9 +266,9 @@ class ResultCore:
         A bound on the optimal value, when the method computes one.
     gap : int or float, optional
         The absolute gap between the value of the result and ``bound``.
-    certificate : InfeasibleCut or NegativeCycle, optional
+    certificate : Certificate, optional
         Why there is no solution: required when the status is
-        ``infeasible`` or ``unbounded``.
+        ``infeasible`` (a cut) or ``unbounded`` (a negative cycle).
 
     Raises
     ------

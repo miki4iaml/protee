@@ -16,7 +16,8 @@ from dataclasses import dataclass
 
 from protee.flow._problem import FlowProblem
 from protee.graph import Digraph
-from protee.paths import NegativeCycle, bellman_ford
+from protee.paths import _bellman_ford
+from protee.results import NegativeCycle
 
 type Number = int | float
 
@@ -120,7 +121,7 @@ class UnboundedCheck:
         if not self.keep:
             return None
         weight = [cost[a] for a in self.keep]
-        found = bellman_ford(self.graph, weight, tolerance=tolerance_for(weight))
-        if isinstance(found, NegativeCycle):
-            return NegativeCycle(tuple(self.keep[a] for a in found.arcs), found.weight)
-        return None
+        found = _bellman_ford(self.graph, weight, None, tolerance_for(weight)).cycle
+        if found is None:
+            return None
+        return NegativeCycle(tuple(self.keep[a] for a in found.arcs), found.weight)
