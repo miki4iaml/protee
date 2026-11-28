@@ -178,11 +178,14 @@ these steps in order.
 ### Before the first release
 
 - PyPI and TestPyPI: declare the release workflow as a trusted
-  publisher (environments `pypi` and `testpypi`). A pending publisher
-  does not reserve the name: the first upload does.
+  publisher (environments `pypi` and `testpypi`). Its repository field
+  takes the repository name alone (`protee`): the owner has a field of
+  its own. A pending publisher does not reserve the name: the first
+  upload does.
 - Zenodo: enable the repository from the account of the publishing
-  identity. `.zenodo.json` names the creator: without a name, the
-  archive fails without an error message.
+  identity. After "Sync now", the list of repositories is updated only
+  once the page is reloaded. `.zenodo.json` names the creator: without a
+  name, the archive fails without an error message.
 
 ### Each version
 
@@ -225,7 +228,14 @@ these steps in order.
 - The published wheel is downloaded (`pip download protee==x.y.z
   --no-deps`, or `curl -L`: without `-L`, the redirection of PyPI gives
   an empty file) and verified:
-  `gh attestation verify <wheel> --repo miki4iaml/protee`.
+  `gh attestation verify <wheel> --repo miki4iaml/protee` for the build
+  provenance, then with `--predicate-type https://cyclonedx.org/bom` for
+  the SBOM, which the first command does not check.
+- The published version installs in an isolated environment, with its
+  extra, on the lowest and the highest supported Python:
+  `uv run --isolated --no-project --python 3.12 --with
+  "protee[viz]==x.y.z" python -c "import protee.viz"`, then the same
+  with `3.14`.
 - Conclude from PyPI, not from the state GitHub shows: a job may still
   show as pending when PyPI has the files.
 
