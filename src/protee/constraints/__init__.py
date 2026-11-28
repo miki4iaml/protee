@@ -19,9 +19,11 @@ The phases come in a fixed order:
    every input. A value of a member is known, unknown, assumed (by the
    derivation, :class:`OnUnknown`) or not applicable (declared, with its
    reason); the caller states the policy for the unknown, without default,
-   and the :class:`Derived` values count their unknowns. A description
-   produces no constraint: its values enter :func:`resolve_values` like any
-   other;
+   and the :class:`Derived` values count their unknowns. With the optional
+   extra ``units`` (pint), an input in another unit than its parameter is
+   converted into it, exactly, and each :class:`Conversion` is recorded;
+   without the extra, it is refused. A description produces no constraint:
+   its values enter :func:`resolve_values` like any other;
 1. **evaluate** (:func:`evaluate`): one :class:`Effect` per requirement,
    from the arc attributes (:class:`ArcData`) and the values retained by
    precedence (:func:`resolve_values`); an arc without data gets the
@@ -37,7 +39,9 @@ The phases come in a fixed order:
    weights or costs the result was computed with, which gives its
    :class:`RequirementStatus`; the solver never writes a status;
 5. **explain** (:func:`requirement_table`): the table is generated from the
-   verification.
+   verification; :func:`readable` shows a value as a person reads it (a
+   duration in days, hours and minutes, a length in km or m), with the
+   optional extra ``units``.
 
 :func:`check_inputs` says beforehand what the data allow to prove.
 When requirements cannot hold together, :func:`minimal_conflict`,
@@ -114,6 +118,7 @@ from protee.constraints._provenance import Provenance, fingerprint, provenance
 from protee.constraints._registry import methods
 from protee.constraints._table import RequirementRow, requirement_table
 from protee.constraints._toml import RulebookValues
+from protee.constraints._units import readable
 from protee.constraints._verify import (
     RequirementCheck,
     RequirementStatus,
@@ -192,6 +197,7 @@ __all__ = [
     "minimal_relaxation",
     "patterns",
     "provenance",
+    "readable",
     "relax_by_tiers",
     "requirement_table",
     "resolve_values",

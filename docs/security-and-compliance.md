@@ -47,7 +47,7 @@ then names a fixed text that can be checked.
 |---|---|
 | Running | No network access, no telemetry, no file written unless the caller asks. Works entirely offline. One subprocess only: orthogonal edges are laid out by a child process of the same Python, without a shell. |
 | Input data | Graphs and node-link documents are data: checked against the format, never executed; the package uses neither `eval` nor `exec`. Texts drawn in SVG or HTML are escaped, and links that would open a script are dropped. An image given for the footer of a figure is embedded as an image, never linked. |
-| Dependencies | Two runtime dependencies (NumPy, SciPy), under permissive licences; pygraphviz with its bundled Graphviz (EPL-2.0) in the optional extra `viz`. |
+| Dependencies | Two runtime dependencies (NumPy, SciPy), under permissive licences; pygraphviz with its bundled Graphviz (EPL-2.0) in the optional extra `viz`; pint, pure Python (BSD-3-Clause), in the optional extra `units`. |
 | Approach | DevSecOps principles applied from planning to publication on PyPI, with the security means GitHub offers to public repositories (section 12). |
 | Development | Protected branches, owner review, signed and verified commits, blocking automatic checks, code scanning (CodeQL), secret detection. |
 | Publication | Built once, provenance (SLSA Build Level 2) and software bill of materials (SBOM) attested, published without a stored token after human approval, rehearsal on TestPyPI. |
@@ -78,6 +78,14 @@ SVG drawing and the exploration page. Its wheels for Windows, Linux
 programs, under the Eclipse Public License 2.0 (text in the wheel,
 `LICENSE.graphviz`). On another platform, pygraphviz builds from its
 source archive against a Graphviz installed on the workstation.
+
+**Optional extra `units`** [public]: pint 0.26.2 on 28 November 2026
+(BSD-3-Clause; lower bound 0.26, its first release for Python 3.14), for
+the exact conversion of units in the derivations and the readable display
+of values. It is pure Python, and brings flexcache and flexparser
+(BSD-3-Clause), platformdirs (MIT) and typing-extensions (PSF-2.0). protee
+imports it on first use, never on `import protee.constraints`, and creates
+its registry without a disk cache: it writes no file.
 
 `pyproject.toml` declares lower bounds, not pinned versions: see
 section 7 for an installation at locked versions.
@@ -273,7 +281,8 @@ The first command checks the provenance, the second the SBOM.
 
 A suggested procedure, to adapt to local rules [user]:
 1. On a connected workstation, download protee and its dependencies for
-   the target platform (with the extra `viz` if the drawing is needed):
+   the target platform (with the extra `viz` if the drawing is needed,
+   `units` for the conversion of units):
 
    ```
    python -m pip download "protee[viz]==0.1.0" --dest packages --only-binary=:all:
@@ -310,6 +319,8 @@ A suggested procedure, to adapt to local rules [user]:
 - **Optional extra `viz`**: pygraphviz (BSD-3-Clause) and the Graphviz it
   bundles (Eclipse Public License 2.0). protee does not redistribute
   Graphviz: the user installs it with pygraphviz.
+- **Optional extra `units`**: pint, flexcache and flexparser
+  (BSD-3-Clause), platformdirs (MIT) and typing-extensions (PSF-2.0).
 - **Traceability of requirements** [public: `protee.constraints`]: each
   requirement keeps its source (document, edition, paragraph); each value
   keeps its origin, its rulebook, its edition and its precedence; each

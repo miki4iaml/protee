@@ -98,6 +98,14 @@ Le dessin en SVG et la page à explorer (`protee.viz.render_svg`,
 pip install "protee[viz]"
 ```
 
+La conversion des entrées d'une dérivation dans l'unité de leur
+paramètre, et l'affichage lisible des valeurs
+(`protee.constraints.readable`), demandent l'extra facultatif `units` :
+
+```
+pip install "protee[units]"
+```
+
 Pour travailler sur protee lui-même, voir le
 [guide de contribution](.github/CONTRIBUTING.fr.md).
 

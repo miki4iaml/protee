@@ -51,6 +51,11 @@ Issues = "https://github.com/miki4iaml/protee/issues"
 Changelog = "https://github.com/miki4iaml/protee/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+# Pure Python: the lower bound is the first release that supports
+# Python 3.14.
+units = [
+    "pint>=0.26",
+]
 viz = [
     "pygraphviz>=2.0",
 ]

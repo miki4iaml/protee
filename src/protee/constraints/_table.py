@@ -62,9 +62,24 @@ class RequirementRow:
     policy: UnknownPolicy | None = None
     impact: Mapping[str, float | bool | None] | None = field(default=None)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, readable: bool = False) -> dict[str, Any]:
         """The row as plain data, ready for JSON (``inf`` as ``"inf"``, and
-        ``-inf`` as ``"-inf"``)."""
+        ``-inf`` as ``"-inf"``).
+
+        Parameters
+        ----------
+        readable : bool
+            Whether each value, retained or discarded, also gets
+            ``"shown"``, the value as a person reads it (see
+            :func:`readable`), which needs the optional extra ``units``. By
+            default, the data do not depend on the extras installed.
+
+        Raises
+        ------
+        ImportError
+            If ``readable`` is true and pint is not installed (the
+            optional extra ``units``).
+        """
         return {
             "id": self.id,
             "family": str(self.family),
@@ -73,8 +88,11 @@ class RequirementRow:
             "values": [
                 {
                     "parameter": name,
-                    **_value(v),
-                    "discarded": [_value(d) for d in self.discarded.get(name, ())],
+                    **_value(v, readable=readable),
+                    "discarded": [
+                        _value(d, readable=readable)
+                        for d in self.discarded.get(name, ())
+                    ],
                 }
                 for name, v in self.values.items()
             ],
@@ -100,11 +118,11 @@ def _source(s: Source) -> dict[str, Any]:
     }
 
 
-def _value(v: Value) -> dict[str, Any]:
+def _value(v: Value, *, readable: bool = False) -> dict[str, Any]:
     x = v.value
     if isinstance(x, float) and math.isinf(x):
         x = "inf" if x > 0 else "-inf"
-    return {
+    data: dict[str, Any] = {
         "value": x,
         "unit": v.unit,
         "origin": str(v.origin),
@@ -112,6 +130,12 @@ def _value(v: Value) -> dict[str, Any]:
         "justification": v.justification,
         "source": _source(v.source),
     }
+    if readable:
+        # Imported on use: the display is an option of the table.
+        from protee.constraints._units import readable as shown
+
+        data["shown"] = shown(v)
+    return data
 
 
 def requirement_table(

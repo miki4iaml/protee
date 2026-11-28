@@ -89,6 +89,14 @@ The drawing in SVG and in a page to explore (`protee.viz.render_svg`,
 pip install "protee[viz]"
 ```
 
+Converting the inputs of a derivation into the unit of their parameter,
+and showing values readably (`protee.constraints.readable`), need the
+optional extra `units`:
+
+```
+pip install "protee[units]"
+```
+
 To work on protee itself, see the
 [contributing guide](.github/CONTRIBUTING.md).
 

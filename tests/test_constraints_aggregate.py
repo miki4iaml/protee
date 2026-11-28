@@ -524,14 +524,15 @@ def test_assume_refusals() -> None:
         derive(FOUR, {"members": Aggregation.count()}, policy)
     with pytest.raises(ValueError, match="unknown parameter 'depth'"):
         derive(FOUR, {"width": MAX("width")}, OnUnknown.assume({"depth": chosen(1.0)}))
-    cm = OnUnknown.assume({"width": chosen(8.0, "cm")})
+    kg = OnUnknown.assume({"width": chosen(8.0, "kg")})
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "the value assumed for 'width' in 'cm', the parameter is in 'm'"
+            "the value assumed for 'width' in 'kg', the parameter is in 'm': "
+            "cannot convert 'kg' to 'm': different dimensions"
         ),
     ):
-        derive(MIXED, {"width": MAX("width")}, cm)
+        derive(MIXED, {"width": MAX("width")}, kg)
     text = OnUnknown.assume({"width": chosen("wide", "m")})
     with pytest.raises(
         TypeError,
@@ -556,21 +557,24 @@ def test_a_value_to_be_set_on_a_sheet_is_unknown() -> None:
 
 
 def test_values_are_read_in_the_unit_of_their_parameter() -> None:
-    cm = Member(
+    kg = Member(
         "A",
         (
             ValueSet(
                 "sheet-A",
                 "1",
-                {"width": Value(250, Source("Sheet A"), Origin.STATEMENT, unit="cm")},
+                {"width": Value(250, Source("Sheet A"), Origin.STATEMENT, unit="kg")},
             ),
         ),
     )
     with pytest.raises(
         ValueError,
-        match=re.escape("member 'A': 'width' in 'cm', the parameter is in 'm'"),
+        match=re.escape(
+            "member 'A': 'width' in 'kg', the parameter is in 'm': cannot convert "
+            "'kg' to 'm': different dimensions"
+        ),
     ):
-        derive(Group("G", ((cm, 1),)), {"width": MAX("width")})
+        derive(Group("G", ((kg, 1),)), {"width": MAX("width")})
 
 
 @pytest.mark.parametrize(
@@ -598,10 +602,13 @@ def test_values_are_read_in_the_unit_of_their_parameter() -> None:
         (
             {
                 "heavy": Aggregation.threshold_count(
-                    "mass", mass(1, "kg"), Comparison.ABOVE
+                    "mass", mass(1, "m"), Comparison.ABOVE
                 )
             },
-            "the threshold of 'mass' in 'kg', the parameter is in 't'",
+            (
+                "the threshold of 'mass' in 'm', the parameter is in 't': cannot "
+                "convert 'm' to 't': different dimensions"
+            ),
         ),
         ({"nothing": MAX("width")}, "unknown parameter 'nothing': declare it in"),
         ({"width": MAX("depth")}, "unknown parameter 'depth': declare it in"),
