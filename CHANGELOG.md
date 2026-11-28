@@ -34,6 +34,22 @@ and this project adheres to
   infeasible feasibility check, disjoint paths problem or flow range
   carries its violated cut; flow ranges at an unbounded optimum carry the
   improving cycle.
+- `protee.results.SeparatingCut`, the certificate that no path leads from
+  the sources to a target: the nodes reached through admitted arcs and the
+  arcs that leave them, all barred; and `CrossedCuts`, two nodes neither of
+  which reaches the other, for waypoints that no order can visit.
+- `protee.paths.methods()` and `protee.routes.methods()`, the registries of
+  the shortest path and route methods with their problem, guarantee,
+  complexity and reference; `methods(problem)` selects one problem.
+- The results of `protee.paths` and `protee.routes` are built on
+  `ResultCore`, with deterministic counters (settled nodes and scanned arcs
+  for Dijkstra, passes for Bellman-Ford, Dijkstra runs, candidate paths for
+  Yen, states of the dynamic programming over waypoints).
+- `KShortestPaths` and `ReplacementPaths`, returned by `k_shortest_paths`
+  and `replacement_paths`; they iterate, index and measure like the
+  sequences they replace.
+- `protee.constraints.verify_route` accepts a route result
+  (`WaypointRoute`, `ReliableRoute`).
 
 ### Changed
 
@@ -60,6 +76,38 @@ and this project adheres to
   unknown flow method before any computation.
 - The fingerprint of the inputs of a result also covers its type: a method
   name may serve several problems.
+- A sequence of floats only, or of 64-bit integers only, is fingerprinted
+  by its bytes in little-endian order: the first fingerprint of a Dijkstra
+  on 577 019 arcs costs about 13 % of the computation, instead of more than
+  the computation itself.
+- `bellman_ford` always returns `ShortestPaths`: when a negative cycle is
+  reachable from the sources, the status is `unbounded`, the certificate is
+  the cycle, the nodes that negative cycles reach are at `-inf` and the
+  others keep their exact distance. Migration: replace
+  `isinstance(r, NegativeCycle)` with `r.status is Status.UNBOUNDED`, and
+  read the cycle from `r.certificate`.
+- `waypoint_route` returns a result of status `infeasible` instead of
+  `None` when no route exists, with a `SeparatingCut` (or `CrossedCuts` in
+  free order); its `order`, `legs`, `arcs` and `cost` are then `None`.
+  Migration: replace `route is None` with
+  `route.status is Status.INFEASIBLE`.
+- `most_reliable_path` returns a result of status `infeasible` instead of
+  `None` when the target cannot be reached, with a `SeparatingCut`; its
+  `arcs` and `probability` are then `None`. Migration: replace
+  `route is None` with `route.status is Status.INFEASIBLE`.
+- `k_shortest_paths` returns `KShortestPaths` instead of a list; without
+  any path, its status is `infeasible`, with a `SeparatingCut`. Migration:
+  loops and indexing are unchanged; compare `len(r)` instead of `r == []`,
+  and use `r.routes` or `list(r)` for a sequence.
+- `replacement_paths` returns `ReplacementPaths` instead of a tuple.
+  Migration: loops and indexing are unchanged; use `r.replacements` for the
+  tuple.
+- `ShortestPaths`, `LexicographicPaths`, `WaypointRoute` and
+  `ReliableRoute` take keyword arguments only, with the fields of
+  `ResultCore`.
+- The shortest path and route functions refuse a target, start, end,
+  waypoint or path arc that is not in the graph (`ValueError`), where they
+  used to run on or fail later with an `IndexError`.
 - `Status`, `InfeasibleCut`, `NegativeCycle` and `MethodInfo` live in
   `protee.results`; `protee.flow` and `protee.paths` still export them
   (the same objects).

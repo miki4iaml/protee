@@ -16,7 +16,7 @@ from collections.abc import Sequence
 
 from protee.flow._normal import Normal
 from protee.graph import Digraph
-from protee.paths import NegativeCycle, ShortestPaths, bellman_ford
+from protee.paths import _bellman_ford
 
 type Number = int | float
 
@@ -54,16 +54,16 @@ def cycle_canceling(
     """
     while True:
         graph, cost, edge = _residual(normal, y)
-        found = bellman_ford(graph, cost, tolerance=normal.tolerance)
+        found = _bellman_ford(graph, cost, None, normal.tolerance)
         counters["bellman_ford_runs"] += 1
-        if isinstance(found, ShortestPaths):
+        cycle = found.cycle
+        if cycle is None:
             return [-d for d in found.distance]
-        assert isinstance(found, NegativeCycle)
         delta = min(
             normal.cap[a] - y[a] if d == 1 else y[a]
-            for a, d in (edge[e] for e in found.arcs)
+            for a, d in (edge[e] for e in cycle.arcs)
         )
-        for e in found.arcs:
+        for e in cycle.arcs:
             a, d = edge[e]
             y[a] += d * delta
         counters["cycles_canceled"] += 1

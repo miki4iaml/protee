@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import struct
 import subprocess
 import sys
 from types import MappingProxyType
@@ -151,6 +153,27 @@ def test_graph_fingerprint_is_the_structure() -> None:
     assert _fingerprint.fingerprint(g) == _fingerprint.fingerprint(
         Digraph.from_arcs(3, [(0, 1), (1, 2)])
     )
+
+
+def test_numbers_are_hashed_by_their_little_endian_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fp = _fingerprint.fingerprint
+    floats = hashlib.sha256(struct.pack("<2d", 1.0, 2.5)).hexdigest()
+    ints = hashlib.sha256(struct.pack("<2q", 1, 2)).hexdigest()
+    assert _fingerprint._canonical([1.0, 2.5]) == {"f8": floats}
+    assert _fingerprint._canonical((1, 2)) == {"i8": ints}
+    assert fp([1.0, 2.5]) == fp((1.0, 2.5))
+    assert fp([1, 2]) != fp([1.0, 2.0])
+    # Anything else keeps one tagged item per element.
+    for mixed in ([1, 2.0], [True, False], [2**70, 1], ["a", "b"], []):
+        assert isinstance(_fingerprint._canonical(mixed), list)
+    assert fp([1, 2.0]) not in {fp([1, 2]), fp([1.0, 2.0])}
+    assert fp([True, False]) != fp([1, 0])
+    if sys.byteorder == "little":
+        monkeypatch.setattr(sys, "byteorder", "big")
+        swapped = hashlib.sha256(struct.pack(">2d", 1.0, 2.5)).hexdigest()
+        assert _fingerprint._canonical([1.0, 2.5]) == {"f8": swapped}
 
 
 def test_fingerprint_without_numpy(monkeypatch: pytest.MonkeyPatch) -> None:

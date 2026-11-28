@@ -27,7 +27,8 @@ from protee.constraints._model import (
 from protee.constraints._patterns import PATTERNS, EffectKind
 from protee.flow import FlowProblem, FlowResult
 from protee.graph import Digraph
-from protee.paths import NegativeCycle, bellman_ford
+from protee.paths import _bellman_ford
+from protee.results import NegativeCycle, ResultCore
 from protee.routes import Route
 
 __all__ = [
@@ -206,8 +207,18 @@ def _verdict_check(
     )
 
 
-def _route_arcs(graph: Digraph, route: Route | Sequence[int]) -> tuple[int, ...]:
-    arcs = tuple(route.arcs if isinstance(route, Route) else route)
+def _route_arcs(
+    graph: Digraph, route: Route | ResultCore | Sequence[int]
+) -> tuple[int, ...]:
+    if isinstance(route, ResultCore):
+        if not hasattr(route, "arcs"):
+            raise TypeError(f"a {type(route).__name__} holds no single route")
+        found = route.arcs
+        if found is None:
+            raise ValueError(f"the result has no route (status {route.status})")
+        arcs = tuple(found)
+    else:
+        arcs = tuple(route.arcs if isinstance(route, Route) else route)
     for a in arcs:
         if not 0 <= a < graph.m:
             raise ValueError(f"arc {a} out of range")
@@ -242,7 +253,7 @@ def _weights(
 
 
 def verify_route(
-    route: Route | Sequence[int],
+    route: Route | ResultCore | Sequence[int],
     requirements: RequirementSet,
     graph: Digraph,
     data: ArcData,
@@ -259,8 +270,11 @@ def verify_route(
 
     Parameters
     ----------
-    route : Route or sequence of int
-        The arcs of the route, in order.
+    route : Route, route result or sequence of int
+        The arcs of the route, in order: a :class:`~protee.routes.Route`, a
+        result that holds one route (:class:`~protee.routes.WaypointRoute`,
+        :class:`~protee.routes.ReliableRoute`, or any result with
+        ``arcs``), or the arcs themselves.
     requirements : RequirementSet
     graph : Digraph
     data : ArcData
@@ -288,11 +302,13 @@ def verify_route(
     Raises
     ------
     ValueError
-        If an arc is out of range, two arcs are not consecutive, the
-        weights have another size, or a requirement does not fit the data
-        (see :func:`evaluate`).
+        If the result has no route (status ``infeasible``), an arc is out
+        of range, two arcs are not consecutive, the weights have another
+        size, or a requirement does not fit the data (see
+        :func:`evaluate`).
     TypeError
-        If a value does not fit its pattern (see :func:`evaluate`).
+        If a result holds no single route (a shortest path tree), or a
+        value does not fit its pattern (see :func:`evaluate`).
     """
     path = _route_arcs(graph, route)
     arcs = np.unique(np.array(path, dtype=np.int64))
@@ -506,8 +522,8 @@ def _distances(
     graph: Digraph, keep: list[int], weight: Sequence[float], source: int
 ) -> tuple[float, ...] | None:
     sub = Digraph.from_arcs(graph.n, [(graph.tails[a], graph.heads[a]) for a in keep])
-    found = bellman_ford(sub, weight, source)
-    if isinstance(found, NegativeCycle):
+    found = _bellman_ford(sub, weight, (source,), 0.0)
+    if found.cycle is not None:
         return None
     return tuple(float(d) for d in found.distance)
 
@@ -647,12 +663,12 @@ def _improving_cycle(problem: FlowProblem, x: Sequence[int]) -> NegativeCycle | 
             cost.append(-c)
     scale = max((abs(c) for c in cost), default=0.0)
     exact = all(isinstance(c, int) for c in problem.cost)
-    found = bellman_ford(
+    return _bellman_ford(
         Digraph.from_arcs(g.n, arcs),
         cost,
-        tolerance=0.0 if exact else 1e-9 * max(1.0, scale) * max(1, g.n),
-    )
-    return found if isinstance(found, NegativeCycle) else None
+        None,
+        0.0 if exact else 1e-9 * max(1.0, scale) * max(1, g.n),
+    ).cycle
 
 
 def _bound_check(
